@@ -1,6 +1,8 @@
 //! `conet-signer init|serve`.
 //!
-//! init:  seal a wallet key and route PGP key into a keystore file.
+//! keygen: generate a new wallet and route key inside the signer and seal them (no shell, no
+//!        passphrase); prints only the public values for registration.
+//! init:  seal an existing wallet key and route PGP key into a keystore file.
 //!        Secrets come from environment variables, never argv:
 //!        CONET_INIT_WALLET_KEY (0x hex), CONET_INIT_PGP_PASS (may be empty); the armored
 //!        key from `--pgp-key <file>`.
@@ -50,6 +52,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             server::Signer::init_state(&state, &kek)?;
             println!("keystore written; state initialised");
         }
+        Some("keygen") => {
+            let out = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
+            let state = PathBuf::from(arg("--state").ok_or("--state <path>")?);
+            if out.exists() {
+                return Err("keystore exists; refusing to overwrite".into());
+            }
+            let (secrets, public) = keystore::generate().map_err(|e| e.to_string())?;
+            let sealed = Zeroizing::new(keystore::seal(&kek, &secrets).map_err(|e| e.to_string())?);
+            write_private(&out, sealed.as_bytes())?;
+            server::Signer::init_state(&state, &kek)?;
+            // Public values only: wallet address and route key, for node registration.
+            let wallet = si_crypto::eth::EthKey::from_hex(&secrets.wallet_hex)
+                .map_err(|e| e.to_string())?
+                .address();
+            let cert =
+                si_crypto::opgp::PublicCert::from_armor(&public).map_err(|e| e.to_string())?;
+            println!(
+                "wallet: {wallet}\nkeyId: {}\n{public}",
+                cert.enc_key_id().unwrap_or_default()
+            );
+        }
         Some("serve") => {
             let socket = PathBuf::from(arg("--socket").ok_or("--socket <path>")?);
             let cfg = server::SignerConfig {
@@ -70,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             set_mode(&socket, 0o660)?;
             server::serve(listener, signer).await?;
         }
-        _ => eprintln!("usage: conet-signer init|serve ..."),
+        _ => eprintln!("usage: conet-signer keygen|init|serve ..."),
     }
     Ok(())
 }

@@ -74,3 +74,28 @@ pub fn open(kek: &[u8; 32], file: &str) -> Result<Secrets, KeystoreError> {
     );
     serde_json::from_slice(&plain).map_err(err)
 }
+
+/// New node keys generated inside the signer (decision U1 "new keys"): a random secp256k1 wallet
+/// and a curve25519 route key whose user ID is the wallet address. Nothing goes through a shell
+/// and there is no passphrase; the KEK seals the result. Returns the secrets and the route
+/// public key (for GuardianNodesInfoV6 / NodeRegistryV2 registration).
+pub fn generate() -> Result<(Secrets, String), KeystoreError> {
+    let mut sk = Zeroizing::new([0u8; 32]);
+    let wallet = loop {
+        OsRng.fill_bytes(&mut sk[..]);
+        if let Ok(w) = si_crypto::eth::EthKey::from_hex(&hex::encode(&sk[..])) {
+            break w;
+        }
+    };
+    let address = wallet.address();
+    let (pgp_armored, public, _) =
+        si_crypto::opgp::generate_route_key(OsRng, &address).map_err(err)?;
+    Ok((
+        Secrets {
+            wallet_hex: format!("0x{}", hex::encode(&sk[..])),
+            pgp_armored,
+            pgp_pass: String::new(),
+        },
+        public,
+    ))
+}

@@ -354,3 +354,49 @@ async fn notices_use_fixed_texts() {
             .is_err()
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn generated_keys_serve_and_match_registration_values() {
+    let (secrets, public) = keystore::generate().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let kek = [3u8; 32];
+    std::fs::write(
+        dir.path().join("keystore.json"),
+        keystore::seal(&kek, &secrets).unwrap(),
+    )
+    .unwrap();
+    Signer::init_state(&dir.path().join("state.json"), &kek).unwrap();
+    let signer = Arc::new(
+        Signer::start(SignerConfig {
+            keystore_file: std::fs::read_to_string(dir.path().join("keystore.json")).unwrap(),
+            kek: Zeroizing::new(kek),
+            state_path: dir.path().join("state.json"),
+            verifying_contract: REGISTRY.into(),
+            reset_floor: None,
+            allow_bind: false,
+            allow_uid: None,
+        })
+        .unwrap_or_else(|e| panic!("{}", e.0)),
+    );
+    let sock = dir.path().join("s.sock");
+    tokio::spawn(si_signer::server::serve(
+        tokio::net::UnixListener::bind(&sock).unwrap(),
+        signer,
+    ));
+    let c = tokio::task::spawn_blocking(move || SignerClient::connect(sock))
+        .await
+        .unwrap()
+        .unwrap();
+    let cert = si_crypto::opgp::PublicCert::from_armor(&public).unwrap();
+    assert_eq!(c.route_key_id(), cert.enc_key_id().unwrap());
+    assert!(
+        public.contains(&c.address())
+            || cert
+                .cert
+                .details
+                .users
+                .iter()
+                .any(|u| format!("{:?}", u.id).contains(&c.address()))
+    );
+    assert!(secrets.pgp_pass.is_empty());
+}

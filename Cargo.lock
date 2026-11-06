@@ -3900,6 +3900,7 @@ dependencies = [
  "hmac 0.12.1",
  "k256 0.14.0",
  "pgp",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde_json",
  "sha2 0.10.9",

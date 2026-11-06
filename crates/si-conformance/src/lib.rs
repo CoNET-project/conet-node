@@ -416,6 +416,7 @@ pub fn make_artifacts(golden: &str, seed_hex: &str) -> String {
         "eip191": { "message": message, "signature": sign_message, "address": client.address() },
         "entryForward": { "armor": foreign, "actions": actions },
         "nodeStatement": node_statement_artifact(&c, now),
+        "generatedKey": generated_key_artifact(&mut rng, &c),
     })
     .to_string()
 }
@@ -502,4 +503,23 @@ fn node_statement_artifact(c: &Ctx, now: i64) -> Value {
         "signature": sig,
         "address": c.wallets["nodeA"].address(),
     })
+}
+
+/// A route key generated in Rust (the "new keys" path of decision U1), plus a message to it.
+fn generated_key_artifact(rng: &mut ChaCha20Rng, c: &Ctx) -> Value {
+    let wallet = c.wallets["nodeC"].address();
+    let (sec, public, id) = opgp::generate_route_key(&mut *rng, &wallet).unwrap();
+    let cert = opgp::PublicCert::from_armor(&public).unwrap();
+    let armor = opgp::encrypt(
+        &mut *rng,
+        b"to a rust-generated key",
+        &cert,
+        opgp::EncryptOpts {
+            text: true,
+            zlib: true,
+            sign_with: None,
+        },
+    )
+    .unwrap();
+    json!({ "secret": sec, "public": public, "keyId": id, "userId": wallet, "armor": armor, "text": "to a rust-generated key" })
 }

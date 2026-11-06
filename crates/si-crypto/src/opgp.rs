@@ -86,6 +86,44 @@ impl SecretCert {
     }
 }
 
+/// A new node route key shaped like the keys SI and the PWA make with openpgp.js
+/// (`type:'ecc', curve:'curve25519'`): Ed25519 primary (certify, sign) and one Curve25519 ECDH
+/// encryption subkey, so `getKeyIDs()[1]` is the encryption subkey. The user ID is the node
+/// wallet address (GuardianNodesInfoV6 convention). No passphrase: the keystore KEK protects it.
+/// Returns (armored secret key, armored public key, route key ID).
+pub fn generate_route_key<R: Rng>(mut rng: R, user_id: &str) -> Result<(String, String, String)> {
+    use pgp::composed::{EncryptionCaps, KeyType, SecretKeyParamsBuilder, SubkeyParamsBuilder};
+    use pgp::crypto::ecc_curve::ECCCurve;
+    let mut enc = SubkeyParamsBuilder::default();
+    enc.key_type(KeyType::ECDH(ECCCurve::Curve25519Legacy))
+        .can_sign(false)
+        .can_encrypt(EncryptionCaps::All)
+        .can_authenticate(false);
+    let mut params = SecretKeyParamsBuilder::default();
+    params
+        .key_type(KeyType::Ed25519Legacy)
+        .can_certify(true)
+        .can_sign(true)
+        .can_encrypt(EncryptionCaps::None)
+        .primary_user_id(user_id.into())
+        .subkeys(vec![enc.build().map_err(e)?]);
+    let key = params.build().map_err(e)?.generate(&mut rng).map_err(e)?;
+    let public = key.to_public_key();
+    let cert = PublicCert {
+        cert: public.clone(),
+    };
+    let id = cert
+        .enc_key_id()
+        .ok_or_else(|| Error::Pgp("no subkey".into()))?;
+    Ok((
+        key.to_armored_string(ArmorOptions::default()).map_err(e)?,
+        public
+            .to_armored_string(ArmorOptions::default())
+            .map_err(e)?,
+        id,
+    ))
+}
+
 /// Node secret keys must be curve25519 (Ed25519 primary, X25519 encryption subkey), the type
 /// SI and the PWA generate. Refusing everything else means no RSA or NIST-curve private-key
 /// operation can run in this process, which keeps RUSTSEC-2023-0071 (rsa) and RUSTSEC-2026-0387
@@ -386,5 +424,33 @@ mod tests {
             "multi-recipient refused"
         );
         assert!(session_key_from_pkesk(b"\xc1\x01\x00", &key).is_err());
+    }
+
+    #[test]
+    fn generated_route_key_round_trips() {
+        use rand_core::SeedableRng;
+        let (sec, public, id) = generate_route_key(
+            rand_chacha::ChaCha20Rng::from_seed([5; 32]),
+            "0x1111111111111111111111111111111111111111",
+        )
+        .unwrap();
+        let key = SecretCert::from_armor(&sec, "").unwrap();
+        let cert = PublicCert::from_armor(&public).unwrap();
+        assert_eq!(cert.enc_key_id().unwrap(), id);
+        assert_eq!(cert.key_ids().len(), 2);
+        let armor = encrypt(
+            rand_chacha::ChaCha20Rng::from_seed([6; 32]),
+            b"hi",
+            &cert,
+            EncryptOpts {
+                text: true,
+                zlib: true,
+                sign_with: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(recipient_key_ids(&armor).unwrap(), [id]);
+        let (alg, sk) = session_key_from_pkesk(&pkesk_packet(&armor).unwrap(), &key).unwrap();
+        assert_eq!(decrypt_with_session_key(&armor, alg, &sk).unwrap(), b"hi");
     }
 }

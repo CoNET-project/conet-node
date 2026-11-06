@@ -109,4 +109,21 @@ await check('node-statement-eip712', async () => {
 	return { pass: signer === n.address && n.value.payloadHash === ethers.keccak256(ethers.toUtf8Bytes('CONET_NODE_ONLINE_V1')) }
 })
 
+await check('rust-generated-route-key', async () => {
+	const k = a.generatedKey
+	const pubKey = await openpgp.readKey({ armoredKey: k.public })
+	const ids = pubKey.getKeyIDs().map((x) => x.toHex().toUpperCase())
+	const uid = pubKey.users[0]?.userID?.userID
+	const priv = await openpgp.readPrivateKey({ armoredKey: k.secret })
+	// SI decrypt path on the Rust message
+	const m = await openpgp.readMessage({ armoredMessage: k.armor })
+	const d = await openpgp.decrypt({ message: m, decryptionKeys: priv, format: 'binary' })
+	const fromRust = Buffer.from(d.data).toString('utf8').replace(/\r\n/g, '\n')
+	// a client encrypting to the new key, as the PWA does
+	const back = await openpgp.encrypt({ message: await openpgp.createMessage({ text: 'from openpgp.js' }), encryptionKeys: pubKey, config: { preferredCompressionAlgorithm: openpgp.enums.compression.zlib } })
+	const bm = await openpgp.readMessage({ armoredMessage: back })
+	const d2 = await openpgp.decrypt({ message: bm, decryptionKeys: priv })
+	return { pass: ids.length === 2 && ids[1] === k.keyId && uid === k.userId && fromRust === k.text && d2.data === 'from openpgp.js' && bm.getEncryptionKeyIDs()[0].toHex().toUpperCase() === k.keyId, ids, uid }
+})
+
 console.log(JSON.stringify({ summary: { pass: results.filter((r) => r.pass).length, fail: results.filter((r) => !r.pass).length }, results }, null, 1))
