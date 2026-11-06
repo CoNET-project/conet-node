@@ -96,6 +96,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => Err(format!("selftest failed: {e}").into()),
         };
     }
+    // One TLS crypto backend for the whole process (several may be compiled in through deps).
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -160,6 +162,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ctx.chain.clone(),
             watcher::WatchOpts::default(),
         ));
+    }
+    // HTTPS (:443): in-process ACME for {keyID}.conet.network (Q13), or fixed PEM files for tests.
+    if let Some(tls_listen) = arg("--tls-listen") {
+        use conet_node::tls::{node_domain, serve_tls, TlsSource};
+        let src = match (arg("--tls-cert"), arg("--tls-key")) {
+            (Some(c), Some(k)) => TlsSource::Static {
+                cert_pem: std::fs::read(c)?,
+                key_pem: std::fs::read(k)?,
+            },
+            _ => TlsSource::Acme {
+                domain: arg("--tls-domain").unwrap_or_else(|| node_domain(&ctx.key_id)),
+                cache: arg("--acme-cache")
+                    .ok_or("--acme-cache <dir> (keeps the certificate across restarts)")?
+                    .into(),
+                contact: arg("--acme-contact").into_iter().collect(),
+                production: !std::env::args().any(|a| a == "--acme-staging"),
+            },
+        };
+        let l = tokio::net::TcpListener::bind(&tls_listen).await?;
+        tracing::info!(%tls_listen, "https listening");
+        tokio::spawn(serve_tls(l, ctx.clone(), src));
     }
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     tracing::info!(%listen, key_id = %ctx.key_id, "conet-node listening");

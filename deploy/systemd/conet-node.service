@@ -16,6 +16,8 @@ StateDirectory=conet-node
 ExecStartPre=+/opt/conet-node/updater/conet-boot-guard --root /opt/conet-node
 ExecStart=/opt/conet-node/current/conet-node \
   --listen 0.0.0.0:80 \
+  --tls-listen 0.0.0.0:443 \
+  --acme-cache /var/lib/conet-node/acme \
   --signer-socket /run/conet-signer/signer.sock \
   --rpc ${CONET_RPC} \
   --api-base ${BEAMIO_API_BASE} \

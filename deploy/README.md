@@ -15,6 +15,9 @@ Three services, three users:
   compiled into `conet-updater`, not configured.
 - `conet-boot-guard` runs before every start of `conet-node` and rolls back a release that fails
   to become healthy (10 minutes of `/healthz`) three times in a row.
+- HTTPS on :443 with a certificate for `{routeKeyID}.conet.network`, obtained in-process through
+  ACME TLS-ALPN-01 (no certbot, no sudo). `/var/lib/conet-node/acme` keeps the account and the
+  certificate so restarts never re-issue. DNS for the name must point at the node.
 - The KEK is created once per server with `systemd-creds encrypt` (see `conet-signer.service`).
 - Release keys are offline; signing uses `conet-updater release sign` on the offline machine.
 

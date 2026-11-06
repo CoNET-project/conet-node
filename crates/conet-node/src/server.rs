@@ -14,9 +14,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tracing::{debug, warn};
+
+/// Any client connection: plain TCP (:80) or TLS (:443).
+pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
+pub type Conn = Box<dyn Io>;
 
 pub struct NodeCtx {
     pub key_id: String,
@@ -120,12 +126,12 @@ pub async fn serve(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::Result<
             let _permit = permit;
             let _slot = slot;
             let _ = stream.set_nodelay(true);
-            handle(stream, peer, ctx).await;
+            handle(Box::new(stream), peer, ctx).await;
         });
     }
 }
 
-async fn handle(mut stream: TcpStream, peer: SocketAddr, ctx: Arc<NodeCtx>) {
+pub(crate) async fn handle(mut stream: Conn, peer: SocketAddr, ctx: Arc<NodeCtx>) {
     let req = match http::read_request(&mut stream, &ctx.limits).await {
         Ok(r) => r,
         Err(ReadError::Closed) => return,
@@ -146,7 +152,7 @@ async fn handle(mut stream: TcpStream, peer: SocketAddr, ctx: Arc<NodeCtx>) {
     }
 }
 
-async fn post(mut stream: TcpStream, peer: SocketAddr, req: http::Request, ctx: Arc<NodeCtx>) {
+async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<NodeCtx>) {
     let Ok(body) = String::from_utf8(req.body) else {
         let _ = stream.write_all(&http::not_found()).await;
         return;
@@ -255,7 +261,7 @@ async fn post(mut stream: TcpStream, peer: SocketAddr, req: http::Request, ctx: 
 /// SI `socketForward`: send the request to the next node and pipe both directions until
 /// either side ends (the response may be a long SSE).
 async fn forward(
-    mut client: TcpStream,
+    mut client: Conn,
     addr: SocketAddr,
     hop_header: &str,
     armor: &str,

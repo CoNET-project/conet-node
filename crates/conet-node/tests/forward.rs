@@ -323,3 +323,81 @@ async fn entry_with_signer_process() {
         "hop row signed by the signer verifies at B"
     );
 }
+
+/// Client → entry A over HTTPS (:443 path) → mailbox B over plain SI-to-SI forwarding.
+#[tokio::test(flavor = "multi_thread")]
+async fn https_entry_forwards_like_plain() {
+    use rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let g = golden();
+    let (ka, ida) = key(&g, "nodeA");
+    let (kb, idb) = key(&g, "nodeB");
+    let la = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let lb = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (aa, ab) = (la.local_addr().unwrap(), lb.local_addr().unwrap());
+    let user = g["keys"]["user"]["encKeyId"].as_str().unwrap().to_string();
+    let routes = |own: &str| {
+        let r = RouteTable::new(own, Duration::from_secs(3600));
+        r.replace_nodes([(ida.clone(), aa), (idb.clone(), ab)]);
+        r.set_user_route(&user, &idb);
+        Arc::new(r)
+    };
+    let domain = conet_node::tls::node_domain(&ida);
+    let ck = rcgen::generate_simple_self_signed(vec![domain.clone()]).unwrap();
+    let (cert_pem, key_pem) = (ck.cert.pem(), ck.signing_key.serialize_pem());
+    let ctx_a = Arc::new(NodeCtx::new(
+        ida.clone(),
+        Arc::new(ka),
+        Arc::new(wallet(&g, "nodeA")),
+        Arc::new(wallet(&g, "nodeA")),
+        routes(&ida),
+        Arc::new(MemoryStore::default()),
+    ));
+    let store_b = Arc::new(MemoryStore::default());
+    let ctx_b = Arc::new(NodeCtx::new(
+        idb.clone(),
+        Arc::new(kb),
+        Arc::new(wallet(&g, "nodeB")),
+        Arc::new(wallet(&g, "nodeB")),
+        routes(&idb),
+        store_b.clone(),
+    ));
+    let lt = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let at = lt.local_addr().unwrap();
+    tokio::spawn(conet_node::tls::serve_tls(
+        lt,
+        ctx_a.clone(),
+        conet_node::tls::TlsSource::Static {
+            cert_pem: cert_pem.clone().into_bytes(),
+            key_pem: key_pem.into_bytes(),
+        },
+    ));
+    tokio::spawn(server::serve(la, ctx_a));
+    tokio::spawn(server::serve(lb, ctx_b));
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(CertificateDer::from_pem_slice(cert_pem.as_bytes()).unwrap())
+        .unwrap();
+    let cfg = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(cfg));
+    let tcp = TcpStream::connect(at).await.unwrap();
+    let mut tls = connector
+        .connect(ServerName::try_from(domain).unwrap(), tcp)
+        .await
+        .unwrap();
+
+    let armor = enc(20, "over https", &pubkey(&g, "user"));
+    let body = json!({ "data": armor }).to_string();
+    tls.write_all(format!("POST /post HTTP/1.1\r\nHost: t\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(10), tls.read_to_end(&mut out)).await;
+    let resp = String::from_utf8_lossy(&out);
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "{resp}");
+    let got = store_b.pending(&user);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].armor, armor);
+    assert_eq!(got[0].hops, 1);
+}

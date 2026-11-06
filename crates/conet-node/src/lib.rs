@@ -10,4 +10,5 @@ pub mod push;
 pub mod route;
 pub mod server;
 pub mod store;
+pub mod tls;
 pub mod watcher;

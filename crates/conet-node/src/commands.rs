@@ -4,6 +4,7 @@
 //! line lands (voice/UDP: line C; proxy, mining: decided per Q3).
 use crate::http;
 use crate::mailbox::{random_instance_id, sealed_frame, Listener, LISTEN_QUEUE};
+use crate::server::Conn;
 use crate::server::NodeCtx;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rand_core::{OsRng, RngCore};
@@ -14,7 +15,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 fn now() -> i64 {
@@ -38,11 +38,11 @@ fn s<'a>(c: &'a Value, k: &str) -> &'a str {
         .unwrap_or("")
 }
 
-async fn reply(stream: &mut TcpStream, v: Value) {
+async fn reply(stream: &mut Conn, v: Value) {
     let _ = stream.write_all(&http::ok_200(&v.to_string())).await;
 }
 
-async fn not_found(stream: &mut TcpStream) {
+async fn not_found(stream: &mut Conn) {
     let _ = stream.write_all(&http::not_found()).await;
 }
 
@@ -56,7 +56,7 @@ async fn is_my_route(ctx: &NodeCtx, user: &str) -> bool {
     }
 }
 
-pub async fn dispatch(mut stream: TcpStream, peer: SocketAddr, command: Value, ctx: Arc<NodeCtx>) {
+pub async fn dispatch(mut stream: Conn, peer: SocketAddr, command: Value, ctx: Arc<NodeCtx>) {
     match s(&command, "command") {
         "mailbox_listen" => mailbox_listen(stream, peer, command, ctx).await,
         "mining" if ctx.legacy_chat_listen && s(&command, "listenKind") == "chat" => {
@@ -70,7 +70,7 @@ pub async fn dispatch(mut stream: TcpStream, peer: SocketAddr, command: Value, c
     }
 }
 
-async fn delivery_ack(stream: &mut TcpStream, c: &Value, ctx: &NodeCtx) {
+async fn delivery_ack(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
     let wallet = s(c, "walletAddress").to_lowercase();
     let hash = s(c, "armorHash");
     let hash_ok = hash.len() == 66
@@ -93,7 +93,7 @@ async fn delivery_ack(stream: &mut TcpStream, c: &Value, ctx: &NodeCtx) {
     reply(stream, json!({ "ok": true, "removed": removed })).await
 }
 
-async fn online_query(stream: &mut TcpStream, c: &Value, ctx: &NodeCtx) {
+async fn online_query(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
     let requester = s(c, "walletAddress").to_lowercase();
     let target = s(c, "targetWallet").to_lowercase();
     if !eth::is_address(&requester) {
@@ -138,7 +138,7 @@ async fn online_query(stream: &mut TcpStream, c: &Value, ctx: &NodeCtx) {
     .await
 }
 
-async fn native_wake_query(stream: &mut TcpStream, c: &Value, ctx: &NodeCtx) {
+async fn native_wake_query(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
     let requester = s(c, "walletAddress");
     let target = s(c, "targetWallet");
     let zero = "0x0000000000000000000000000000000000000000";
@@ -173,7 +173,7 @@ async fn native_wake_query(stream: &mut TcpStream, c: &Value, ctx: &NodeCtx) {
     }
 }
 
-async fn push_device_register(stream: &mut TcpStream, c: &Value, ctx: &NodeCtx) {
+async fn push_device_register(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
     let eoa = s(c, "walletAddress");
     let token = s(c, "deviceToken");
     let platform = s(c, "platform").to_lowercase();
@@ -231,7 +231,7 @@ fn stream_key(c: &Value) -> Option<[u8; 32]> {
 
 const SSE_HEADERS: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nX-Accel-Buffering: no\r\nAccess-Control-Allow-Origin: *\r\n";
 
-async fn mailbox_listen(mut stream: TcpStream, peer: SocketAddr, c: Value, ctx: Arc<NodeCtx>) {
+async fn mailbox_listen(mut stream: Conn, peer: SocketAddr, c: Value, ctx: Arc<NodeCtx>) {
     let Some(key) = stream_key(&c) else {
         return not_found(&mut stream).await;
     };
@@ -290,7 +290,7 @@ async fn mailbox_listen(mut stream: TcpStream, peer: SocketAddr, c: Value, ctx: 
         legacy: false,
     });
 
-    let (mut rd, mut wr) = stream.into_split();
+    let (mut rd, mut wr) = tokio::io::split(stream);
     let mut scratch = [0u8; 512];
     loop {
         let keepalive = Duration::from_millis(60_000 + OsRng.next_u64() % 120_000);
@@ -317,7 +317,7 @@ async fn mailbox_listen(mut stream: TcpStream, peer: SocketAddr, c: Value, ctx: 
 /// Legacy presence listen (`mining` + `listenKind:"chat"`, old Alliance-style clients).
 /// Since 2026-11-02 this pool gets no chat messages (its frames are not sealed), so it only
 /// marks the wallet online and sends a plain epoch frame every 12–20 s like SI's liveness loop.
-async fn legacy_chat_listen(mut stream: TcpStream, peer: SocketAddr, c: Value, ctx: Arc<NodeCtx>) {
+async fn legacy_chat_listen(mut stream: Conn, peer: SocketAddr, c: Value, ctx: Arc<NodeCtx>) {
     let wallet = s(&c, "walletAddress").to_lowercase();
     if !eth::is_address(&wallet) {
         return not_found(&mut stream).await;
@@ -360,7 +360,7 @@ async fn legacy_chat_listen(mut stream: TcpStream, peer: SocketAddr, c: Value, c
         connected_at: Instant::now(),
         legacy: true,
     });
-    let (mut rd, mut wr) = stream.into_split();
+    let (mut rd, mut wr) = tokio::io::split(stream);
     let mut scratch = [0u8; 512];
     let mut last_epoch = epoch;
     let mut last_hash = String::new();

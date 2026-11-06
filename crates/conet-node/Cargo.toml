@@ -21,12 +21,19 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "j
 alloy-sol-types = "1"
 alloy-primitives = "1"
 redb = "4"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12", "logging"] }
+rustls-acme = { version = "0.15", features = ["tokio"] }
+futures-util = "0.3"
 hex.workspace = true
 base64.workspace = true
 rand_core = { workspace = true, features = ["getrandom"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+rcgen = "0.14"
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 pgp = { workspace = true }
 tempfile = "3"
 zeroize = "1"
