@@ -1,0 +1,28 @@
+[package]
+name = "conet-updater"
+description = "conet-node update agent: random-time checks, signed release manifests, atomic switch, rollback"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "conet-updater"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+hex.workspace = true
+sha2.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
+ed25519-dalek = "2"
+semver = "1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "process", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"

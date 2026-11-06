@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/si-proto", "crates/si-crypto", "crates/si-core", "crates/si-conformance", "crates/si-conformance-cli", "crates/conet-si-wasm", "crates/conet-node", "crates/si-signer"]
+members = ["crates/si-proto", "crates/si-crypto", "crates/si-core", "crates/si-conformance", "crates/si-conformance-cli", "crates/conet-si-wasm", "crates/conet-node", "crates/si-signer", "crates/conet-updater"]
 
 [workspace.package]
 edition = "2021"

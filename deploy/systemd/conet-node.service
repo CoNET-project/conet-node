@@ -1,0 +1,41 @@
+# conet-node: network process. No keys on disk; it asks conet-signer.
+[Unit]
+Description=CoNET node
+After=network-online.target conet-signer.service
+Requires=conet-signer.service
+
+[Service]
+User=conet-node
+Group=conet-node
+SupplementaryGroups=conet-signer
+StateDirectory=conet-node
+ExecStart=/opt/conet-node/current/conet-node \
+  --listen 0.0.0.0:80 \
+  --signer-socket /run/conet-signer/signer.sock \
+  --rpc ${CONET_RPC} \
+  --api-base ${BEAMIO_API_BASE} \
+  --mailbox-db /var/lib/conet-node/mailbox.redb
+EnvironmentFile=/etc/conet-node/node.env
+Restart=always
+RestartSec=2
+LimitCORE=0
+LimitNOFILE=65536
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

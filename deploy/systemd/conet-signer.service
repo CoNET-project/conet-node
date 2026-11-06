@@ -1,0 +1,45 @@
+# conet-signer: holds the node keys. Only conet-node may talk to its socket.
+# KEK: create once with
+#   systemd-creds encrypt --name=conet-node-kek <32-byte file> /etc/credstore.encrypted/conet-node-kek
+# (bound to TPM2 when present, otherwise to the host key).
+[Unit]
+Description=CoNET node signer
+After=network.target
+
+[Service]
+User=conet-signer
+Group=conet-signer
+LoadCredentialEncrypted=conet-node-kek
+RuntimeDirectory=conet-signer
+RuntimeDirectoryMode=0750
+StateDirectory=conet-signer
+StateDirectoryMode=0700
+ExecStart=/opt/conet-node/current/conet-signer serve \
+  --keystore /var/lib/conet-signer/keystore.json \
+  --state /var/lib/conet-signer/statements.json \
+  --socket /run/conet-signer/signer.sock \
+  --verifying-contract ${CONET_NODE_REGISTRY} \
+  --allow-uid ${CONET_NODE_UID}
+EnvironmentFile=/etc/conet-node/signer.env
+Restart=on-failure
+LimitCORE=0
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

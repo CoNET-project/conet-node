@@ -1,0 +1,31 @@
+# conet-updater: after start, checks the signed release manifest at a random time within
+# 12 hours; restarts conet-node only when a newer version applies to this node.
+# Restart permission: a polkit rule letting user conet-updater restart conet-node.service only.
+[Unit]
+Description=CoNET node updater
+After=network-online.target
+
+[Service]
+User=conet-updater
+Group=conet-updater
+ExecStart=/opt/conet-node/updater/conet-updater run \
+  --root /opt/conet-node \
+  --manifest-url ${CONET_MANIFEST_URL_1} --manifest-url ${CONET_MANIFEST_URL_2} \
+  --trusted-key ${CONET_RELEASE_KEY_1} --trusted-key ${CONET_RELEASE_KEY_2} --trusted-key ${CONET_RELEASE_KEY_3} \
+  --threshold ${CONET_RELEASE_THRESHOLD} \
+  --node-id ${CONET_NODE_WALLET} \
+  --restart-cmd "systemctl restart conet-node.service" \
+  --health-url http://127.0.0.1:80/nodeWallet
+EnvironmentFile=/etc/conet-node/updater.env
+Restart=always
+RestartSec=60
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/conet-node/releases /opt/conet-node
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
