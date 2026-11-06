@@ -46,6 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map_err(|_| "CONET_INIT_WALLET_KEY")?,
                 pgp_armored: std::fs::read_to_string(arg("--pgp-key").ok_or("--pgp-key <file>")?)?,
                 pgp_pass: std::env::var("CONET_INIT_PGP_PASS").unwrap_or_default(),
+                previous_pgp_armored: String::new(),
+                previous_pgp_pass: String::new(),
             };
             let sealed = Zeroizing::new(keystore::seal(&kek, &secrets).map_err(|e| e.to_string())?);
             write_private(&out, sealed.as_bytes())?;
@@ -73,6 +75,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cert.enc_key_id().unwrap_or_default()
             );
         }
+        Some(cmd @ ("rotate-route" | "retire-route")) => {
+            // R11: new route key with a transition (old key still decrypts), then retire the old one.
+            let path = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
+            let mut secrets = keystore::open(&kek, &std::fs::read_to_string(&path)?)
+                .map_err(|e| e.to_string())?;
+            let public = if cmd == "rotate-route" {
+                Some(keystore::rotate_route(&mut secrets).map_err(|e| e.to_string())?)
+            } else {
+                keystore::retire_previous(&mut secrets);
+                None
+            };
+            let sealed = Zeroizing::new(keystore::seal(&kek, &secrets).map_err(|e| e.to_string())?);
+            let tmp = path.with_extension("tmp");
+            let _ = std::fs::remove_file(&tmp);
+            write_private(&tmp, sealed.as_bytes())?;
+            std::fs::rename(&tmp, &path)?;
+            match public {
+                Some(p) => {
+                    let id = si_crypto::opgp::PublicCert::from_armor(&p)
+                        .map_err(|e| e.to_string())?
+                        .enc_key_id()
+                        .unwrap_or_default();
+                    println!("new route keyId: {id}\n{p}\nrestart conet-signer and conet-node; register the new key; retire the old one after clients moved");
+                }
+                None => println!("previous route key removed; restart conet-signer and conet-node"),
+            }
+        }
         Some("serve") => {
             let socket = PathBuf::from(arg("--socket").ok_or("--socket <path>")?);
             let cfg = server::SignerConfig {
@@ -93,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             set_mode(&socket, 0o660)?;
             server::serve(listener, signer).await?;
         }
-        _ => eprintln!("usage: conet-signer keygen|init|serve ..."),
+        _ => eprintln!("usage: conet-signer keygen|init|rotate-route|retire-route|serve ..."),
     }
     Ok(())
 }

@@ -25,6 +25,8 @@ pub struct RouteTable {
     /// Keys AddressPGP did not know, so one stranger cannot make us hit the RPC per request.
     unknown: RwLock<HashMap<String, Instant>>,
     node_ips: RwLock<HashSet<IpAddr>>,
+    /// Retiring own route keys (R11): resolve as local during the transition.
+    own_aliases: RwLock<HashSet<String>>,
     /// Upper bound on cached user routes (R10); the oldest entry goes first.
     pub max_users: usize,
 }
@@ -59,6 +61,7 @@ impl RouteTable {
             user_ttl,
             unknown: RwLock::default(),
             node_ips: RwLock::default(),
+            own_aliases: RwLock::default(),
             max_users: 200_000,
         }
     }
@@ -80,6 +83,11 @@ impl RouteTable {
             .collect();
         *self.node_ips.write().expect("route lock") = map.values().map(|a| a.ip()).collect();
         *self.nodes.write().expect("route lock") = map;
+    }
+
+    pub fn set_own_aliases(&self, keys: &[String]) {
+        *self.own_aliases.write().expect("route lock") =
+            keys.iter().map(|k| k.to_uppercase()).collect();
     }
 
     pub fn is_node_ip(&self, ip: IpAddr) -> bool {
@@ -129,7 +137,13 @@ impl RouteTable {
     }
 
     fn node(&self, node_key: &str) -> Resolved {
-        if node_key == self.own_key {
+        if node_key == self.own_key
+            || self
+                .own_aliases
+                .read()
+                .expect("route lock")
+                .contains(node_key)
+        {
             return Resolved::Local;
         }
         match self.nodes.read().expect("route lock").get(node_key) {
@@ -142,7 +156,10 @@ impl RouteTable {
     /// the host then asks AddressPGP and calls [`Self::set_user_route`].
     pub fn resolve(&self, key_id: &str) -> Resolved {
         let k = key_id.to_uppercase();
-        if k == self.own_key || self.nodes.read().expect("route lock").contains_key(&k) {
+        if k == self.own_key
+            || self.own_aliases.read().expect("route lock").contains(&k)
+            || self.nodes.read().expect("route lock").contains_key(&k)
+        {
             return self.node(&k);
         }
         let user = self.users.read().expect("route lock").get(&k).cloned();

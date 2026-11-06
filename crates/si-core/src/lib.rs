@@ -126,8 +126,16 @@ impl NodeNotices for eth::EthKey {
 
 pub struct LocalRoute<'a> {
     pub key: &'a dyn RouteDecryptor,
-    /// Upper-case hex `getKeyIDs()[1]`.
+    /// Upper-case hex `getKeyIDs()[1]` of the current route key.
     pub key_id: &'a str,
+    /// Route keys being retired (R11 transition): still decrypted, never published.
+    pub old_key_ids: &'a [String],
+}
+
+impl LocalRoute<'_> {
+    pub fn is_local(&self, k: &str) -> bool {
+        k == self.key_id || self.old_key_ids.iter().any(|o| o == k)
+    }
 }
 
 /// Voice channel write keys by 32-hex locator.
@@ -152,7 +160,7 @@ pub fn classify_post(armor: &str, local: &LocalRoute<'_>, write_keys: &WriteKeys
             reason: "recipient_count",
         };
     };
-    if kid != local.key_id {
+    if !local.is_local(kid) {
         return Decision::Forward {
             key_id: kid.to_string(),
         };
@@ -186,7 +194,7 @@ pub fn classify_post(armor: &str, local: &LocalRoute<'_>, write_keys: &WriteKeys
                     reason: "inner_recipient_count",
                 };
             };
-            if ik == local.key_id {
+            if local.is_local(ik) {
                 return Decision::AttackSameNode;
             }
             return Decision::OnionForward {
@@ -207,7 +215,7 @@ pub fn classify_post(armor: &str, local: &LocalRoute<'_>, write_keys: &WriteKeys
                 reason: "inner_recipient_count",
             };
         };
-        if ik == local.key_id {
+        if local.is_local(ik) {
             return Decision::AttackSameNode;
         }
         return Decision::MailboxWork {

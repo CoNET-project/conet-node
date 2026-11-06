@@ -13,6 +13,7 @@ pub struct SignerClient {
     path: PathBuf,
     address: String,
     key_id: String,
+    old_key_ids: Vec<String>,
     timeout: Duration,
 }
 
@@ -22,15 +23,26 @@ impl SignerClient {
             path: path.into(),
             address: String::new(),
             key_id: String::new(),
+            old_key_ids: vec![],
             timeout: Duration::from_secs(5),
         };
         c.address = c.call(&Request::Address)?;
         c.key_id = c.call(&Request::RouteKeyId)?;
+        c.old_key_ids = c
+            .call(&Request::OldRouteKeyIds)?
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
         Ok(c)
     }
 
     pub fn route_key_id(&self) -> &str {
         &self.key_id
+    }
+
+    pub fn old_route_key_ids(&self) -> &[String] {
+        &self.old_key_ids
     }
 
     pub fn call(&self, req: &Request) -> Result<String> {

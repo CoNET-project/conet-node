@@ -114,6 +114,7 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
             let route = LocalRoute {
                 key,
                 key_id: &c.node_a_id,
+                old_key_ids: &[],
             };
             let d = si_core::classify_post(s(input, "armor"), &route, &write_keys(input));
             json!({ "decision": d })
@@ -384,6 +385,7 @@ pub fn make_artifacts(golden: &str, seed_hex: &str) -> String {
         route: LocalRoute {
             key: &c.secs["nodeA"],
             key_id: &c.node_a_id,
+            old_key_ids: &[],
         },
         wallet: &c.wallets["nodeA"],
         write_keys: WriteKeys::new(),
@@ -439,6 +441,7 @@ pub fn bench(golden: &str, op: &str, n: u32) -> String {
     let route = LocalRoute {
         key: &c.secs["nodeA"],
         key_id: &c.node_a_id,
+        old_key_ids: &[],
     };
     let mut rng = ChaCha20Rng::from_seed([7u8; 32]);
     let key = [1u8; 32];

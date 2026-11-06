@@ -17,6 +17,8 @@ pub struct Signer {
     wallet: eth::EthKey,
     route: opgp::SecretCert,
     key_id: String,
+    /// Retiring route key (R11), if any.
+    previous: Option<(opgp::SecretCert, String)>,
     domain: Domain,
     kek: Zeroizing<[u8; 32]>,
     state_path: PathBuf,
@@ -60,6 +62,17 @@ impl Signer {
             eth::EthKey::from_hex(&secrets.wallet_hex).map_err(|e| StartError(e.to_string()))?;
         let (route, key_id) = si_core::node::load_route(&secrets.pgp_armored, &secrets.pgp_pass)
             .map_err(|e| StartError(e.to_string()))?;
+        let previous = if secrets.previous_pgp_armored.is_empty() {
+            None
+        } else {
+            Some(
+                si_core::node::load_route(
+                    &secrets.previous_pgp_armored,
+                    &secrets.previous_pgp_pass,
+                )
+                .map_err(|e| StartError(e.to_string()))?,
+            )
+        };
         drop(secrets);
         let domain = Domain::new(&cfg.verifying_contract).map_err(|e| StartError(e.to_string()))?;
         let statements = match (state::load(&cfg.state_path, &cfg.kek), cfg.reset_floor) {
@@ -82,6 +95,7 @@ impl Signer {
             wallet,
             route,
             key_id,
+            previous,
             domain,
             kek: cfg.kek,
             state_path: cfg.state_path,
@@ -104,6 +118,11 @@ impl Signer {
         match req {
             Request::Address => ok(self.wallet.address()),
             Request::RouteKeyId => ok(self.key_id.clone()),
+            Request::OldRouteKeyIds => ok(self
+                .previous
+                .as_ref()
+                .map(|(_, id)| id.clone())
+                .unwrap_or_default()),
             Request::SignHop { t, n, h, k } => {
                 let hh = h.strip_prefix("0x").unwrap_or("");
                 if (now() - t).abs() > sp::HOP_SIG_TS_WINDOW_SEC
@@ -155,7 +174,12 @@ impl Signer {
                 let Ok(bytes) = B64.decode(pkesk) else {
                     return refused("pkesk_fields");
                 };
-                match opgp::session_key_from_pkesk(&bytes, &self.route) {
+                let current = opgp::session_key_from_pkesk(&bytes, &self.route);
+                let result = match (current, &self.previous) {
+                    (Err(_), Some((old, _))) => opgp::session_key_from_pkesk(&bytes, old),
+                    (r, _) => r,
+                };
+                match result {
                     Ok((alg, key)) => ok(format!(
                         "{alg}:{}",
                         B64.encode(zeroize::Zeroizing::new(key).as_slice())

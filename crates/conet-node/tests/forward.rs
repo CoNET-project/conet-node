@@ -248,6 +248,8 @@ async fn entry_with_signer_process() {
             .unwrap()
             .into(),
         pgp_pass: g["keys"]["nodeA"]["passphrase"].as_str().unwrap().into(),
+        previous_pgp_armored: String::new(),
+        previous_pgp_pass: String::new(),
     };
     let state = dir.path().join("state.json");
     si_signer::server::Signer::init_state(&state, &kek).unwrap();

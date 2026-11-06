@@ -15,6 +15,11 @@ pub struct Secrets {
     /// Route PGP secret key (armored) and its passphrase (may be empty).
     pub pgp_armored: String,
     pub pgp_pass: String,
+    /// Route key being retired (R11 transition): still decrypts, never published. Empty = none.
+    #[serde(default)]
+    pub previous_pgp_armored: String,
+    #[serde(default)]
+    pub previous_pgp_pass: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -95,7 +100,34 @@ pub fn generate() -> Result<(Secrets, String), KeystoreError> {
             wallet_hex: format!("0x{}", hex::encode(&sk[..])),
             pgp_armored,
             pgp_pass: String::new(),
+            previous_pgp_armored: String::new(),
+            previous_pgp_pass: String::new(),
         },
         public,
     ))
+}
+
+/// R11 route-key rotation, step 1: a new route key becomes current (same wallet and user ID);
+/// the old one moves to `previous` and keeps decrypting until [`retire_previous`].
+/// Refuses while a previous key is still being retired. Returns the new public key.
+pub fn rotate_route(s: &mut Secrets) -> Result<String, KeystoreError> {
+    if !s.previous_pgp_armored.is_empty() {
+        return Err(KeystoreError(
+            "a previous route key is still being retired".into(),
+        ));
+    }
+    let address = si_crypto::eth::EthKey::from_hex(&s.wallet_hex)
+        .map_err(err)?
+        .address();
+    let (new_armored, public, _) =
+        si_crypto::opgp::generate_route_key(OsRng, &address).map_err(err)?;
+    s.previous_pgp_armored = std::mem::replace(&mut s.pgp_armored, new_armored);
+    s.previous_pgp_pass = std::mem::take(&mut s.pgp_pass);
+    Ok(public)
+}
+
+/// R11 rotation, step 2: end of the transition; the old route key is dropped.
+pub fn retire_previous(s: &mut Secrets) {
+    s.previous_pgp_armored.zeroize();
+    s.previous_pgp_pass.zeroize();
 }

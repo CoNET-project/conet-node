@@ -39,6 +39,8 @@ impl Env {
                 .unwrap()
                 .into(),
             pgp_pass: g["keys"]["nodeA"]["passphrase"].as_str().unwrap().into(),
+            previous_pgp_armored: String::new(),
+            previous_pgp_pass: String::new(),
         };
         std::fs::write(
             dir.path().join("keystore.json"),
@@ -399,4 +401,97 @@ async fn generated_keys_serve_and_match_registration_values() {
                 .any(|u| format!("{:?}", u.id).contains(&c.address()))
     );
     assert!(secrets.pgp_pass.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn route_key_rotation_keeps_the_old_key_until_retired() {
+    use rand_core_test::seeded;
+    let (mut secrets, old_public) = keystore::generate().unwrap();
+    let old_cert = si_crypto::opgp::PublicCert::from_armor(&old_public).unwrap();
+    let new_public = keystore::rotate_route(&mut secrets).unwrap();
+    let new_cert = si_crypto::opgp::PublicCert::from_armor(&new_public).unwrap();
+    assert!(
+        keystore::rotate_route(&mut secrets).is_err(),
+        "one transition at a time"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let kek = [4u8; 32];
+    let start = |secrets: &keystore::Secrets, name: &str| {
+        let ks = keystore::seal(&kek, secrets).unwrap();
+        let state = dir.path().join(format!("{name}.json"));
+        Signer::init_state(&state, &kek).unwrap();
+        let signer = Arc::new(
+            Signer::start(SignerConfig {
+                keystore_file: ks,
+                kek: Zeroizing::new(kek),
+                state_path: state,
+                verifying_contract: REGISTRY.into(),
+                reset_floor: None,
+                allow_bind: false,
+                allow_uid: None,
+            })
+            .unwrap_or_else(|e| panic!("{}", e.0)),
+        );
+        let sock = dir.path().join(format!("{name}.sock"));
+        tokio::spawn(si_signer::server::serve(
+            tokio::net::UnixListener::bind(&sock).unwrap(),
+            signer,
+        ));
+        sock
+    };
+    let enc = |cert: &si_crypto::opgp::PublicCert, seed: u8| {
+        si_crypto::opgp::encrypt(
+            seeded(seed),
+            b"m",
+            cert,
+            si_crypto::opgp::EncryptOpts {
+                text: false,
+                zlib: true,
+                sign_with: None,
+            },
+        )
+        .unwrap()
+    };
+    let (to_old, to_new) = (enc(&old_cert, 1), enc(&new_cert, 2));
+
+    let sock = start(&secrets, "transition");
+    let (a, b) = (to_old.clone(), to_new.clone());
+    let (cur, old, d_old, d_new) = tokio::task::spawn_blocking(move || {
+        let c = SignerClient::connect(sock).unwrap();
+        (
+            c.route_key_id().to_string(),
+            c.old_route_key_ids().to_vec(),
+            c.decrypt(&a).is_ok(),
+            c.decrypt(&b).is_ok(),
+        )
+    })
+    .await
+    .unwrap();
+    assert_eq!(cur, new_cert.enc_key_id().unwrap());
+    assert_eq!(old, [old_cert.enc_key_id().unwrap()]);
+    assert!(d_old && d_new, "both keys decrypt during the transition");
+
+    keystore::retire_previous(&mut secrets);
+    let sock = start(&secrets, "retired");
+    let (a, b) = (to_old, to_new);
+    let (old, d_old, d_new) = tokio::task::spawn_blocking(move || {
+        let c = SignerClient::connect(sock).unwrap();
+        (
+            c.old_route_key_ids().to_vec(),
+            c.decrypt(&a).is_ok(),
+            c.decrypt(&b).is_ok(),
+        )
+    })
+    .await
+    .unwrap();
+    assert!(
+        old.is_empty() && !d_old && d_new,
+        "old key gone after retire"
+    );
+}
+
+mod rand_core_test {
+    pub fn seeded(seed: u8) -> rand_chacha::ChaCha20Rng {
+        <rand_chacha::ChaCha20Rng as rand_core::SeedableRng>::from_seed([seed; 32])
+    }
 }

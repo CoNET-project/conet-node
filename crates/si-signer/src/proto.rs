@@ -8,6 +8,8 @@ pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 pub enum Request {
     Address,
     RouteKeyId,
+    /// Retiring route key IDs (comma separated, may be empty).
+    OldRouteKeyIds,
     /// The signer builds `conet.l0.hop.v1|w|t|n|h|k` itself with its own wallet.
     SignHop {
         t: i64,

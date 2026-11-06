@@ -21,18 +21,21 @@ fn arg(name: &str) -> Option<String> {
         .and_then(|i| a.get(i + 1).cloned())
 }
 
+/// (decryptor, wallet, notices, route key ID, retiring route key IDs)
 type Keys = (
     Arc<dyn RouteDecryptor>,
     Arc<dyn WalletSigner>,
     Arc<dyn NodeNotices>,
     String,
+    Vec<String>,
 );
 
 fn keys() -> Result<Keys, Box<dyn std::error::Error>> {
     if let Some(sock) = arg("--signer-socket") {
         let c = Arc::new(si_signer::client::SignerClient::connect(sock)?);
         let id = c.route_key_id().to_string();
-        return Ok((c.clone(), c.clone(), c, id));
+        let old = c.old_route_key_ids().to_vec();
+        return Ok((c.clone(), c.clone(), c, id, old));
     }
     if std::env::args().any(|a| a == "--insecure-dev-keys") {
         eprintln!("WARNING: --insecure-dev-keys is for local test networks with test keys only");
@@ -45,7 +48,7 @@ fn keys() -> Result<Keys, Box<dyn std::error::Error>> {
         )?;
         let hex = std::env::var("CONET_DEV_WALLET_KEY").map_err(|_| "CONET_DEV_WALLET_KEY")?;
         let w = Arc::new(si_crypto::eth::EthKey::from_hex(&hex)?);
-        return Ok((Arc::new(key), w.clone(), w, id));
+        return Ok((Arc::new(key), w.clone(), w, id, vec![]));
     }
     Err("need --signer-socket <path> (or --insecure-dev-keys for local tests)".into())
 }
@@ -97,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let listen = arg("--listen").unwrap_or_else(|| "127.0.0.1:8080".into());
-    let (decryptor, wallet, notices, key_id) = keys()?;
+    let (decryptor, wallet, notices, key_id, old_key_ids) = keys()?;
     let store: Arc<dyn MailboxStore> = match arg("--mailbox-db") {
         Some(p) => Arc::new(DiskStore::open(std::path::Path::new(&p))?),
         None => {
@@ -136,6 +139,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ctx.push = api;
     }
     ctx.user_routes = user_routes;
+    ctx.old_key_ids = old_key_ids;
+    routes.set_own_aliases(&ctx.old_key_ids);
     if let Some(b) = arg("--max-body").and_then(|v| v.parse().ok()) {
         ctx.limits.max_body_bytes = b;
     }

@@ -20,6 +20,8 @@ use tracing::{debug, warn};
 
 pub struct NodeCtx {
     pub key_id: String,
+    /// Retiring route keys (R11): still accepted as local, never published.
+    pub old_key_ids: Vec<String>,
     pub decryptor: Arc<dyn RouteDecryptor>,
     pub wallet: Arc<dyn WalletSigner>,
     pub notices: Arc<dyn NodeNotices>,
@@ -50,6 +52,7 @@ impl NodeCtx {
         let push: Arc<dyn Push> = Arc::new(NoPush);
         Self {
             key_id,
+            old_key_ids: vec![],
             decryptor,
             wallet,
             notices,
@@ -156,6 +159,7 @@ async fn post(mut stream: TcpStream, peer: SocketAddr, req: http::Request, ctx: 
             route: LocalRoute {
                 key: &*c.decryptor,
                 key_id: &c.key_id,
+                old_key_ids: &c.old_key_ids,
             },
             wallet: &*c.wallet,
             write_keys: WriteKeys::new(),
@@ -202,6 +206,7 @@ async fn post(mut stream: TcpStream, peer: SocketAddr, req: http::Request, ctx: 
                         route: LocalRoute {
                             key: &*c.decryptor,
                             key_id: &c.key_id,
+                            old_key_ids: &c.old_key_ids,
                         },
                         wallet: &*c.wallet,
                         write_keys: WriteKeys::new(),
