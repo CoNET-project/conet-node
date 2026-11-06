@@ -8,7 +8,19 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::debug;
 
+/// SI `notifyVoiceCallPush` payload (opaque ids and the callee wallet; nothing about the caller).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VoiceCall {
+    pub call_id: String,
+    pub session_id: String,
+    pub callee_eoa: String,
+    pub expires_at: i64,
+    pub timestamp: i64,
+}
+
 pub trait Push: Send + Sync {
+    /// Fire-and-forget VoIP/FCM wake for an offer (`voice_offer_store` with `push: 1`).
+    fn voice_call(&self, call: VoiceCall);
     /// Fire-and-forget after a durable save (not for `NoPush` work).
     fn offline_chat(&self, user_key: String);
     /// None = lookup failed or untrusted answer.
@@ -21,6 +33,7 @@ pub trait Push: Send + Sync {
 pub struct NoPush;
 
 impl Push for NoPush {
+    fn voice_call(&self, _call: VoiceCall) {}
     fn offline_chat(&self, _user_key: String) {}
     fn native_wakeable<'a>(&'a self, _eoa: &'a str) -> BoxFut<'a, Option<bool>> {
         Box::pin(async { None })
@@ -33,6 +46,8 @@ pub struct BeamioApi {
     http: reqwest::Client,
     notices: Arc<dyn NodeNotices>,
     routes: Arc<dyn UserRoutes>,
+    /// Checksummed node wallet (SI sends `nodeWallet: nodeWallet.address`).
+    node_wallet: String,
 }
 
 fn now() -> u64 {
@@ -47,6 +62,7 @@ impl BeamioApi {
         base: &str,
         notices: Arc<dyn NodeNotices>,
         routes: Arc<dyn UserRoutes>,
+        node_wallet: String,
     ) -> Result<Self, reqwest::Error> {
         Ok(Self {
             base: base.trim_end_matches('/').to_string(),
@@ -55,6 +71,7 @@ impl BeamioApi {
                 .build()?,
             notices,
             routes,
+            node_wallet,
         })
     }
 }
@@ -65,6 +82,39 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 }
 
 impl Push for Arc<BeamioApi> {
+    fn voice_call(&self, call: VoiceCall) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            let n = me.notices.clone();
+            let c = call.clone();
+            let Some(Ok(signature)) = blocking(move || {
+                n.sign_voice_call_push(
+                    &c.call_id,
+                    &c.session_id,
+                    &c.callee_eoa,
+                    c.expires_at,
+                    c.timestamp,
+                )
+            })
+            .await
+            else {
+                return;
+            };
+            let node = me.node_wallet.clone();
+            let body = json!({ "callId": call.call_id, "sessionId": call.session_id, "calleeEoa": call.callee_eoa, "expiresAt": call.expires_at, "timestamp": call.timestamp, "nodeWallet": node, "signature": signature });
+            let r = me
+                .http
+                .post(format!("{}/api/voiceCallPush", me.base))
+                .json(&body)
+                .send()
+                .await;
+            debug!(
+                ok = r.map(|r| r.status().is_success()).unwrap_or(false),
+                "voiceCallPush"
+            );
+        });
+    }
+
     fn offline_chat(&self, user_key: String) {
         let me = self.clone();
         tokio::spawn(async move {

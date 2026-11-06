@@ -11,7 +11,8 @@ import { randomBytes } from 'crypto'
 import { sealMailboxStreamPayload, MAILBOX_STREAM_PAD } from './si-src/mailboxStream.ts'
 import { hopSigPayload, hopArmorHash, serializeHopSigsHeaderValue, SI_HOP_SIG_HEADER } from './si-src/siHopSigs.ts'
 import { encryptUdpPayload } from './si-src/udpForwardCrypto.ts'
-import { voicePayText, voiceListenText, chunkMac, VOICE_CHUNK_MAGIC } from './si-src/voiceHelpers.ts'
+import { voicePayText, voiceListenText, chunkMac, VOICE_CHUNK_MAGIC, voiceCallPushText } from './si-src/voiceHelpers.ts'
+import { verifyVoiceListenV3, frameLine, voiceHeaders, voiceHandshake } from './si-src/voiceListen.ts'
 
 const zlib = { preferredCompressionAlgorithm: openpgp.enums.compression.zlib }
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64')
@@ -346,6 +347,52 @@ await eip712Vector('bindnode-existing', 'BindNode', bindNodeTypes, {
 	operator: wallets.billing.address, nodeId: '42', ipHash: ethers.keccak256(ethers.toUtf8Bytes('198.51.100.7')), keyId: '0x' + keys.nodeB.encKeyId.toLowerCase(),
 	pgpHash: ethers.keccak256(ethers.toUtf8Bytes(keys.nodeB.armoredPublic)), nonce: '7', deadline: String(now + 600),
 }, 'nodeB')
+
+// ---- 12. Voice v3 relay (SI voiceForward.ts verbatim excerpts): listen checks, frames, push text
+const relayKeyId = keys.nodeA.encKeyId
+const vSession = randomBytes(16).toString('hex')
+const vWk = randomBytes(32).toString('base64')
+const nowMs = now * 1000
+const listenCmd = async (over = {}) => {
+	const c = { command: 'voice_listen', v: 3, sessionId: vSession, wk: vWk, timestamp: now, temp: wallets.temp.address, ...over }
+	const ts = c.timestamp
+	c.tempSig = over.tempSig ?? await wallets.temp.signMessage(voiceListenText(c.sessionId, c.wk, over.signKeyId ?? relayKeyId, ts))
+	const notAfter = over.notAfter ?? now + 3600
+	const payText = voicePayText(c.temp, notAfter, 0, 0)
+	c.pay = over.pay ?? { payer: wallets.payer.address, notAfter, maxBytes: 0, maxSeconds: 0, sig: await (over.paySigner ?? wallets.payer).signMessage(payText) }
+	delete c.signKeyId; delete c.notAfter; delete c.paySigner
+	return c
+}
+const listenCases = {
+	'ok': await listenCmd(),
+	'v2': await listenCmd({ v: 2 }),
+	'bad-session': await listenCmd({ sessionId: 'ABCDEF0123456789ABCDEF0123456789' }),
+	'short-wk': await listenCmd({ wk: Buffer.alloc(16).toString('base64') }),
+	'stale-ts': await listenCmd({ timestamp: now - 700 }),
+	'temp-sig-other-relay': await listenCmd({ signKeyId: keys.nodeB.encKeyId }),
+	'pay-wrong-signer': await listenCmd({ paySigner: wallets.other }),
+	'pay-expired': await listenCmd({ notAfter: now - 10 }),
+	'pay-too-long': await listenCmd({ notAfter: now + 49 * 3600 }),
+	'no-temp': await listenCmd({ temp: 'nope' }),
+}
+for (const [id, cmd] of Object.entries(listenCases)) {
+	const r = verifyVoiceListenV3(cmd, relayKeyId, nowMs)
+	add(`voice-listen-${id}`, 'voice_listen_verify', { command: cmd, relayKeyId, nowMs }, r.ok
+		? { ok: true, sessionId: r.sessionId, temp: r.temp, notAfter: r.notAfter, writeKeyB64: r.writeKey.toString('base64') }
+		: { ok: false, error: r.error })
+}
+add('voice-frames', 'voice_frames', { sessionId: vSession, nodeWallet: wallets.nodeA.address, blobB64: randomBytes(40).toString('base64') }, {})
+{
+	const v = vectors[vectors.length - 1]
+	v.expect = {
+		headers: voiceHeaders(),
+		ready: frameLine(voiceHandshake(v.input.sessionId, wallets.nodeA)),
+		chunk: frameLine({ t: 'c', d: v.input.blobB64 }),
+	}
+}
+const pushPayload = { callId: 'call-0123456789', sessionId: vSession, calleeEoa: wallets.client.address, expiresAt: nowMs + 60_000, timestamp: now }
+const pushText = voiceCallPushText(pushPayload, wallets.nodeA)
+add('voice-call-push-text', 'voice_call_push', { wallet: 'nodeA', payload: pushPayload }, { text: pushText, signature: await wallets.nodeA.signMessage(pushText) })
 
 console.log(JSON.stringify({
 	meta: {

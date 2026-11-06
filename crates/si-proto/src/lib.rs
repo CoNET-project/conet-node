@@ -221,3 +221,105 @@ pub mod api_texts {
         .join("\n")
     }
 }
+
+/// Node `Buffer.from(s, 'base64')`: skips characters outside the alphabet, accepts the URL-safe
+/// alphabet and missing padding, and drops a trailing incomplete 6-bit group.
+pub fn node_base64_decode(s: &str) -> Vec<u8> {
+    let mut clean: String = s
+        .chars()
+        .filter_map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '+' | '/' => Some(c),
+            '-' => Some('+'),
+            '_' => Some('/'),
+            _ => None,
+        })
+        .collect();
+    if clean.len() % 4 == 1 {
+        clean.pop();
+    }
+    base64::engine::general_purpose::STANDARD_NO_PAD
+        .decode(clean)
+        .unwrap_or_default()
+}
+
+/// JavaScript `Number(value)` for JSON values (NaN as None).
+pub fn js_number(v: Option<&serde_json::Value>) -> Option<f64> {
+    use serde_json::Value;
+    match v? {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                Some(0.0)
+            } else {
+                t.parse::<f64>().ok().filter(|f| f.is_finite())
+            }
+        }
+        Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+        Value::Null => Some(0.0),
+        _ => None,
+    }
+}
+
+/// JavaScript `Number.isSafeInteger`.
+pub fn js_safe_int(f: f64) -> Option<i64> {
+    (f.fract() == 0.0 && f.abs() <= 9_007_199_254_740_991.0).then_some(f as i64)
+}
+
+/// Voice relay v3 (CoNET-SI `voiceForward.ts`, rev 74c6cfd).
+pub mod voice {
+    pub const TIMESTAMP_SKEW_SEC: i64 = 600;
+    pub const PAY_MAX_VALID_MS: i64 = 48 * 60 * 60 * 1000;
+    pub const MAX_GLOBAL: usize = 256;
+    pub const TEMP_WALLET_MAX: usize = 50_000;
+    pub const IDLE_MS: u64 = 2 * 60 * 1000;
+    pub const SWEEP_MS: u64 = 30_000;
+    pub const MAX_PER_SEC: u32 = 100;
+    pub const MAX_BYTES_PER_SEC: usize = 600_000;
+    pub const QUEUE_MAX: usize = 32;
+    pub const DRAIN_TIMEOUT_MS: u64 = 2_000;
+    pub const OFFER_ARMOR_MAX: usize = 48_000;
+    pub const OFFER_DEFAULT_TTL_MS: i64 = 5 * 60_000;
+    pub const OFFER_MAX_TTL_MS: i64 = 24 * 60 * 60_000;
+    pub const OFFER_MEMORY_MAX: usize = 256;
+
+    /// SSE response head for a voice listen (no Date header, as in SI).
+    pub const SSE_HEADERS: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nX-Accel-Buffering: no\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+
+    /// SI `frameLine(handshake)` for a voice listen.
+    pub fn ready_frame(session_id: &str, node_wallet: &str) -> String {
+        format!(
+            "data: {}\r\n\r\n",
+            serde_json::json!({ "type": "voice_ready", "ok": true, "sessionId": session_id, "nodeWallet": node_wallet.to_lowercase(), "v": 2, "listen": 3 })
+        )
+    }
+
+    /// SI `frameLine({ t: 'c', d: blob.toString('base64') })`.
+    pub fn chunk_frame(blob_b64: &str) -> String {
+        format!(
+            "data: {}\r\n\r\n",
+            serde_json::json!({ "t": "c", "d": blob_b64 })
+        )
+    }
+
+    /// SI `notifyVoiceCallPush` signed text.
+    pub fn call_push_text(
+        call_id: &str,
+        session_id: &str,
+        callee_eoa: &str,
+        expires_at: i64,
+        timestamp: i64,
+        node_wallet: &str,
+    ) -> String {
+        [
+            "CoNET voiceCallPush relay".to_string(),
+            format!("callId:{call_id}"),
+            format!("sessionId:{session_id}"),
+            format!("calleeEoa:{}", callee_eoa.to_lowercase()),
+            format!("expiresAt:{expires_at}"),
+            format!("timestamp:{timestamp}"),
+            format!("nodeWallet:{}", node_wallet.to_lowercase()),
+        ]
+        .join("\n")
+    }
+}

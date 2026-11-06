@@ -25,3 +25,15 @@ export const isVoiceChunk = (data: Uint8Array): boolean =>
 
 export const chunkMac = (key: Buffer, locator: Buffer, blob: Buffer): Buffer =>
 	createHmac('sha256', key).update(locator).update(blob).digest().subarray(0, 16)
+
+// Verbatim from CoNET-SI src/util/util.ts notifyVoiceCallPush (rev 74c6cfd): the signed text.
+export const voiceCallPushText = (payload: { callId: string; sessionId: string; calleeEoa: string; expiresAt: number; timestamp: number }, nodeWallet: { address: string }): string =>
+	[
+				'CoNET voiceCallPush relay',
+				`callId:${payload.callId}`,
+				`sessionId:${payload.sessionId}`,
+				`calleeEoa:${payload.calleeEoa.toLowerCase()}`,
+				`expiresAt:${payload.expiresAt}`,
+				`timestamp:${payload.timestamp}`,
+				`nodeWallet:${nodeWallet.address.toLowerCase()}`,
+			].join('\n')

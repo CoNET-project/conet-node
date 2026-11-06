@@ -37,6 +37,17 @@ pub enum Request {
         eoa: String,
         timestamp: u64,
     },
+    SignVoiceCallPush {
+        #[serde(rename = "callId")]
+        call_id: String,
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "calleeEoa")]
+        callee_eoa: String,
+        #[serde(rename = "expiresAt")]
+        expires_at: i64,
+        timestamp: i64,
+    },
     /// NodeRegistryV2 NodeStatement (one per epoch and kind).
     SignStatement {
         #[serde(rename = "nodeId")]

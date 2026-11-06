@@ -62,6 +62,10 @@ pub async fn dispatch(mut stream: Conn, peer: SocketAddr, command: Value, ctx: A
         "mining" if ctx.legacy_chat_listen && s(&command, "listenKind") == "chat" => {
             legacy_chat_listen(stream, peer, command, ctx).await
         }
+        "voice_listen" => crate::voice::listen(stream, command, ctx).await,
+        "voice_unlisten" => crate::voice::unlisten(stream, command, ctx).await,
+        "voice_offer_store" => crate::voice::offer_store(stream, command, ctx).await,
+        "voice_offer_fetch" => crate::voice::offer_fetch(stream, command, ctx).await,
         "gossip_delivery_ack" => delivery_ack(&mut stream, &command, &ctx).await,
         "wallet_online_query" => online_query(&mut stream, &command, &ctx).await,
         "wallet_native_wake_query" => native_wake_query(&mut stream, &command, &ctx).await,

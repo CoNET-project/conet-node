@@ -340,6 +340,44 @@ async fn notices_use_fixed_texts() {
         .unwrap()
         .unwrap();
     assert_eq!(eth::recover_message("2036549", &sig).unwrap(), addr);
+    // voice call push: fixed text including the node wallet; window checks
+    let (c5, eo) = (c.clone(), eoa.clone());
+    let exp = ts as i64 * 1000 + 60_000;
+    let sig = tokio::task::spawn_blocking(move || {
+        c5.sign_voice_call_push(
+            "call-0123456789",
+            "0123456789abcdef0123",
+            &eo,
+            exp,
+            ts as i64,
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    let text = si_proto::voice::call_push_text(
+        "call-0123456789",
+        "0123456789abcdef0123",
+        &eoa,
+        exp,
+        ts as i64,
+        &addr,
+    );
+    assert_eq!(eth::recover_message(&text, &sig).unwrap(), addr);
+    let (c6, eo) = (c.clone(), eoa.clone());
+    assert!(
+        tokio::task::spawn_blocking(move || c6.sign_voice_call_push(
+            "call-0123456789",
+            "0123456789abcdef0123",
+            &eo,
+            exp + 3_600_000,
+            ts as i64
+        ))
+        .await
+        .unwrap()
+        .is_err(),
+        "expiry over 10 minutes refused"
+    );
     // malformed key ID or stale timestamp is refused
     let (c3, eo) = (c.clone(), eoa.clone());
     assert!(

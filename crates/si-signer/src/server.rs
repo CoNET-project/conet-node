@@ -170,6 +170,36 @@ impl Signer {
                     .map(ok)
                     .unwrap_or_else(|_| refused("sign"))
             }
+            Request::SignVoiceCallPush {
+                call_id,
+                session_id,
+                callee_eoa,
+                expires_at,
+                timestamp,
+            } => {
+                let now_ms = now() * 1000;
+                let fields_ok = (8..=128).contains(&call_id.len())
+                    && (16..=128).contains(&session_id.len())
+                    && eth::is_address(&callee_eoa)
+                    && expires_at > now_ms
+                    && expires_at <= now_ms + 10 * 60_000
+                    && (now() - timestamp).abs() <= 600;
+                if !fields_ok {
+                    return refused("notice_fields");
+                }
+                let text = sp::voice::call_push_text(
+                    &call_id,
+                    &session_id,
+                    &callee_eoa,
+                    expires_at,
+                    timestamp,
+                    &self.wallet.address(),
+                );
+                self.wallet
+                    .sign_message(&text)
+                    .map(ok)
+                    .unwrap_or_else(|_| refused("sign"))
+            }
             Request::RouteSessionKey { pkesk } => {
                 let Ok(bytes) = B64.decode(pkesk) else {
                     return refused("pkesk_fields");

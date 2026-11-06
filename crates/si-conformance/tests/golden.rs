@@ -15,5 +15,5 @@ fn golden_vectors_pass() {
         .filter(|r| r["pass"] != true)
         .collect();
     assert!(failed.is_empty(), "failed vectors: {failed:#?}");
-    assert!(out["summary"]["pass"].as_u64().unwrap() >= 54);
+    assert!(out["summary"]["pass"].as_u64().unwrap() >= 66);
 }

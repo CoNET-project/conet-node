@@ -6,6 +6,7 @@
 
 pub mod node;
 pub mod statement;
+pub mod voice;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::Serialize;
@@ -49,6 +50,11 @@ pub enum Decision {
         mac_ok: bool,
         #[serde(rename = "blobLen")]
         blob_len: usize,
+        /// Raw MAC and blob, for the host to check against the live session's write key.
+        #[serde(skip)]
+        mac: [u8; 16],
+        #[serde(skip)]
+        blob: Vec<u8>,
     },
     /// Unsigned voice command (sessionId is the capability).
     VoiceCommand {
@@ -102,9 +108,36 @@ pub trait NodeNotices: Send + Sync {
         timestamp: u64,
     ) -> si_crypto::Result<String>;
     fn sign_native_wakeable(&self, eoa: &str, timestamp: u64) -> si_crypto::Result<String>;
+    /// SI `notifyVoiceCallPush` text; the signer adds its own wallet address.
+    fn sign_voice_call_push(
+        &self,
+        call_id: &str,
+        session_id: &str,
+        callee_eoa: &str,
+        expires_at: i64,
+        timestamp: i64,
+    ) -> si_crypto::Result<String>;
 }
 
 impl NodeNotices for eth::EthKey {
+    fn sign_voice_call_push(
+        &self,
+        call_id: &str,
+        session_id: &str,
+        callee_eoa: &str,
+        expires_at: i64,
+        timestamp: i64,
+    ) -> si_crypto::Result<String> {
+        let text = proto::voice::call_push_text(
+            call_id,
+            session_id,
+            callee_eoa,
+            expires_at,
+            timestamp,
+            &eth::EthKey::address(self),
+        );
+        eth::EthKey::sign_message(self, &text)
+    }
     fn sign_epoch(&self, epoch: u64) -> si_crypto::Result<String> {
         eth::EthKey::sign_message(self, &epoch.to_string())
     }
@@ -178,10 +211,14 @@ pub fn classify_post(armor: &str, local: &LocalRoute<'_>, write_keys: &WriteKeys
             .get(&loc_hex)
             .map(|k| sym::ct_eq(&sym::chunk_mac(k, loc, blob), mac))
             .unwrap_or(false);
+        let mut mac16 = [0u8; 16];
+        mac16.copy_from_slice(mac);
         return Decision::VoiceChunk {
             locator: loc_hex,
             mac_ok,
             blob_len: blob.len(),
+            mac: mac16,
+            blob: blob.to_vec(),
         };
     }
     let text = proto::crlf_to_lf(&String::from_utf8_lossy(&bytes));

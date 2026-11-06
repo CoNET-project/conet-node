@@ -22,14 +22,14 @@ pub enum Step {
         signed: bool,
         hops: Vec<proto::HopSig>,
     },
+    /// SI `handleVoiceChunk`: the host checks `mac` with the target session's write key.
     VoiceChunk {
         locator: String,
+        mac: [u8; 16],
+        blob: Vec<u8>,
     },
     /// End the socket. `attack` = SI `terminateByEnd` (plain end), else 404 page (`distorySocket`).
-    Close {
-        reason: &'static str,
-        attack: bool,
-    },
+    Close { reason: &'static str, attack: bool },
 }
 
 pub struct Node<'a> {
@@ -111,14 +111,8 @@ impl Node<'_> {
                 attack: true,
             },
             Decision::VoiceChunk {
-                locator,
-                mac_ok: true,
-                ..
-            } => Step::VoiceChunk { locator },
-            Decision::VoiceChunk { .. } => Step::Close {
-                reason: "voice_mac",
-                attack: false,
-            },
+                locator, mac, blob, ..
+            } => Step::VoiceChunk { locator, mac, blob },
             Decision::VoiceCommand { command } => self.command(command, false, hops),
             Decision::SignedCommand { command } => self.command(command, true, hops),
             Decision::Reject { reason } => Step::Close {

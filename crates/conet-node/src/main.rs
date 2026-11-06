@@ -8,7 +8,7 @@
 use conet_node::chain::{AddressPgp, GuardianV6, NodeSource, Rpc, UserRoutes};
 use conet_node::push::{BeamioApi, Push};
 use conet_node::route::{RouteTable, StaticRoutes};
-use conet_node::store::{DiskStore, MailboxStore, MemoryStore};
+use conet_node::store::{DiskStore, MailboxStore, MemoryOffers, MemoryStore, OfferStore};
 use conet_node::{mailbox::Mailbox, server, watcher};
 use si_core::{NodeNotices, RouteDecryptor, WalletSigner};
 use std::sync::Arc;
@@ -103,11 +103,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let listen = arg("--listen").unwrap_or_else(|| "127.0.0.1:8080".into());
     let (decryptor, wallet, notices, key_id, old_key_ids) = keys()?;
-    let store: Arc<dyn MailboxStore> = match arg("--mailbox-db") {
-        Some(p) => Arc::new(DiskStore::open(std::path::Path::new(&p))?),
+    // One redb file holds the offline mailbox and the voice offer index.
+    let (store, offers): (Arc<dyn MailboxStore>, Arc<dyn OfferStore>) = match arg("--mailbox-db") {
+        Some(p) => {
+            let d = Arc::new(DiskStore::open(std::path::Path::new(&p))?);
+            (d.clone(), d)
+        }
         None => {
-            eprintln!("WARNING: no --mailbox-db; offline mail is kept in memory only");
-            Arc::new(MemoryStore::default())
+            eprintln!(
+                "WARNING: no --mailbox-db; offline mail and voice offers are kept in memory only"
+            );
+            (
+                Arc::new(MemoryStore::default()),
+                Arc::new(MemoryOffers::default()),
+            )
         }
     };
 
@@ -136,11 +145,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store.clone(),
     );
     if let (Some(base), Some(ur)) = (arg("--api-base"), user_routes.clone()) {
-        let api: Arc<dyn Push> = Arc::new(Arc::new(BeamioApi::new(&base, notices, ur)?));
+        let node_wallet = ctx.wallet.address();
+        let api: Arc<dyn Push> =
+            Arc::new(Arc::new(BeamioApi::new(&base, notices, ur, node_wallet)?));
         ctx.mailbox = Arc::new(Mailbox::new(store, api.clone()));
         ctx.push = api;
     }
     ctx.user_routes = user_routes;
+    ctx.offers = offers;
     ctx.old_key_ids = old_key_ids;
     routes.set_own_aliases(&ctx.old_key_ids);
     if let Some(b) = arg("--max-body").and_then(|v| v.parse().ok()) {

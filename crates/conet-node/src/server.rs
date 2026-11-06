@@ -35,6 +35,8 @@ pub struct NodeCtx {
     /// AddressPGP (or a test double). None = static routes only.
     pub user_routes: Option<Arc<dyn UserRoutes>>,
     pub mailbox: Arc<Mailbox>,
+    pub voice: Arc<crate::voice::VoiceRelay>,
+    pub offers: Arc<dyn crate::store::OfferStore>,
     pub push: Arc<dyn Push>,
     pub chain: Arc<ChainState>,
     pub limits: Limits,
@@ -65,6 +67,8 @@ impl NodeCtx {
             routes,
             user_routes: None,
             mailbox: Arc::new(Mailbox::new(store, push.clone())),
+            voice: Arc::new(crate::voice::VoiceRelay::default()),
+            offers: Arc::new(crate::store::MemoryOffers::default()),
             push,
             chain: Arc::new(ChainState::default()),
             limits: Limits::default(),
@@ -106,6 +110,7 @@ fn now_secs() -> i64 {
 }
 
 pub async fn serve(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::Result<()> {
+    tokio::spawn(ctx.voice.clone().sweep_loop());
     let slots = Arc::new(Semaphore::new(ctx.max_connections));
     loop {
         let (stream, peer) = listener.accept().await?;
@@ -243,9 +248,8 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
         Step::Command { command, .. } => {
             crate::commands::dispatch(stream, peer, command, ctx).await
         }
-        Step::VoiceChunk { .. } => {
-            // line C.
-            let _ = stream.write_all(&http::not_found()).await;
+        Step::VoiceChunk { locator, mac, blob } => {
+            crate::voice::chunk(stream, locator, mac, blob, ctx).await
         }
         Step::Close { reason, attack } => {
             debug!(reason, attack, "close");

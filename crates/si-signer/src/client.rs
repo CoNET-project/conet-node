@@ -107,6 +107,22 @@ impl WalletSigner for SignerClient {
 }
 
 impl NodeNotices for SignerClient {
+    fn sign_voice_call_push(
+        &self,
+        call_id: &str,
+        session_id: &str,
+        callee_eoa: &str,
+        expires_at: i64,
+        timestamp: i64,
+    ) -> Result<String> {
+        self.call(&Request::SignVoiceCallPush {
+            call_id: call_id.into(),
+            session_id: session_id.into(),
+            callee_eoa: callee_eoa.into(),
+            expires_at,
+            timestamp,
+        })
+    }
     fn sign_epoch(&self, epoch: u64) -> Result<String> {
         self.call(&Request::SignEpoch { epoch })
     }

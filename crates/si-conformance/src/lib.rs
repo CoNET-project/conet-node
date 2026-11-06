@@ -230,6 +230,37 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
                 "address": eth::recover_digest(&dg, &sig).map_err(es)?,
             })
         }
+        "voice_listen_verify" => {
+            let now_ms = input["nowMs"].as_i64().ok_or("nowMs")?;
+            match si_core::voice::verify_listen_v3(
+                &input["command"],
+                &[s(input, "relayKeyId")],
+                now_ms,
+            ) {
+                Ok(a) => {
+                    json!({ "ok": true, "sessionId": a.session_id, "temp": a.temp, "notAfter": a.not_after, "writeKeyB64": B64.encode(a.write_key) })
+                }
+                Err(e) => json!({ "ok": false, "error": e }),
+            }
+        }
+        "voice_frames" => json!({
+            "headers": proto::voice::SSE_HEADERS,
+            "ready": proto::voice::ready_frame(s(input, "sessionId"), s(input, "nodeWallet")),
+            "chunk": proto::voice::chunk_frame(s(input, "blobB64")),
+        }),
+        "voice_call_push" => {
+            let p = &input["payload"];
+            let w = &c.wallets[s(input, "wallet")];
+            let text = proto::voice::call_push_text(
+                s(p, "callId"),
+                s(p, "sessionId"),
+                s(p, "calleeEoa"),
+                p["expiresAt"].as_i64().unwrap_or(0),
+                p["timestamp"].as_i64().unwrap_or(0),
+                &w.address(),
+            );
+            json!({ "text": text, "signature": w.sign_message(&text).map_err(es)? })
+        }
         k => return Err(format!("unknown kind {k}")),
     })
 }

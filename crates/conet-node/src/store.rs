@@ -97,6 +97,7 @@ impl DiskStore {
         let w = db.begin_write()?;
         w.open_table(MSGS)?;
         w.open_table(SEQ)?;
+        w.open_table(OFFERS)?;
         w.commit()?;
         Ok(Self {
             db,
@@ -203,6 +204,124 @@ impl MailboxStore for DiskStore {
     }
 }
 
+/// Voice offer index (SI `voiceOfferIndex.ts`): callee user-PGP ciphertext by (callId, sessionId),
+/// fetched by a native shell woken by push. Never decrypted here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Offer {
+    pub call_id: String,
+    pub session_id: String,
+    pub offer_armor: String,
+    pub expires_at: i64,
+}
+
+pub trait OfferStore: Send + Sync {
+    fn put(&self, call_id: &str, session_id: &str, armor: &str, expires_at: i64, now: i64) -> bool;
+    fn get(&self, call_id: &str, session_id: &str, now: i64) -> Option<Offer>;
+}
+
+fn offer_key(call_id: &str, session_id: &str) -> String {
+    format!("{}|{}", call_id.to_lowercase(), session_id.to_lowercase())
+}
+
+/// In memory, at most 256 entries (SI `MAX_ENTRIES`), oldest dropped first.
+#[derive(Default)]
+pub struct MemoryOffers {
+    inner: Mutex<(HashMap<String, Offer>, std::collections::VecDeque<String>)>,
+}
+
+impl OfferStore for MemoryOffers {
+    fn put(&self, call_id: &str, session_id: &str, armor: &str, expires_at: i64, now: i64) -> bool {
+        let mut g = self.inner.lock().expect("offers");
+        let (map, order) = &mut *g;
+        map.retain(|_, o| o.expires_at > now);
+        order.retain(|k| map.contains_key(k));
+        let k = offer_key(call_id, session_id);
+        if map
+            .insert(
+                k.clone(),
+                Offer {
+                    call_id: call_id.into(),
+                    session_id: session_id.into(),
+                    offer_armor: armor.into(),
+                    expires_at,
+                },
+            )
+            .is_none()
+        {
+            order.push_back(k);
+        }
+        while map.len() > si_proto::voice::OFFER_MEMORY_MAX {
+            let Some(old) = order.pop_front() else { break };
+            map.remove(&old);
+        }
+        true
+    }
+    fn get(&self, call_id: &str, session_id: &str, now: i64) -> Option<Offer> {
+        if call_id.is_empty() || session_id.is_empty() {
+            return None;
+        }
+        let mut g = self.inner.lock().expect("offers");
+        let k = offer_key(call_id, session_id);
+        match g.0.get(&k) {
+            Some(o) if o.expires_at > now => Some(o.clone()),
+            Some(_) => {
+                g.0.remove(&k);
+                None
+            }
+            None => None,
+        }
+    }
+}
+
+const OFFERS: TableDefinition<&str, &[u8]> = TableDefinition::new("voice_offers");
+
+impl OfferStore for DiskStore {
+    fn put(&self, call_id: &str, session_id: &str, armor: &str, expires_at: i64, now: i64) -> bool {
+        let run = || -> Result<(), redb::Error> {
+            let w = self.db.begin_write()?;
+            {
+                let mut t = w.open_table(OFFERS)?;
+                let expired: Vec<String> = t
+                    .iter()?
+                    .filter_map(|e| e.ok())
+                    .filter(|(_, v)| {
+                        serde_json::from_slice::<Offer>(v.value())
+                            .map(|o| o.expires_at <= now)
+                            .unwrap_or(true)
+                    })
+                    .map(|(k, _)| k.value().to_string())
+                    .collect();
+                for k in expired {
+                    t.remove(k.as_str())?;
+                }
+                let o = Offer {
+                    call_id: call_id.into(),
+                    session_id: session_id.into(),
+                    offer_armor: armor.into(),
+                    expires_at,
+                };
+                t.insert(
+                    offer_key(call_id, session_id).as_str(),
+                    serde_json::to_vec(&o).expect("offer json").as_slice(),
+                )?;
+            }
+            w.commit()?;
+            Ok(())
+        };
+        run().is_ok()
+    }
+    fn get(&self, call_id: &str, session_id: &str, now: i64) -> Option<Offer> {
+        if call_id.is_empty() || session_id.is_empty() {
+            return None;
+        }
+        let r = self.db.begin_read().ok()?;
+        let t = r.open_table(OFFERS).ok()?;
+        let v = t.get(offer_key(call_id, session_id).as_str()).ok()??;
+        let o: Offer = serde_json::from_slice(v.value()).ok()?;
+        (o.expires_at > now).then_some(o)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +367,34 @@ mod tests {
         drop(s);
         let s = DiskStore::open(&dir.path().join("m.redb")).unwrap();
         assert_eq!(s.pending("k1").len(), 3, "survives reopen");
+    }
+
+    #[test]
+    fn offers_expire_and_are_case_insensitive() {
+        let dir = tempfile::tempdir().unwrap();
+        let disk = DiskStore::open(&dir.path().join("o.redb")).unwrap();
+        let mem = MemoryOffers::default();
+        for s in [&disk as &dyn OfferStore, &mem] {
+            assert!(s.put("CallId01", "SESSION-0123456789", "armor", 1000, 0));
+            assert_eq!(
+                s.get("callid01", "session-0123456789", 500)
+                    .unwrap()
+                    .offer_armor,
+                "armor"
+            );
+            assert!(
+                s.get("callid01", "session-0123456789", 1000).is_none(),
+                "expired"
+            );
+            assert!(s.get("", "x", 0).is_none());
+        }
+        for i in 0..300 {
+            mem.put(&format!("call{i:08}"), "s-0123456789abcdef", "a", 10_000, 0);
+        }
+        assert!(
+            mem.get("call00000000", "s-0123456789abcdef", 1).is_none(),
+            "oldest evicted at 256"
+        );
+        assert!(mem.get("call00000299", "s-0123456789abcdef", 1).is_some());
     }
 }

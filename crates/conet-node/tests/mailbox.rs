@@ -2,7 +2,7 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use conet_node::chain::{BoxFut, ChainError, UserRoutes};
 use conet_node::mailbox::Mailbox;
-use conet_node::push::Push;
+use conet_node::push::{Push, VoiceCall};
 use conet_node::route::RouteTable;
 use conet_node::server::{self, NodeCtx};
 use conet_node::store::{armor_hash, MailboxStore, MemoryStore};
@@ -86,6 +86,7 @@ struct RecordingPush {
     devices: Mutex<Vec<Value>>,
 }
 impl Push for RecordingPush {
+    fn voice_call(&self, _c: VoiceCall) {}
     fn offline_chat(&self, user_key: String) {
         self.offline.lock().unwrap().push(user_key);
     }
