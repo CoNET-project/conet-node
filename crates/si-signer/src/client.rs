@@ -2,7 +2,7 @@
 //! runs unchanged whether keys are in-process (tests) or behind the signer.
 use crate::proto::{self, Request, Response};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use si_core::{RouteDecryptor, WalletSigner};
+use si_core::{NodeNotices, RouteDecryptor, WalletSigner};
 use si_crypto::{eth, Error, Result};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -83,6 +83,25 @@ impl WalletSigner for SignerClient {
             n,
             h: p[4].to_string(),
             k: p[5].to_string(),
+        })
+    }
+}
+
+impl NodeNotices for SignerClient {
+    fn sign_epoch(&self, epoch: u64) -> Result<String> {
+        self.call(&Request::SignEpoch { epoch })
+    }
+    fn sign_offline_chat(&self, pgp_key_id: &str, eoa: &str, timestamp: u64) -> Result<String> {
+        self.call(&Request::SignOfflineChat {
+            pgp_key_id: pgp_key_id.into(),
+            eoa: eoa.into(),
+            timestamp,
+        })
+    }
+    fn sign_native_wakeable(&self, eoa: &str, timestamp: u64) -> Result<String> {
+        self.call(&Request::SignNativeWakeable {
+            eoa: eoa.into(),
+            timestamp,
         })
     }
 }

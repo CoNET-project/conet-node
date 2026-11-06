@@ -1,14 +1,16 @@
 //! `conet-node` daemon (M1).
 //!
 //! Production: `--signer-socket <path>`; keys stay in the `conet-signer` process.
-//! `--insecure-dev-keys` reads a TEST route key and wallet from files/env for local networks only.
-use conet_node::{
-    http::Limits,
-    route::{RouteTable, StaticRoutes},
-    server,
-    store::MemoryStore,
-};
-use si_core::{RouteDecryptor, WalletSigner};
+//! `--insecure-dev-keys` reads a TEST route key and wallet for local networks only.
+//!
+//! Routes: `--rpc <url>` reads the node table (GuardianNodesInfoV6) and AddressPGP from chain;
+//! `--routes <routes.json>` uses a static table (local test networks).
+use conet_node::chain::{AddressPgp, GuardianV6, NodeSource, Rpc, UserRoutes};
+use conet_node::push::{BeamioApi, Push};
+use conet_node::route::{RouteTable, StaticRoutes};
+use conet_node::store::{DiskStore, MailboxStore, MemoryStore};
+use conet_node::{mailbox::Mailbox, server, watcher};
+use si_core::{NodeNotices, RouteDecryptor, WalletSigner};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,13 +21,18 @@ fn arg(name: &str) -> Option<String> {
         .and_then(|i| a.get(i + 1).cloned())
 }
 
-type Keys = (Arc<dyn RouteDecryptor>, Arc<dyn WalletSigner>, String);
+type Keys = (
+    Arc<dyn RouteDecryptor>,
+    Arc<dyn WalletSigner>,
+    Arc<dyn NodeNotices>,
+    String,
+);
 
 fn keys() -> Result<Keys, Box<dyn std::error::Error>> {
     if let Some(sock) = arg("--signer-socket") {
         let c = Arc::new(si_signer::client::SignerClient::connect(sock)?);
         let id = c.route_key_id().to_string();
-        return Ok((c.clone(), c, id));
+        return Ok((c.clone(), c.clone(), c, id));
     }
     if std::env::args().any(|a| a == "--insecure-dev-keys") {
         eprintln!("WARNING: --insecure-dev-keys is for local test networks with test keys only");
@@ -36,10 +43,9 @@ fn keys() -> Result<Keys, Box<dyn std::error::Error>> {
             &armor,
             &std::env::var("CONET_DEV_ROUTE_PASS").unwrap_or_default(),
         )?;
-        let wallet = si_crypto::eth::EthKey::from_hex(
-            &std::env::var("CONET_DEV_WALLET_KEY").map_err(|_| "CONET_DEV_WALLET_KEY")?,
-        )?;
-        return Ok((Arc::new(key), Arc::new(wallet), id));
+        let hex = std::env::var("CONET_DEV_WALLET_KEY").map_err(|_| "CONET_DEV_WALLET_KEY")?;
+        let w = Arc::new(si_crypto::eth::EthKey::from_hex(&hex)?);
+        return Ok((Arc::new(key), w.clone(), w, id));
     }
     Err("need --signer-socket <path> (or --insecure-dev-keys for local tests)".into())
 }
@@ -50,20 +56,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let listen = arg("--listen").unwrap_or_else(|| "127.0.0.1:8080".into());
-    let routes: StaticRoutes = serde_json::from_str(&std::fs::read_to_string(
-        arg("--routes").ok_or("--routes <routes.json>")?,
-    )?)?;
-    let (decryptor, wallet, key_id) = keys()?;
-    let ctx = Arc::new(server::NodeCtx {
-        routes: Arc::new(RouteTable::from_static(&key_id, &routes)),
+    let (decryptor, wallet, notices, key_id) = keys()?;
+    let store: Arc<dyn MailboxStore> = match arg("--mailbox-db") {
+        Some(p) => Arc::new(DiskStore::open(std::path::Path::new(&p))?),
+        None => {
+            eprintln!("WARNING: no --mailbox-db; offline mail is kept in memory only");
+            Arc::new(MemoryStore::default())
+        }
+    };
+
+    let mut source: Option<Arc<dyn NodeSource>> = None;
+    let (routes, user_routes): (Arc<RouteTable>, Option<Arc<dyn UserRoutes>>) =
+        if let Some(url) = arg("--rpc") {
+            let rpc = Rpc::new(&url)?;
+            source = Some(Arc::new(GuardianV6::new(rpc.clone())));
+            (
+                Arc::new(RouteTable::new(&key_id, Duration::from_secs(600))),
+                Some(Arc::new(AddressPgp::new(rpc))),
+            )
+        } else {
+            let s: StaticRoutes = serde_json::from_str(&std::fs::read_to_string(
+                arg("--routes").ok_or("--rpc <url> or --routes <file>")?,
+            )?)?;
+            (Arc::new(RouteTable::from_static(&key_id, &s)), None)
+        };
+
+    let mut ctx = server::NodeCtx::new(
         key_id,
         decryptor,
         wallet,
-        store: Arc::new(MemoryStore::default()),
-        limits: Limits::default(),
-        connect_timeout: Duration::from_secs(8),
-        max_connections: 4096,
-    });
+        notices.clone(),
+        routes.clone(),
+        store.clone(),
+    );
+    if let (Some(base), Some(ur)) = (arg("--api-base"), user_routes.clone()) {
+        let api: Arc<dyn Push> = Arc::new(Arc::new(BeamioApi::new(&base, notices, ur)?));
+        ctx.mailbox = Arc::new(Mailbox::new(store, api.clone()));
+        ctx.push = api;
+    }
+    ctx.user_routes = user_routes;
+    let ctx = Arc::new(ctx);
+    if let Some(src) = source {
+        tokio::spawn(watcher::run(
+            src,
+            routes,
+            ctx.chain.clone(),
+            watcher::WatchOpts::default(),
+        ));
+    }
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     tracing::info!(%listen, key_id = %ctx.key_id, "conet-node listening");
     server::serve(listener, ctx).await?;

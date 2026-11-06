@@ -91,6 +91,39 @@ impl WalletSigner for eth::EthKey {
     }
 }
 
+/// Fixed-format notices the node wallet signs besides hop rows (the signer builds the text).
+pub trait NodeNotices: Send + Sync {
+    /// EIP-191 over the decimal epoch (block number), sent in the mailbox handshake.
+    fn sign_epoch(&self, epoch: u64) -> si_crypto::Result<String>;
+    fn sign_offline_chat(
+        &self,
+        pgp_key_id: &str,
+        eoa: &str,
+        timestamp: u64,
+    ) -> si_crypto::Result<String>;
+    fn sign_native_wakeable(&self, eoa: &str, timestamp: u64) -> si_crypto::Result<String>;
+}
+
+impl NodeNotices for eth::EthKey {
+    fn sign_epoch(&self, epoch: u64) -> si_crypto::Result<String> {
+        eth::EthKey::sign_message(self, &epoch.to_string())
+    }
+    fn sign_offline_chat(
+        &self,
+        pgp_key_id: &str,
+        eoa: &str,
+        timestamp: u64,
+    ) -> si_crypto::Result<String> {
+        eth::EthKey::sign_message(
+            self,
+            &proto::api_texts::notify_offline_chat(pgp_key_id, eoa, timestamp),
+        )
+    }
+    fn sign_native_wakeable(&self, eoa: &str, timestamp: u64) -> si_crypto::Result<String> {
+        eth::EthKey::sign_message(self, &proto::api_texts::native_wakeable(eoa, timestamp))
+    }
+}
+
 pub struct LocalRoute<'a> {
     pub key: &'a dyn RouteDecryptor,
     /// Upper-case hex `getKeyIDs()[1]`.

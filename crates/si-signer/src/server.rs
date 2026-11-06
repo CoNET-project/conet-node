@@ -119,6 +119,38 @@ impl Signer {
                     .map(ok)
                     .unwrap_or_else(|_| refused("sign"))
             }
+            Request::SignEpoch { epoch } => self
+                .wallet
+                .sign_message(&epoch.to_string())
+                .map(ok)
+                .unwrap_or_else(|_| refused("sign")),
+            Request::SignOfflineChat {
+                pgp_key_id,
+                eoa,
+                timestamp,
+            } => {
+                if !is_hex(&pgp_key_id, 16)
+                    || !eth::is_address(&eoa)
+                    || (now() - timestamp as i64).abs() > 600
+                {
+                    return refused("notice_fields");
+                }
+                let text = sp::api_texts::notify_offline_chat(&pgp_key_id, &eoa, timestamp);
+                self.wallet
+                    .sign_message(&text)
+                    .map(ok)
+                    .unwrap_or_else(|_| refused("sign"))
+            }
+            Request::SignNativeWakeable { eoa, timestamp } => {
+                if !eth::is_address(&eoa) || (now() - timestamp as i64).abs() > 600 {
+                    return refused("notice_fields");
+                }
+                let text = sp::api_texts::native_wakeable(&eoa, timestamp);
+                self.wallet
+                    .sign_message(&text)
+                    .map(ok)
+                    .unwrap_or_else(|_| refused("sign"))
+            }
             Request::DecryptRoute { armor } => match opgp::decrypt(&armor, &self.route, None) {
                 Ok(d) => ok(B64.encode(d.data)),
                 Err(_) => refused("decrypt"),

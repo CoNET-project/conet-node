@@ -306,3 +306,51 @@ async fn peer_uid_check() {
             .is_err()
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn notices_use_fixed_texts() {
+    use si_core::NodeNotices;
+    let e = Env::new();
+    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let eoa = e.g["wallets"]["client"]["address"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let addr = e.g["wallets"]["nodeA"]["address"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (c1, eo) = (c.clone(), eoa.clone());
+    let sig =
+        tokio::task::spawn_blocking(move || c1.sign_offline_chat("B71B2F36BC7A9B84", &eo, ts))
+            .await
+            .unwrap()
+            .unwrap();
+    let text = si_proto::api_texts::notify_offline_chat("B71B2F36BC7A9B84", &eoa, ts);
+    assert_eq!(eth::recover_message(&text, &sig).unwrap(), addr);
+    let c2 = c.clone();
+    let sig = tokio::task::spawn_blocking(move || c2.sign_epoch(2036549))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(eth::recover_message("2036549", &sig).unwrap(), addr);
+    // malformed key ID or stale timestamp is refused
+    let (c3, eo) = (c.clone(), eoa.clone());
+    assert!(
+        tokio::task::spawn_blocking(move || c3.sign_offline_chat("not-a-key", &eo, ts))
+            .await
+            .unwrap()
+            .is_err()
+    );
+    let c4 = c.clone();
+    assert!(
+        tokio::task::spawn_blocking(move || c4.sign_native_wakeable(&eoa, ts - 3600))
+            .await
+            .unwrap()
+            .is_err()
+    );
+}

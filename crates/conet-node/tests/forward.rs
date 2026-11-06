@@ -1,7 +1,6 @@
 //! Stage A1 end-to-end: three nodes on 127.0.0.1 with golden TEST keys.
 //! A = entry, B = mailbox of the test user, C = node without user routes.
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use conet_node::http::Limits;
 use conet_node::route::RouteTable;
 use conet_node::server::{self, NodeCtx};
 use conet_node::store::{MailboxStore, MemoryStore};
@@ -72,16 +71,16 @@ async fn start() -> Net {
         } else {
             Arc::new(MemoryStore::default())
         };
-        let ctx = Arc::new(NodeCtx {
-            key_id: id,
-            decryptor: Arc::new(k),
-            wallet: Arc::new(wallet(&g, names[i].1)),
-            routes: Arc::new(routes),
+        let mut c = NodeCtx::new(
+            id,
+            Arc::new(k),
+            Arc::new(wallet(&g, names[i].1)),
+            Arc::new(wallet(&g, names[i].1)),
+            Arc::new(routes),
             store,
-            limits: Limits::default(),
-            connect_timeout: Duration::from_secs(2),
-            max_connections: 64,
-        });
+        );
+        c.connect_timeout = Duration::from_secs(2);
+        let ctx = Arc::new(c);
         tokio::spawn(server::serve(l, ctx));
     }
     Net {
@@ -284,26 +283,22 @@ async fn entry_with_signer_process() {
         Arc::new(r)
     };
     let store_b = Arc::new(MemoryStore::default());
-    let ctx_a = Arc::new(NodeCtx {
-        key_id: ida.clone(),
-        decryptor: client.clone(),
-        wallet: client.clone(),
-        routes: mk_routes(&ida),
-        store: Arc::new(MemoryStore::default()),
-        limits: Limits::default(),
-        connect_timeout: Duration::from_secs(2),
-        max_connections: 64,
-    });
-    let ctx_b = Arc::new(NodeCtx {
-        key_id: idb.clone(),
-        decryptor: Arc::new(kb),
-        wallet: Arc::new(wallet(&g, "nodeB")),
-        routes: mk_routes(&idb),
-        store: store_b.clone(),
-        limits: Limits::default(),
-        connect_timeout: Duration::from_secs(2),
-        max_connections: 64,
-    });
+    let ctx_a = Arc::new(NodeCtx::new(
+        ida.clone(),
+        client.clone(),
+        client.clone(),
+        client.clone(),
+        mk_routes(&ida),
+        Arc::new(MemoryStore::default()),
+    ));
+    let ctx_b = Arc::new(NodeCtx::new(
+        idb.clone(),
+        Arc::new(kb),
+        Arc::new(wallet(&g, "nodeB")),
+        Arc::new(wallet(&g, "nodeB")),
+        mk_routes(&idb),
+        store_b.clone(),
+    ));
     tokio::spawn(server::serve(la, ctx_a));
     tokio::spawn(server::serve(lb, ctx_b));
 

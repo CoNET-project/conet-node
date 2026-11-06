@@ -1,9 +1,14 @@
-//! Accept loop and `/post` handling (line A, stage A1: entry, onion, hop sigs, local store).
+//! Accept loop and `/post` handling: entry, onion, hop sigs (A1); user-route lookup, mailbox
+//! delivery and commands (A2).
+use crate::chain::UserRoutes;
 use crate::http::{self, Limits, ReadError};
+use crate::mailbox::Mailbox;
+use crate::push::{NoPush, Push};
 use crate::route::{Resolved, RouteTable};
 use crate::store::{MailboxStore, Stored};
+use crate::watcher::ChainState;
 use si_core::node::{Node, Step};
-use si_core::{LocalRoute, RouteDecryptor, WalletSigner, WriteKeys};
+use si_core::{LocalRoute, NodeNotices, RouteDecryptor, WalletSigner, WriteKeys};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -16,11 +21,66 @@ pub struct NodeCtx {
     pub key_id: String,
     pub decryptor: Arc<dyn RouteDecryptor>,
     pub wallet: Arc<dyn WalletSigner>,
+    pub notices: Arc<dyn NodeNotices>,
     pub routes: Arc<RouteTable>,
-    pub store: Arc<dyn MailboxStore>,
+    /// AddressPGP (or a test double). None = static routes only.
+    pub user_routes: Option<Arc<dyn UserRoutes>>,
+    pub mailbox: Arc<Mailbox>,
+    pub push: Arc<dyn Push>,
+    pub chain: Arc<ChainState>,
     pub limits: Limits,
     pub connect_timeout: Duration,
     pub max_connections: usize,
+}
+
+impl NodeCtx {
+    /// Defaults: no API push, no chain user routes, default limits.
+    pub fn new(
+        key_id: String,
+        decryptor: Arc<dyn RouteDecryptor>,
+        wallet: Arc<dyn WalletSigner>,
+        notices: Arc<dyn NodeNotices>,
+        routes: Arc<RouteTable>,
+        store: Arc<dyn MailboxStore>,
+    ) -> Self {
+        let push: Arc<dyn Push> = Arc::new(NoPush);
+        Self {
+            key_id,
+            decryptor,
+            wallet,
+            notices,
+            routes,
+            user_routes: None,
+            mailbox: Arc::new(Mailbox::new(store, push.clone())),
+            push,
+            chain: Arc::new(ChainState::default()),
+            limits: Limits::default(),
+            connect_timeout: Duration::from_secs(8),
+            max_connections: 4096,
+        }
+    }
+
+    /// Cached route, else ask AddressPGP once (negative answers cached briefly).
+    pub async fn resolve(&self, key_id: &str) -> Resolved {
+        let r = self.routes.resolve(key_id);
+        if r != Resolved::NoRoute || self.routes.recently_unknown(key_id) {
+            return r;
+        }
+        let Some(ur) = &self.user_routes else {
+            return r;
+        };
+        match tokio::time::timeout(Duration::from_secs(5), ur.route_of_user_key(key_id)).await {
+            Ok(Ok(Some(node))) => {
+                self.routes.set_user_route(key_id, &node);
+                self.routes.resolve(key_id)
+            }
+            Ok(Ok(None)) => {
+                self.routes.mark_unknown(key_id);
+                Resolved::NoRoute
+            }
+            _ => Resolved::NoRoute,
+        }
+    }
 }
 
 fn now_secs() -> i64 {
@@ -48,7 +108,7 @@ pub async fn serve(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::Result<
     }
 }
 
-async fn handle(mut stream: TcpStream, _peer: SocketAddr, ctx: Arc<NodeCtx>) {
+async fn handle(mut stream: TcpStream, peer: SocketAddr, ctx: Arc<NodeCtx>) {
     let req = match http::read_request(&mut stream, &ctx.limits).await {
         Ok(r) => r,
         Err(ReadError::Closed) => return,
@@ -65,14 +125,14 @@ async fn handle(mut stream: TcpStream, _peer: SocketAddr, ctx: Arc<NodeCtx>) {
         ("GET", p) if p.to_ascii_lowercase().starts_with("/nodewallet") => {
             let _ = stream.write_all(&http::ok_200(&ctx.wallet.address())).await;
         }
-        ("POST", p) if p.starts_with("/post") => post(stream, req, ctx).await,
+        ("POST", p) if p.starts_with("/post") => post(stream, peer, req, ctx).await,
         _ => {
             let _ = stream.write_all(&http::not_found()).await;
         }
     }
 }
 
-async fn post(mut stream: TcpStream, req: http::Request, ctx: Arc<NodeCtx>) {
+async fn post(mut stream: TcpStream, peer: SocketAddr, req: http::Request, ctx: Arc<NodeCtx>) {
     let Ok(body) = String::from_utf8(req.body) else {
         let _ = stream.write_all(&http::not_found()).await;
         return;
@@ -103,7 +163,7 @@ async fn post(mut stream: TcpStream, req: http::Request, ctx: Arc<NodeCtx>) {
             armor,
             no_push,
             hops,
-        } => match ctx.routes.resolve(&key_id) {
+        } => match ctx.resolve(&key_id).await {
             Resolved::NoRoute => {
                 let _ = stream
                     .write_all(&http::ok_200(r#"{"ok":false,"error":"no_route"}"#))
@@ -111,7 +171,7 @@ async fn post(mut stream: TcpStream, req: http::Request, ctx: Arc<NodeCtx>) {
             }
             Resolved::Local => {
                 let hop_bytes = Node::verified_hop_bytes(&hops, now_secs());
-                ctx.store.save(
+                ctx.mailbox.deliver(
                     &key_id,
                     Stored {
                         armor,
@@ -158,8 +218,11 @@ async fn post(mut stream: TcpStream, req: http::Request, ctx: Arc<NodeCtx>) {
                 }
             }
         },
-        Step::Command { .. } | Step::VoiceChunk { .. } => {
-            // A2 / line C.
+        Step::Command { command, .. } => {
+            crate::commands::dispatch(stream, peer, command, ctx).await
+        }
+        Step::VoiceChunk { .. } => {
+            // line C.
             let _ = stream.write_all(&http::not_found()).await;
         }
         Step::Close { reason, attack } => {

@@ -17,9 +17,17 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time"
 httparse = "1"
 httpdate = "1"
 tracing = "0.1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+alloy-sol-types = "1"
+alloy-primitives = "1"
+redb = "4"
+hex.workspace = true
+base64.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+pgp = { workspace = true }
 tempfile = "3"
 zeroize = "1"
 rand_chacha.workspace = true

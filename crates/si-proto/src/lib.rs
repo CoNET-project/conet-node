@@ -200,3 +200,24 @@ pub mod node_registry {
     pub const KIND_SERVICE: u8 = 2;
     pub const KIND_CAPABILITY: u8 = 3;
 }
+
+/// Texts the node wallet signs for the Beamio API (CoNET-SI `util.ts`, rev 74c6cfd).
+pub mod api_texts {
+    pub fn notify_offline_chat(pgp_key_id: &str, eoa: &str, timestamp: u64) -> String {
+        [
+            "Beamio notifyOfflineChat".to_string(),
+            format!("pgpKeyId:{pgp_key_id}"),
+            format!("eoa:{}", eoa.to_lowercase()),
+            format!("timestamp:{timestamp}"),
+        ]
+        .join("\n")
+    }
+    pub fn native_wakeable(eoa: &str, timestamp: u64) -> String {
+        [
+            "Beamio nativeWakeable".to_string(),
+            format!("eoa:{}", eoa.to_lowercase()),
+            format!("timestamp:{timestamp}"),
+        ]
+        .join("\n")
+    }
+}

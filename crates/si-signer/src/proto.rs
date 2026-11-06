@@ -19,6 +19,21 @@ pub enum Request {
     DecryptRoute {
         armor: String,
     },
+    /// EIP-191 over the decimal epoch (mailbox handshake `hash`).
+    SignEpoch {
+        epoch: u64,
+    },
+    /// Beamio API notices; the signer builds the fixed text.
+    SignOfflineChat {
+        #[serde(rename = "pgpKeyId")]
+        pgp_key_id: String,
+        eoa: String,
+        timestamp: u64,
+    },
+    SignNativeWakeable {
+        eoa: String,
+        timestamp: u64,
+    },
     /// NodeRegistryV2 NodeStatement (one per epoch and kind).
     SignStatement {
         #[serde(rename = "nodeId")]

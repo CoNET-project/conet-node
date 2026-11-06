@@ -22,6 +22,8 @@ pub struct RouteTable {
     nodes: RwLock<HashMap<String, SocketAddr>>,
     users: RwLock<HashMap<String, (String, Instant)>>,
     user_ttl: Duration,
+    /// Keys AddressPGP did not know, so one stranger cannot make us hit the RPC per request.
+    unknown: RwLock<HashMap<String, Instant>>,
 }
 
 /// Static table, for local test networks (`--routes routes.json`).
@@ -52,6 +54,7 @@ impl RouteTable {
             nodes: RwLock::default(),
             users: RwLock::default(),
             user_ttl,
+            unknown: RwLock::default(),
         }
     }
 
@@ -78,6 +81,23 @@ impl RouteTable {
             user_key.to_uppercase(),
             (node_key.to_uppercase(), Instant::now()),
         );
+    }
+
+    pub fn mark_unknown(&self, key: &str) {
+        let mut u = self.unknown.write().expect("route lock");
+        if u.len() > 100_000 {
+            u.clear();
+        }
+        u.insert(key.to_uppercase(), Instant::now());
+    }
+
+    pub fn recently_unknown(&self, key: &str) -> bool {
+        self.unknown
+            .read()
+            .expect("route lock")
+            .get(&key.to_uppercase())
+            .map(|t| t.elapsed() < Duration::from_secs(60))
+            .unwrap_or(false)
     }
 
     pub fn node_count(&self) -> usize {
