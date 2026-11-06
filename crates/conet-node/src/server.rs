@@ -2,6 +2,7 @@
 //! delivery and commands (A2).
 use crate::chain::UserRoutes;
 use crate::http::{self, Limits, ReadError};
+use crate::limits::{IpLimiter, IpPolicy};
 use crate::mailbox::Mailbox;
 use crate::push::{NoPush, Push};
 use crate::route::{Resolved, RouteTable};
@@ -31,6 +32,9 @@ pub struct NodeCtx {
     pub limits: Limits,
     pub connect_timeout: Duration,
     pub max_connections: usize,
+    pub ip_limiter: Arc<IpLimiter>,
+    /// Accept the legacy `mining` + `listenKind:"chat"` presence listen (decision U3).
+    pub legacy_chat_listen: bool,
 }
 
 impl NodeCtx {
@@ -57,6 +61,8 @@ impl NodeCtx {
             limits: Limits::default(),
             connect_timeout: Duration::from_secs(8),
             max_connections: 4096,
+            ip_limiter: IpLimiter::new(IpPolicy::default()),
+            legacy_chat_listen: true,
         }
     }
 
@@ -99,9 +105,17 @@ pub async fn serve(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::Result<
             drop(stream);
             continue;
         };
+        let Some(slot) = ctx
+            .ip_limiter
+            .admit(peer.ip(), ctx.routes.is_node_ip(peer.ip()))
+        else {
+            drop(stream);
+            continue;
+        };
         let ctx = ctx.clone();
         tokio::spawn(async move {
             let _permit = permit;
+            let _slot = slot;
             let _ = stream.set_nodelay(true);
             handle(stream, peer, ctx).await;
         });
@@ -121,9 +135,6 @@ async fn handle(mut stream: TcpStream, peer: SocketAddr, ctx: Arc<NodeCtx>) {
     match (req.method.as_str(), req.path.as_str()) {
         ("OPTIONS", _) => {
             let _ = stream.write_all(&http::options_204()).await;
-        }
-        ("GET", p) if p.to_ascii_lowercase().starts_with("/nodewallet") => {
-            let _ = stream.write_all(&http::ok_200(&ctx.wallet.address())).await;
         }
         ("POST", p) if p.starts_with("/post") => post(stream, peer, req, ctx).await,
         _ => {
@@ -265,4 +276,33 @@ async fn forward(
         return;
     }
     let _ = tokio::io::copy_bidirectional(&mut client, &mut up).await;
+}
+
+/// Local health endpoint for the updater and boot guard. Bind it to 127.0.0.1 only.
+/// `GET /healthz` → `ok <version> nodes=<n> listens=<n>`; anything else → 404.
+pub async fn serve_health(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::Result<()> {
+    loop {
+        let (mut s, _) = listener.accept().await?;
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let lim = Limits {
+                max_body_bytes: 0,
+                ..Limits::default()
+            };
+            let Ok(req) = http::read_request(&mut s, &lim).await else {
+                return;
+            };
+            let body = if req.method == "GET" && req.path == "/healthz" {
+                http::ok_200(&format!(
+                    "ok {} nodes={} listens={}",
+                    env!("CARGO_PKG_VERSION"),
+                    ctx.routes.node_count(),
+                    ctx.mailbox.listener_count()
+                ))
+            } else {
+                http::not_found()
+            };
+            let _ = s.write_all(&body).await;
+        });
+    }
 }

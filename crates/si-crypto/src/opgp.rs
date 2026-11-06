@@ -59,6 +59,7 @@ pub struct SecretCert {
 impl SecretCert {
     pub fn from_armor(armor: &str, passphrase: &str) -> Result<Self> {
         let (key, _) = SignedSecretKey::from_string(armor).map_err(e)?;
+        check_curve25519(&key)?;
         Ok(Self {
             key,
             pass: passphrase.to_string(),
@@ -82,6 +83,34 @@ impl SecretCert {
         PublicCert {
             cert: self.key.to_public_key(),
         }
+    }
+}
+
+/// Node secret keys must be curve25519 (Ed25519 primary, X25519 encryption subkey), the type
+/// SI and the PWA generate. Refusing everything else means no RSA or NIST-curve private-key
+/// operation can run in this process, which keeps RUSTSEC-2023-0071 (rsa) and RUSTSEC-2026-0387
+/// (crypto-bigint 0.5 via rPGP's NIST curves) out of reach. Public keys of other types are fine.
+fn check_curve25519(key: &SignedSecretKey) -> Result<()> {
+    use pgp::types::{EcdhPublicParams, PublicParams};
+    let primary_ok = matches!(
+        key.primary_key.public_key().public_params(),
+        PublicParams::EdDSALegacy(_) | PublicParams::Ed25519(_)
+    );
+    let subs_ok = key.secret_subkeys.iter().all(|s| {
+        matches!(
+            s.key.public_key().public_params(),
+            PublicParams::ECDH(EcdhPublicParams::Curve25519Legacy { .. })
+                | PublicParams::X25519(_)
+                | PublicParams::EdDSALegacy(_)
+                | PublicParams::Ed25519(_)
+        )
+    });
+    if primary_ok && subs_ok {
+        Ok(())
+    } else {
+        Err(Error::Pgp(
+            "only curve25519 secret keys are accepted".into(),
+        ))
     }
 }
 
@@ -201,4 +230,33 @@ pub fn verify_cleartext(armor: &str, signer: &PublicCert) -> Option<(String, boo
     let (m, _) = CleartextSignedMessage::from_string(armor).ok()?;
     let ok = m.verify(&signer.cert).is_ok();
     Some((m.signed_text(), ok))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_curve25519_secret_keys_load() {
+        let v: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../conformance/vectors/non-curve25519-test-keys.json"
+        ))
+        .unwrap();
+        assert!(
+            SecretCert::from_armor(v["rsa"].as_str().unwrap(), "").is_err(),
+            "RSA refused"
+        );
+        assert!(
+            SecretCert::from_armor(v["p256"].as_str().unwrap(), "").is_err(),
+            "P-256 refused"
+        );
+        let g: serde_json::Value =
+            serde_json::from_str(include_str!("../../../conformance/vectors/golden.json")).unwrap();
+        let k = &g["keys"]["nodeA"];
+        assert!(SecretCert::from_armor(
+            k["armoredPrivate"].as_str().unwrap(),
+            k["passphrase"].as_str().unwrap()
+        )
+        .is_ok());
+    }
 }

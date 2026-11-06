@@ -18,3 +18,8 @@ thiserror.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 pgp = { workspace = true, features = ["wasm"] }
+# k256 0.14 pulls getrandom 0.4; browsers need its wasm_js backend.
+getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+
+[dev-dependencies]
+serde_json.workspace = true

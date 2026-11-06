@@ -15,7 +15,7 @@ ExecStart=/opt/conet-node/updater/conet-updater run \
   --threshold ${CONET_RELEASE_THRESHOLD} \
   --node-id ${CONET_NODE_WALLET} \
   --restart-cmd "systemctl restart conet-node.service" \
-  --health-url http://127.0.0.1:80/nodeWallet
+  --health-url http://127.0.0.1:9180/healthz
 EnvironmentFile=/etc/conet-node/updater.env
 Restart=always
 RestartSec=60

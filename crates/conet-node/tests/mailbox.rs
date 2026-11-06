@@ -103,6 +103,7 @@ struct Net {
     push: Arc<RecordingPush>,
     store_b: Arc<MemoryStore>,
     user_key: String,
+    health: SocketAddr,
 }
 
 async fn start() -> Net {
@@ -154,14 +155,19 @@ async fn start() -> Net {
     cb.user_routes = Some(chain);
     cb.push = push.clone();
     cb.mailbox = Arc::new(Mailbox::new(store_b.clone(), push.clone()));
+    let cb = Arc::new(cb);
+    let lh = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let health = lh.local_addr().unwrap();
+    tokio::spawn(server::serve_health(lh, cb.clone()));
     tokio::spawn(server::serve(la, Arc::new(ca)));
-    tokio::spawn(server::serve(lb, Arc::new(cb)));
+    tokio::spawn(server::serve(lb, cb));
     Net {
         g,
         a: aa,
         push,
         store_b,
         user_key,
+        health,
     }
 }
 
@@ -361,4 +367,50 @@ async fn wake_query_device_register_and_route_checks() {
     // unknown user key: no route (and A asks the chain double only once per minute)
     let stranger = enc(34, "x", &pubkey(&n.g, "user2"));
     assert!(post(n.a, &stranger).await.contains("no_route"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn legacy_chat_listen_marks_online_and_health_reports_it() {
+    let n = start().await;
+    let client = n.g["wallets"]["client"]["address"].as_str().unwrap();
+    let other = n.g["wallets"]["other"]["address"].as_str().unwrap();
+    let cmd = json!({ "command": "mining", "listenKind": "chat", "walletAddress": client });
+    let mut legacy = open(n.a, &command(&n.g, "client", cmd, 40)).await;
+    let mut buf = [0u8; 4096];
+    let k = tokio::time::timeout(Duration::from_secs(5), legacy.read(&mut buf))
+        .await
+        .unwrap()
+        .unwrap();
+    let head = String::from_utf8_lossy(&buf[..k]).to_string();
+    assert!(
+        head.contains("text/event-stream") && head.contains("\"status\":200"),
+        "{head}"
+    );
+
+    let q = json!({ "command": "wallet_online_query", "walletAddress": other, "targetWallet": client, "timestamp": now() });
+    let r: Value = serde_json::from_str(&post(n.a, &command(&n.g, "other", q, 41)).await).unwrap();
+    assert_eq!(r["online"], true, "legacy listen counts as online");
+
+    // plain `mining` (no chat label) is not served
+    let cmd = json!({ "command": "mining", "walletAddress": client });
+    assert!(post(n.a, &command(&n.g, "client", cmd, 42))
+        .await
+        .contains("404 Not Found"));
+
+    let mut h = TcpStream::connect(n.health).await.unwrap();
+    h.write_all(b"GET /healthz HTTP/1.1\r\nHost: l\r\n\r\n")
+        .await
+        .unwrap();
+    let mut out = String::new();
+    h.read_to_string(&mut out).await.unwrap();
+    assert!(
+        out.contains("ok ") && out.contains("nodes=2") && out.contains("listens=1"),
+        "{out}"
+    );
+
+    drop(legacy);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let q = json!({ "command": "wallet_online_query", "walletAddress": other, "targetWallet": client, "timestamp": now() });
+    let r: Value = serde_json::from_str(&post(n.a, &command(&n.g, "other", q, 43)).await).unwrap();
+    assert_eq!(r["online"], false);
 }

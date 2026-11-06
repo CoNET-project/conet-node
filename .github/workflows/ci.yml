@@ -31,6 +31,17 @@ jobs:
       - name: Build the Linux node binary
         run: cargo build --release --locked -p si-conformance-cli
 
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No secret logging (R3)
+        run: ./scripts/check-no-secret-logging.sh
+      - name: Dependency advisories, licenses, sources (R7; RustSec, same database as cargo-audit)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
+
   conformance:
     runs-on: ubuntu-latest
     needs: rust

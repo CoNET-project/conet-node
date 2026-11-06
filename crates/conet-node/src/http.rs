@@ -19,7 +19,7 @@ impl Default for Limits {
         Self {
             max_header_bytes: 16 * 1024,
             max_headers: 64,
-            max_body_bytes: 4 * 1024 * 1024,
+            max_body_bytes: 256 * 1024,
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(30),
         }

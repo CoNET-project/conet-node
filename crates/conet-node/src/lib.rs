@@ -4,6 +4,7 @@
 pub mod chain;
 pub mod commands;
 pub mod http;
+pub mod limits;
 pub mod mailbox;
 pub mod push;
 pub mod route;

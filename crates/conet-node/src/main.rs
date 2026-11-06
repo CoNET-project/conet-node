@@ -95,7 +95,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ctx.push = api;
     }
     ctx.user_routes = user_routes;
+    if let Some(b) = arg("--max-body").and_then(|v| v.parse().ok()) {
+        ctx.limits.max_body_bytes = b;
+    }
+    if std::env::args().any(|a| a == "--no-legacy-chat-listen") {
+        ctx.legacy_chat_listen = false;
+    }
     let ctx = Arc::new(ctx);
+    let health = arg("--health-listen").unwrap_or_else(|| "127.0.0.1:9180".into());
+    tokio::spawn(server::serve_health(
+        tokio::net::TcpListener::bind(&health).await?,
+        ctx.clone(),
+    ));
     if let Some(src) = source {
         tokio::spawn(watcher::run(
             src,

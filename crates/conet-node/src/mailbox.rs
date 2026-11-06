@@ -21,6 +21,8 @@ pub struct Listener {
     pub stream_key: [u8; 32],
     pub tx: mpsc::Sender<Vec<u8>>,
     pub connected_at: Instant,
+    /// Legacy `mining` + `listenKind:"chat"` listen: presence only, no deliveries, one per wallet.
+    pub legacy: bool,
 }
 
 pub struct Mailbox {
@@ -64,10 +66,11 @@ impl Mailbox {
         let frame_json = serde_json::json!({ "data": armor }).to_string();
         let mut ls = self.listeners.lock().expect("listeners");
         ls.retain(|l| {
-            if l.user_key
-                .as_deref()
-                .map(|k| k.eq_ignore_ascii_case(user_key))
-                != Some(true)
+            if l.legacy
+                || l.user_key
+                    .as_deref()
+                    .map(|k| k.eq_ignore_ascii_case(user_key))
+                    != Some(true)
             {
                 return true;
             }
@@ -79,7 +82,13 @@ impl Mailbox {
     }
 
     pub fn register(&self, l: Listener) {
-        self.listeners.lock().expect("listeners").push(l);
+        let mut ls = self.listeners.lock().expect("listeners");
+        if l.legacy {
+            // SI keeps one legacy listen per wallet and ends the older one; dropping its sender
+            // ends that session's loop.
+            ls.retain(|o| !(o.legacy && o.wallet.eq_ignore_ascii_case(&l.wallet)));
+        }
+        ls.push(l);
     }
 
     pub fn remove(&self, id: u64) {

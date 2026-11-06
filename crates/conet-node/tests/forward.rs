@@ -216,7 +216,7 @@ async fn same_node_onion_is_ended() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn node_wallet_endpoint() {
+async fn public_node_wallet_path_is_gone_and_body_is_capped() {
     let n = start().await;
     let mut s = TcpStream::connect(n.a).await.unwrap();
     s.write_all(b"GET /nodeWallet HTTP/1.1\r\nHost: t\r\n\r\n")
@@ -224,10 +224,15 @@ async fn node_wallet_endpoint() {
         .unwrap();
     let mut out = String::new();
     s.read_to_string(&mut out).await.unwrap();
-    assert!(
-        out.ends_with(n.golden["wallets"]["nodeA"]["address"].as_str().unwrap()),
-        "{out}"
-    );
+    assert!(out.starts_with("HTTP/1.1 404"), "{out}");
+    // over 256 KB: refused before the body is read
+    let mut s = TcpStream::connect(n.a).await.unwrap();
+    s.write_all(b"POST /post HTTP/1.1\r\nHost: t\r\nContent-Length: 300000\r\n\r\n")
+        .await
+        .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    assert!(out.starts_with("HTTP/1.1 404"), "{out}");
 }
 
 /// Entry A runs with its keys in the signer process; B is in-process.

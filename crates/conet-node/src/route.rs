@@ -5,8 +5,8 @@
 //! Sources (GuardianNodesInfoV6 / NodeRegistryV2, AddressPGP) fill the table; user routes
 //! expire (SI's `clientRoute` cache never did, issue S6).
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,9 @@ pub struct RouteTable {
     user_ttl: Duration,
     /// Keys AddressPGP did not know, so one stranger cannot make us hit the RPC per request.
     unknown: RwLock<HashMap<String, Instant>>,
+    node_ips: RwLock<HashSet<IpAddr>>,
+    /// Upper bound on cached user routes (R10); the oldest entry goes first.
+    pub max_users: usize,
 }
 
 /// Static table, for local test networks (`--routes routes.json`).
@@ -55,6 +58,8 @@ impl RouteTable {
             users: RwLock::default(),
             user_ttl,
             unknown: RwLock::default(),
+            node_ips: RwLock::default(),
+            max_users: 200_000,
         }
     }
 
@@ -69,18 +74,37 @@ impl RouteTable {
 
     /// Replace the whole node table at once (a partial read must never get here).
     pub fn replace_nodes(&self, nodes: impl IntoIterator<Item = (String, SocketAddr)>) {
-        let map = nodes
+        let map: HashMap<String, SocketAddr> = nodes
             .into_iter()
             .map(|(k, a)| (k.to_uppercase(), a))
             .collect();
+        *self.node_ips.write().expect("route lock") = map.values().map(|a| a.ip()).collect();
         *self.nodes.write().expect("route lock") = map;
     }
 
+    pub fn is_node_ip(&self, ip: IpAddr) -> bool {
+        self.node_ips.read().expect("route lock").contains(&ip)
+    }
+
     pub fn set_user_route(&self, user_key: &str, node_key: &str) {
-        self.users.write().expect("route lock").insert(
+        let mut users = self.users.write().expect("route lock");
+        if users.len() >= self.max_users && !users.contains_key(&user_key.to_uppercase()) {
+            if let Some(oldest) = users
+                .iter()
+                .min_by_key(|(_, (_, t))| *t)
+                .map(|(k, _)| k.clone())
+            {
+                users.remove(&oldest);
+            }
+        }
+        users.insert(
             user_key.to_uppercase(),
             (node_key.to_uppercase(), Instant::now()),
         );
+    }
+
+    pub fn user_count(&self) -> usize {
+        self.users.read().expect("route lock").len()
     }
 
     pub fn mark_unknown(&self, key: &str) {
@@ -156,5 +180,19 @@ mod tests {
         assert_eq!(t.resolve("zz"), Resolved::NoRoute);
         std::thread::sleep(Duration::from_millis(60));
         assert_eq!(t.resolve("u1"), Resolved::NoRoute);
+        assert!(t.is_node_ip("127.0.0.1".parse().unwrap()));
+        assert!(!t.is_node_ip("127.0.0.2".parse().unwrap()));
+    }
+
+    #[test]
+    fn user_cache_is_bounded() {
+        let mut t = RouteTable::new("aaaa", Duration::from_secs(60));
+        t.max_users = 3;
+        for i in 0..10 {
+            t.set_user_route(&format!("u{i}"), "aaaa");
+        }
+        assert_eq!(t.user_count(), 3);
+        assert_eq!(t.resolve("u9"), Resolved::Local, "newest kept");
+        assert_eq!(t.resolve("u0"), Resolved::NoRoute, "oldest evicted");
     }
 }

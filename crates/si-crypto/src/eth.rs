@@ -35,13 +35,16 @@ impl EthKey {
     }
     /// Signs a 32-byte digest (RFC 6979, low-s), returns 65-byte r||s||v (v = 27/28) as 0x hex.
     pub fn sign_digest(&self, digest: &[u8; 32]) -> Result<String> {
-        let (sig, rec): (Signature, RecoveryId) = self
-            .0
-            .sign_prehash_recoverable(digest)
-            .map_err(|e| Error::Eth(e.to_string()))?;
-        let (sig, rec) = match sig.normalize_s() {
-            Some(n) => (n, RecoveryId::from_byte(rec.to_byte() ^ 1).expect("recid")),
-            None => (sig, rec),
+        let (sig, rec): (Signature, RecoveryId) = self.0.sign_prehash_recoverable(digest);
+        // Ethereum needs low-s; flip the recovery id if normalising changed s.
+        let low = sig.normalize_s();
+        let (sig, rec) = if low != sig {
+            (
+                low,
+                RecoveryId::from_byte(rec.to_byte() ^ 1).expect("recid"),
+            )
+        } else {
+            (sig, rec)
         };
         let mut out = sig.to_bytes().to_vec();
         out.push(27 + rec.to_byte());
@@ -79,7 +82,7 @@ pub fn recover_message(message: &str, sig_hex: &str) -> Result<String> {
 }
 
 fn address_of(vk: &VerifyingKey) -> String {
-    let point = vk.to_encoded_point(false);
+    let point = vk.to_sec1_point(false);
     let hash = keccak256(&point.as_bytes()[1..]);
     to_checksum(&hex::encode(&hash[12..]))
 }

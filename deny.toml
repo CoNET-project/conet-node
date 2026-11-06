@@ -1,0 +1,40 @@
+# cargo-deny: advisories, licenses, bans, sources (requirement R7).
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+# Each ignore states why the advisory cannot be reached and when to drop it. Review on every rPGP or alloy upgrade.
+ignore = [
+  # rsa 0.9 (Marvin, private-key decryption timing). Pulled in only by rPGP. No RSA private key
+  # can be loaded: si-crypto `SecretCert::from_armor` accepts curve25519 secret keys only (tested).
+  # Drop when rPGP ships a fixed rsa.
+  { id = "RUSTSEC-2023-0071", reason = "no RSA private keys are ever loaded; curve25519-only SecretCert" },
+  # crypto-bigint 0.5.5 constant-time issues. Still pulled in by rPGP 0.21 (elliptic-curve 0.13 for
+  # NIST, secp256k1 and x448 PGP keys). Node secret keys are curve25519 only (no crypto-bigint), and
+  # the node wallet signs with k256 0.14 on crypto-bigint 0.7.10 (fixed). Drop when rPGP moves to
+  # elliptic-curve 0.14.
+  { id = "RUSTSEC-2026-0387", reason = "affected curves never hold node secrets; wallet uses k256 0.14 / crypto-bigint 0.7.10" },
+  # paste: unmaintained (not a vulnerability); compile-time proc macro used by alloy.
+  { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time macro via alloy; no runtime code" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
+  "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016", "CC0-1.0", "MPL-2.0",
+  "CDLA-Permissive-2.0", "OpenSSL", "BSL-1.0", "0BSD",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

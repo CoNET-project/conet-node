@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect(),
             );
             let health = Health(
-                arg("--health-url").unwrap_or_else(|| "http://127.0.0.1:80/nodeWallet".into()),
+                arg("--health-url").unwrap_or_else(|| "http://127.0.0.1:9180/healthz".into()),
             );
             loop {
                 let wait = random_delay(CHECK_WINDOW);

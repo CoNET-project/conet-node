@@ -59,6 +59,9 @@ async fn is_my_route(ctx: &NodeCtx, user: &str) -> bool {
 pub async fn dispatch(mut stream: TcpStream, peer: SocketAddr, command: Value, ctx: Arc<NodeCtx>) {
     match s(&command, "command") {
         "mailbox_listen" => mailbox_listen(stream, peer, command, ctx).await,
+        "mining" if ctx.legacy_chat_listen && s(&command, "listenKind") == "chat" => {
+            legacy_chat_listen(stream, peer, command, ctx).await
+        }
         "gossip_delivery_ack" => delivery_ack(&mut stream, &command, &ctx).await,
         "wallet_online_query" => online_query(&mut stream, &command, &ctx).await,
         "wallet_native_wake_query" => native_wake_query(&mut stream, &command, &ctx).await,
@@ -284,6 +287,7 @@ async fn mailbox_listen(mut stream: TcpStream, peer: SocketAddr, c: Value, ctx: 
         stream_key: key,
         tx,
         connected_at: Instant::now(),
+        legacy: false,
     });
 
     let (mut rd, mut wr) = stream.into_split();
@@ -305,6 +309,74 @@ async fn mailbox_listen(mut stream: TcpStream, peer: SocketAddr, c: Value, ctx: 
                 // The client never sends on a listen; EOF or error ends it.
                 if matches!(r, Ok(0) | Err(_)) { break }
             }
+        }
+    }
+    ctx.mailbox.remove(id);
+}
+
+/// Legacy presence listen (`mining` + `listenKind:"chat"`, old Alliance-style clients).
+/// Since 2026-11-02 this pool gets no chat messages (its frames are not sealed), so it only
+/// marks the wallet online and sends a plain epoch frame every 12–20 s like SI's liveness loop.
+async fn legacy_chat_listen(mut stream: TcpStream, peer: SocketAddr, c: Value, ctx: Arc<NodeCtx>) {
+    let wallet = s(&c, "walletAddress").to_lowercase();
+    if !eth::is_address(&wallet) {
+        return not_found(&mut stream).await;
+    }
+    let frame = |epoch: u64, hash: &str| {
+        format!(
+            "data: {}\r\n\r\n",
+            json!({ "ipaddress": peer.ip().to_string(), "epoch": epoch, "status": 200, "nodeWallet": ctx.wallet.address().to_lowercase(), "hash": hash })
+        )
+        .into_bytes()
+    };
+    let sign = |epoch: u64| {
+        let n = ctx.notices.clone();
+        async move {
+            tokio::task::spawn_blocking(move || n.sign_epoch(epoch))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default()
+        }
+    };
+    let epoch = ctx.chain.block.load(Ordering::Relaxed);
+    let mut first = format!(
+        "{SSE_HEADERS}Date: {}\r\n\r\n",
+        httpdate::fmt_http_date(SystemTime::now())
+    )
+    .into_bytes();
+    first.extend(frame(epoch, &sign(epoch).await));
+    if stream.write_all(&first).await.is_err() {
+        return;
+    }
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1);
+    let id = ctx.mailbox.next_id();
+    ctx.mailbox.register(Listener {
+        id,
+        wallet,
+        user_key: None,
+        stream_key: [0; 32],
+        tx,
+        connected_at: Instant::now(),
+        legacy: true,
+    });
+    let (mut rd, mut wr) = stream.into_split();
+    let mut scratch = [0u8; 512];
+    let mut last_epoch = epoch;
+    let mut last_hash = String::new();
+    loop {
+        let tick = Duration::from_millis(12_000 + OsRng.next_u64() % 8_000);
+        tokio::select! {
+            f = rx.recv() => if f.is_none() { break },
+            _ = tokio::time::sleep(tick) => {
+                let e = ctx.chain.block.load(Ordering::Relaxed);
+                if e != last_epoch || last_hash.is_empty() {
+                    last_hash = sign(e).await;
+                    last_epoch = e;
+                }
+                if wr.write_all(&frame(e, &last_hash)).await.is_err() { break }
+            }
+            r = rd.read(&mut scratch) => if matches!(r, Ok(0) | Err(_)) { break },
         }
     }
     ctx.mailbox.remove(id);
