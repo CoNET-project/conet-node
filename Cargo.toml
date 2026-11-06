@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = ["crates/si-proto", "crates/si-crypto", "crates/si-core", "crates/si-conformance", "crates/si-conformance-cli", "crates/conet-si-wasm"]
+
+[workspace.package]
+edition = "2021"
+version = "0.0.1"
+license = "MIT"
+publish = false
+repository = "https://github.com/CoNET-project/conet-node"
+
+[workspace.dependencies]
+pgp = { version = "0.21", default-features = false }
+k256 = { version = "0.13", features = ["ecdsa"] }
+sha3 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+aes-gcm = "0.10"
+base64 = "0.22"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+rand_core = "0.6"
+rand_chacha = "0.3"
+thiserror = "2"
+si-proto = { path = "crates/si-proto" }
+si-crypto = { path = "crates/si-crypto" }
+si-core = { path = "crates/si-core" }
+si-conformance = { path = "crates/si-conformance" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.wasm]
+inherits = "release"
+opt-level = "z"

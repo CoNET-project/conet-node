@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_BINDGEN_VERSION: 0.2.130
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --release --locked
+      - name: Build the Linux node binary
+        run: cargo build --release --locked -p si-conformance-cli
+
+  conformance:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/wasm-bindgen
+            target
+          key: conformance-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-wb${{ env.WASM_BINDGEN_VERSION }}
+      - name: wasm-bindgen CLI
+        run: command -v wasm-bindgen || cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked
+      - name: Vector tooling (openpgp.js / ethers pinned)
+        working-directory: conformance/vectors
+        run: npm ci --ignore-scripts
+      - name: Native and wasm builds
+        run: |
+          cargo build --release --locked -p si-conformance-cli
+          ./build-wasm.sh
+      - name: Native and wasm give identical results
+        run: |
+          ./target/release/si-conformance-cli run conformance/vectors/golden.json > native.json
+          node conformance/vectors/run-wasm.mjs pkg/node conformance/vectors/golden.json run > wasm.json
+          node -e 'const a=require("./native.json"),b=require("./wasm.json");if(a.summary.fail||b.summary.fail||JSON.stringify(a)!==JSON.stringify(b)){console.error(a.summary,b.summary);process.exit(1)}console.log("native",a.summary,"wasm",b.summary)'
+      - name: Rust-made artifacts verify in openpgp.js and SI code
+        run: |
+          SEED=$(printf 'conet-node-ci-seed' | sha256sum | cut -c1-64)
+          ./target/release/si-conformance-cli artifacts conformance/vectors/golden.json "$SEED" > art-native.json
+          node conformance/vectors/run-wasm.mjs pkg/node conformance/vectors/golden.json artifacts "$SEED" > art-wasm.json
+          for f in art-native.json art-wasm.json; do
+            node conformance/vectors/verify-rust.mjs conformance/vectors/golden.json "$f" > "v-$f"
+            node -e 'const r=require(process.argv[1]);console.log(process.argv[1],r.summary);if(r.summary.fail)process.exit(1)' "./v-$f"
+          done
+      - name: wasm size
+        run: |
+          ls -l pkg/web/conet_si_wasm_bg.wasm
+          echo "gzip: $(gzip -9c pkg/web/conet_si_wasm_bg.wasm | wc -c) bytes"

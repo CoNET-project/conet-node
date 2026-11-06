@@ -1,0 +1,180 @@
+//! CoNET-SI wire constants and plain data formats (no crypto, no I/O).
+//! Every constant mirrors CoNET-SI rev 74c6cfd; the source file is named next to it.
+#![forbid(unsafe_code)]
+
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use serde::{Deserialize, Serialize};
+
+/// siHopSigs.ts
+pub const MAX_SI_HOP_SIGS: usize = 3;
+pub const SI_HOP_SIG_HEADER: &str = "X-CoNET-Hop-Sigs";
+pub const HOP_SIG_DOMAIN: &str = "conet.l0.hop.v1";
+pub const HOP_SIG_TS_WINDOW_SEC: i64 = 600;
+
+/// mailboxStream.ts
+pub const MAILBOX_STREAM_PAD: usize = 256;
+
+/// voiceForward.ts
+pub const VOICE_CHUNK_MAGIC: &[u8; 4] = b"CVC2";
+pub const VOICE_CHUNK_HEADER: usize = 4 + 16 + 16;
+pub const VOICE_CHUNK_MAX_BLOB: usize = 9_000;
+
+/// localNodeCommand.ts: commands that run without an EOA signature (sessionId is the capability).
+pub const UNSIGNED_VOICE_COMMANDS: [&str; 4] = [
+    "voice_listen",
+    "voice_unlisten",
+    "voice_offer_store",
+    "voice_offer_fetch",
+];
+
+/// define.d.ts `SICommandObj.command`. Anything else is closed by SI's `default` branch.
+pub const KNOWN_COMMANDS: [&str; 24] = [
+    "SilentPass",
+    "SaaS_Sock5",
+    "mining",
+    "mailbox_listen",
+    "mining_validator",
+    "mining_gossip",
+    "SaaS_Sock5_v2",
+    "gossip_delivery_ack",
+    "wallet_online_query",
+    "wallet_native_wake_query",
+    "push_device_register",
+    "udp_listen",
+    "udp_server_listen",
+    "udp_subscribe",
+    "udp_relay",
+    "udp_uplink",
+    "udp_unlisten",
+    "voice_listen",
+    "voice_uplink",
+    "voice_downlink",
+    "voice_unlisten",
+    "voice_call_push",
+    "voice_offer_store",
+    "voice_offer_fetch",
+];
+
+pub const PGP_BEGIN: &str = "-----BEGIN PGP MESSAGE-----";
+pub const PGP_END: &str = "-----END PGP MESSAGE-----";
+
+/// SI `asPgpMessageArmor`: the trimmed text must start with the BEGIN line; cut after END.
+pub fn as_pgp_message_armor(text: &str) -> Option<&str> {
+    let t = text.trim();
+    if !t.starts_with(PGP_BEGIN) {
+        return None;
+    }
+    let end = t.find(PGP_END)?;
+    Some(&t[..end + PGP_END.len()])
+}
+
+/// One SI-to-SI hop signature (`X-CoNET-Hop-Sigs` v1 row).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HopSig {
+    pub w: String,
+    pub t: i64,
+    pub n: u64,
+    pub h: String,
+    pub k: String,
+    pub s: String,
+}
+
+/// SI `hopSigPayload`.
+pub fn hop_sig_payload(w: &str, t: i64, n: u64, h: &str, k: &str) -> String {
+    [
+        HOP_SIG_DOMAIN,
+        &w.to_lowercase(),
+        &t.to_string(),
+        &n.to_string(),
+        &h.to_lowercase(),
+        &k.to_uppercase(),
+    ]
+    .join("|")
+}
+
+#[derive(Debug, PartialEq)]
+pub enum HopHeader {
+    Absent,
+    Invalid,
+    /// More than MAX_SI_HOP_SIGS rows: SI treats this as a flood (rows are not validated).
+    TooMany(usize),
+    Rows(Vec<HopSig>),
+}
+
+/// SI `parseHopSigsFromHeaders`, given the raw header lines.
+/// Address and number checks that need crypto (`isAddress`) are left to the caller.
+pub fn parse_hop_header(lines: &[&str]) -> HopHeader {
+    let want = SI_HOP_SIG_HEADER.to_ascii_lowercase();
+    let Some(line) = lines.iter().find(|l| {
+        l.split_once(':')
+            .map(|(n, _)| n.trim().to_ascii_lowercase() == want)
+            .unwrap_or(false)
+    }) else {
+        return HopHeader::Absent;
+    };
+    let raw = line.split_once(':').map(|(_, v)| v.trim()).unwrap_or("");
+    if raw.is_empty() {
+        return HopHeader::Absent;
+    }
+    let json_text = if raw.starts_with('[') {
+        raw.to_string()
+    } else {
+        match B64.decode(raw) {
+            Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+            Err(_) => return HopHeader::Invalid,
+        }
+    };
+    let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(&json_text)
+    else {
+        return HopHeader::Invalid;
+    };
+    if rows.len() > MAX_SI_HOP_SIGS {
+        return HopHeader::TooMany(rows.len());
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        match serde_json::from_value::<HopSig>(r) {
+            Ok(h) if !h.h.is_empty() && !h.k.is_empty() && !h.s.is_empty() => out.push(h),
+            _ => return HopHeader::Invalid,
+        }
+    }
+    HopHeader::Rows(out)
+}
+
+/// SI `serializeHopSigsHeaderValue`: base64(JSON.stringify(rows)).
+pub fn serialize_hop_header_value(rows: &[HopSig]) -> String {
+    B64.encode(serde_json::to_string(rows).expect("hop rows serialize"))
+}
+
+/// voiceForward.ts `voicePayText`.
+pub fn voice_pay_text(temp: &str, not_after: u64, max_bytes: u64, max_seconds: u64) -> String {
+    [
+        "conet.voice.sse.pay.v3".to_string(),
+        format!("temp={}", temp.to_lowercase()),
+        format!("notAfter={not_after}"),
+        format!("maxBytes={max_bytes}"),
+        format!("maxSeconds={max_seconds}"),
+    ]
+    .join("\n")
+}
+
+/// voiceForward.ts `voiceListenText`.
+pub fn voice_listen_text(session_id: &str, wk: &str, relay_key_id: &str, timestamp: u64) -> String {
+    [
+        "conet.voice.sse.listen.v3",
+        session_id,
+        wk,
+        &relay_key_id.to_uppercase(),
+        &timestamp.to_string(),
+    ]
+    .join("|")
+}
+
+/// openpgp.js `createMessage({ text })` stores text with CRLF line endings; SI decodes with
+/// `.replace(/\r\n/g, '\n')`. These two helpers reproduce both sides.
+pub fn to_crlf(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\n', "\r\n")
+}
+pub fn crlf_to_lf(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}

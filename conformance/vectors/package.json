@@ -1,0 +1,14 @@
+{
+  "name": "conet-node-conformance-vectors",
+  "private": true,
+  "type": "module",
+  "description": "Golden vectors from live CoNET-SI code and openpgp.js. Test keys only.",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "gen": "node gen.mjs > golden.json"
+  },
+  "dependencies": {
+    "openpgp": "6.3.0",
+    "ethers": "6.17.0"
+  }
+}

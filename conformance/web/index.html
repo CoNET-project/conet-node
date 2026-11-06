@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>conet-node wasm conformance</title>
+<pre id="out">running…</pre>
+<script type="module">
+// Runs the golden vectors inside a Web Worker, like a browser node would.
+const out = document.getElementById('out')
+const worker = new Worker('./worker.js', { type: 'module' })
+worker.onmessage = (e) => { out.textContent = JSON.stringify(e.data, null, 1); window.__conformance = e.data }
+worker.onerror = (e) => { out.textContent = 'worker error: ' + e.message; window.__conformance = { error: e.message } }
+</script>
