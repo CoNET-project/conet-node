@@ -56,12 +56,19 @@ async fn is_my_route(ctx: &NodeCtx, user: &str) -> bool {
     }
 }
 
-pub async fn dispatch(mut stream: Conn, peer: SocketAddr, command: Value, ctx: Arc<NodeCtx>) {
+pub async fn dispatch(
+    mut stream: Conn,
+    peer: SocketAddr,
+    command: Value,
+    signed: bool,
+    ctx: Arc<NodeCtx>,
+) {
     match s(&command, "command") {
         "mailbox_listen" => mailbox_listen(stream, peer, command, ctx).await,
         "mining" if ctx.legacy_chat_listen && s(&command, "listenKind") == "chat" => {
             legacy_chat_listen(stream, peer, command, ctx).await
         }
+        "SaaS_Sock5" | "SaaS_Sock5_v2" if signed => crate::exit::handle(stream, command, ctx).await,
         "voice_listen" => crate::voice::listen(stream, command, ctx).await,
         "voice_unlisten" => crate::voice::unlisten(stream, command, ctx).await,
         "voice_offer_store" => crate::voice::offer_store(stream, command, ctx).await,

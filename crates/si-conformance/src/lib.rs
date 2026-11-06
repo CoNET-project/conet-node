@@ -230,6 +230,9 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
                 "address": eth::recover_digest(&dg, &sig).map_err(es)?,
             })
         }
+        "payment_required" => {
+            json!({ "statusLine": "HTTP/1.1 402 Payment Required", "html": proto::payment_required_html() })
+        }
         "voice_listen_verify" => {
             let now_ms = input["nowMs"].as_i64().ok_or("nowMs")?;
             match si_core::voice::verify_listen_v3(

@@ -156,6 +156,19 @@ pub fn not_found() -> Vec<u8> {
     .into_bytes()
 }
 
+/// SI `distorySocketPayment`: passport missing or expired. Same status, headers and body as SI,
+/// except Content-Length, which SI computes in UTF-16 units (too short for the CJK text); here it
+/// is the real byte length.
+pub fn payment_required() -> Vec<u8> {
+    let html = si_proto::payment_required_html();
+    format!(
+        "HTTP/1.1 402 Payment Required\r\nServer: nginx/1.18.0\r\nDate: {}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: keep-alive\r\n{CORS}\r\n{html}",
+        date(),
+        html.len()
+    )
+    .into_bytes()
+}
+
 /// CORS preflight for `/post` (browsers send OPTIONS before POST).
 pub fn options_204() -> Vec<u8> {
     format!("HTTP/1.1 204 No Content\r\nServer: nginx/1.18.0\r\nDate: {}\r\n{CORS}Content-Length: 0\r\nConnection: keep-alive\r\n\r\n", date()).into_bytes()

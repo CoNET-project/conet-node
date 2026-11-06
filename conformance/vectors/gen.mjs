@@ -13,6 +13,7 @@ import { hopSigPayload, hopArmorHash, serializeHopSigsHeaderValue, SI_HOP_SIG_HE
 import { encryptUdpPayload } from './si-src/udpForwardCrypto.ts'
 import { voicePayText, voiceListenText, chunkMac, VOICE_CHUNK_MAGIC, voiceCallPushText } from './si-src/voiceHelpers.ts'
 import { verifyVoiceListenV3, frameLine, voiceHeaders, voiceHandshake } from './si-src/voiceListen.ts'
+import { paymentRequiredHtml } from './si-src/htmlResponse.ts'
 
 const zlib = { preferredCompressionAlgorithm: openpgp.enums.compression.zlib }
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64')
@@ -393,6 +394,9 @@ add('voice-frames', 'voice_frames', { sessionId: vSession, nodeWallet: wallets.n
 const pushPayload = { callId: 'call-0123456789', sessionId: vSession, calleeEoa: wallets.client.address, expiresAt: nowMs + 60_000, timestamp: now }
 const pushText = voiceCallPushText(pushPayload, wallets.nodeA)
 add('voice-call-push-text', 'voice_call_push', { wallet: 'nodeA', payload: pushPayload }, { text: pushText, signature: await wallets.nodeA.signMessage(pushText) })
+
+// ---- 13. SilentPass exit: SI 402 page body (status line is fixed; SI's Content-Length is UTF-16 units)
+add('exit-402-page', 'payment_required', {}, { statusLine: 'HTTP/1.1 402 Payment Required', html: paymentRequiredHtml() })
 
 console.log(JSON.stringify({
 	meta: {

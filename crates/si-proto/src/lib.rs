@@ -323,3 +323,10 @@ pub mod voice {
         .join("\n")
     }
 }
+
+/// SI `distorySocketPayment` page body (passport missing or expired).
+pub fn payment_required_html() -> String {
+    let title = "402 Payment Required";
+    let body = "CoNET Passport has expired Please purchase a new certificate\r\nCoNETパスポートの有効期限が切れています。新しいを購入してください。\r\nCoNET通证已过期请购买新证书";
+    format!("<html>\r\n<head><title>{title}</title></head>\r\n<body>\r\n<center><h1>{body}</h1></center>\r\n<hr><center>nginx/1.18.0</center>\r\n</body>\r\n</html>\r\n")
+}

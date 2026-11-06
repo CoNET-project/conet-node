@@ -37,6 +37,8 @@ pub struct NodeCtx {
     pub mailbox: Arc<Mailbox>,
     pub voice: Arc<crate::voice::VoiceRelay>,
     pub offers: Arc<dyn crate::store::OfferStore>,
+    /// SilentPass exit (`SaaS_Sock5*`); None = not an exit.
+    pub exit: Option<Arc<crate::exit::Exit>>,
     pub push: Arc<dyn Push>,
     pub chain: Arc<ChainState>,
     pub limits: Limits,
@@ -69,6 +71,7 @@ impl NodeCtx {
             mailbox: Arc::new(Mailbox::new(store, push.clone())),
             voice: Arc::new(crate::voice::VoiceRelay::default()),
             offers: Arc::new(crate::store::MemoryOffers::default()),
+            exit: None,
             push,
             chain: Arc::new(ChainState::default()),
             limits: Limits::default(),
@@ -245,9 +248,9 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
                 }
             }
         },
-        Step::Command { command, .. } => {
-            crate::commands::dispatch(stream, peer, command, ctx).await
-        }
+        Step::Command {
+            command, signed, ..
+        } => crate::commands::dispatch(stream, peer, command, signed, ctx).await,
         Step::VoiceChunk { locator, mac, blob } => {
             crate::voice::chunk(stream, locator, mac, blob, ctx).await
         }

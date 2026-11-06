@@ -151,6 +151,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ctx.mailbox = Arc::new(Mailbox::new(store, api.clone()));
         ctx.push = api;
     }
+    // SilentPass exit: needs the chain for passport checks; --no-exit turns it off.
+    if let (Some(url), false) = (arg("--rpc"), std::env::args().any(|a| a == "--no-exit")) {
+        use conet_node::exit::{ChainPassport, DnsResolver, EgressPolicy, Exit};
+        let public: Vec<std::net::IpAddr> = arg("--public-ip")
+            .into_iter()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        let exit = Exit::new(
+            EgressPolicy::from_system(&public),
+            Arc::new(DnsResolver::new()?),
+            Arc::new(ChainPassport::new(Rpc::new(&url)?)),
+        );
+        ctx.exit = Some(Arc::new(exit));
+    }
     ctx.user_routes = user_routes;
     ctx.offers = offers;
     ctx.old_key_ids = old_key_ids;
