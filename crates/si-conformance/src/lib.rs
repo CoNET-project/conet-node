@@ -174,6 +174,61 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
             .map_err(es)?;
             json!({ "payload": proto::hop_sig_payload(&h.w, h.t, h.n, &h.h, &h.k), "signature": h.s })
         }
+        "eip712" => {
+            use si_core::statement::{BindNode, Domain, NodeStatement};
+            use si_crypto::eip712 as e7;
+            let d = &input["domain"];
+            if s(d, "name") != proto::node_registry::DOMAIN_NAME
+                || s(d, "version") != proto::node_registry::DOMAIN_VERSION
+                || d["chainId"].as_u64() != Some(proto::node_registry::CHAIN_ID)
+            {
+                return Err("domain differs from si-proto constants".into());
+            }
+            let domain = Domain::new(s(d, "verifyingContract")).map_err(es)?;
+            let v = &input["value"];
+            let (type_str, sh, dg) = match s(input, "primaryType") {
+                "NodeStatement" => {
+                    let st = NodeStatement {
+                        node_id: e7::u256_dec(s(v, "nodeId")).map_err(es)?,
+                        epoch: s(v, "epoch").parse().map_err(|_| "epoch")?,
+                        kind: v["kind"].as_u64().ok_or("kind")? as u8,
+                        payload_hash: e7::bytes32(s(v, "payloadHash")).map_err(es)?,
+                    };
+                    (
+                        proto::node_registry::NODE_STATEMENT_TYPE,
+                        st.struct_hash(),
+                        st.digest(&domain),
+                    )
+                }
+                "BindNode" => {
+                    let b = BindNode {
+                        operator: e7::address_word(s(v, "operator")).map_err(es)?,
+                        node_id: e7::u256_dec(s(v, "nodeId")).map_err(es)?,
+                        ip_hash: e7::bytes32(s(v, "ipHash")).map_err(es)?,
+                        key_id: e7::fixed_bytes_word(s(v, "keyId"), 8).map_err(es)?,
+                        pgp_hash: e7::bytes32(s(v, "pgpHash")).map_err(es)?,
+                        nonce: e7::u256_dec(s(v, "nonce")).map_err(es)?,
+                        deadline: e7::u256_dec(s(v, "deadline")).map_err(es)?,
+                    };
+                    (
+                        proto::node_registry::BIND_NODE_TYPE,
+                        b.struct_hash(),
+                        b.digest(&domain),
+                    )
+                }
+                t => return Err(format!("primaryType {t}")),
+            };
+            let w = &c.wallets[s(input, "wallet")];
+            let sig = w.sign_digest(&dg).map_err(es)?;
+            json!({
+                "typeHash": e7::to_hex(&e7::type_hash(type_str)),
+                "domainSeparator": e7::to_hex(&domain.separator),
+                "structHash": e7::to_hex(&sh),
+                "digest": e7::to_hex(&dg),
+                "signature": sig,
+                "address": eth::recover_digest(&dg, &sig).map_err(es)?,
+            })
+        }
         k => return Err(format!("unknown kind {k}")),
     })
 }
@@ -349,6 +404,7 @@ pub fn make_artifacts(golden: &str, seed_hex: &str) -> String {
         "udp": { "payload": udp, "keyB64": B64.encode(udp_key), "plaintext": "udp from rust" },
         "eip191": { "message": message, "signature": sign_message, "address": client.address() },
         "entryForward": { "armor": foreign, "actions": actions },
+        "nodeStatement": node_statement_artifact(&c, now),
     })
     .to_string()
 }
@@ -421,4 +477,18 @@ pub fn bench(golden: &str, op: &str, n: u32) -> String {
         };
     }
     last
+}
+
+fn node_statement_artifact(c: &Ctx, now: i64) -> Value {
+    use si_core::statement::{Domain, NodeStatement};
+    let verifying = "0x00000000000000000000000000000000c0de0001";
+    let domain = Domain::new(verifying).unwrap();
+    let st = NodeStatement::online(si_crypto::eip712::u64_word(7), now as u64);
+    let sig = c.wallets["nodeA"].sign_digest(&st.digest(&domain)).unwrap();
+    json!({
+        "domain": { "name": proto::node_registry::DOMAIN_NAME, "version": proto::node_registry::DOMAIN_VERSION, "chainId": proto::node_registry::CHAIN_ID, "verifyingContract": verifying },
+        "value": { "nodeId": "7", "epoch": now.to_string(), "kind": 1, "payloadHash": si_crypto::eip712::to_hex(&st.payload_hash) },
+        "signature": sig,
+        "address": c.wallets["nodeA"].address(),
+    })
 }

@@ -102,4 +102,11 @@ await check('entry-forward-hop-header', async () => {
 	return { pass: Array.isArray(hops) && hops.length === 1 && valid.length === 1 && hops[0].h === hopArmorHash(a.entryForward.armor) && hops[0].w === new ethers.Wallet(g.wallets.nodeA.privateKey).address, hops }
 })
 
+await check('node-statement-eip712', async () => {
+	const n = a.nodeStatement
+	const types = { NodeStatement: [{ name: 'nodeId', type: 'uint256' }, { name: 'epoch', type: 'uint64' }, { name: 'kind', type: 'uint8' }, { name: 'payloadHash', type: 'bytes32' }] }
+	const signer = ethers.verifyTypedData(n.domain, types, n.value, n.signature)
+	return { pass: signer === n.address && n.value.payloadHash === ethers.keccak256(ethers.toUtf8Bytes('CONET_NODE_ONLINE_V1')) }
+})
+
 console.log(JSON.stringify({ summary: { pass: results.filter((r) => r.pass).length, fail: results.filter((r) => !r.pass).length }, results }, null, 1))

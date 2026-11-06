@@ -2,6 +2,7 @@
 //! No key storage and no I/O. Randomness always comes from the caller.
 #![forbid(unsafe_code)]
 
+pub mod eip712;
 pub mod eth;
 pub mod opgp;
 pub mod sym;

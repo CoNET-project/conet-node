@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod node;
+pub mod statement;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::Serialize;

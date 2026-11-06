@@ -178,3 +178,25 @@ pub fn to_crlf(text: &str) -> String {
 pub fn crlf_to_lf(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
+
+/// NodeRegistryV2 EIP-712 (design v0.1.2 §6.2).
+pub mod node_registry {
+    pub const DOMAIN_NAME: &str = "CoNETNodeRegistry";
+    pub const DOMAIN_VERSION: &str = "1";
+    pub const CHAIN_ID: u64 = 224_422;
+    pub const EIP712_DOMAIN_TYPE: &str =
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+    pub const NODE_STATEMENT_TYPE: &str =
+        "NodeStatement(uint256 nodeId,uint64 epoch,uint8 kind,bytes32 payloadHash)";
+    pub const NODE_STATEMENT_TYPEHASH: &str =
+        "0x777931cef703365b5622fddecd9d7e860372412bbe578d0b1628957c3a6220b5";
+    pub const BIND_NODE_TYPE: &str =
+        "BindNode(address operator,uint256 nodeId,bytes32 ipHash,bytes8 keyId,bytes32 pgpHash,uint256 nonce,uint256 deadline)";
+    pub const BIND_NODE_TYPEHASH: &str =
+        "0x578569fb8156d106c3abea91cae98010b24ba8ebef4a028965f06553c1ea2d03";
+    /// kind 1 payload: keccak256("CONET_NODE_ONLINE_V1").
+    pub const ONLINE_PAYLOAD_TEXT: &str = "CONET_NODE_ONLINE_V1";
+    pub const KIND_ONLINE: u8 = 1;
+    pub const KIND_SERVICE: u8 = 2;
+    pub const KIND_CAPABILITY: u8 = 3;
+}
