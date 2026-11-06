@@ -1,151 +1,185 @@
-//! Minimal sans-IO node: one `/post` request in, a list of actions out.
-//! The host owns sockets, clock and signer; this only decides.
-use crate::{classify_post, sign_hop, verify_hop, Decision, LocalRoute, WriteKeys};
-use serde::Serialize;
-use si_crypto::{eth, opgp};
+//! Sans-IO node: one `/post` request in, one step out. The host owns sockets, clock,
+//! route lookups and storage; this only decides. Mirrors CoNET-SI rev 74c6cfd:
+//! `postOpenpgpRouteSocket` → `forwardEncryptedSocket` → `signAndAppendHop`.
+use crate::{classify_post, sign_hop, verify_hop, Decision, LocalRoute, WalletSigner, WriteKeys};
+use serde_json::Value;
+use si_crypto::opgp;
 use si_proto as proto;
 
-#[derive(Debug, Serialize, PartialEq)]
-#[serde(tag = "action", rename_all = "snake_case")]
-pub enum Action {
-    /// Forward `armor` to the node owning `key_id`, with this hop header line.
-    Forward {
-        #[serde(rename = "keyId")]
+#[derive(Debug, PartialEq)]
+pub enum Step {
+    /// Look up `key_id`. If the route is this node, store `armor` for that key (mailbox);
+    /// if it is another node, call [`Node::forward_header`] and forward `armor` there.
+    Route {
         key_id: String,
-        armor_len: usize,
-        hop_header: String,
-        hops: usize,
-    },
-    /// Store / deliver to the local mailbox.
-    DeliverLocal {
-        #[serde(rename = "keyId")]
-        key_id: String,
+        armor: String,
         no_push: bool,
+        hops: Vec<proto::HopSig>,
     },
-    /// Hand the command to the command dispatcher.
+    /// Hand to the command dispatcher. `hops` are the parsed incoming rows (for GB metering).
     Command {
-        command: String,
+        command: Value,
+        signed: bool,
+        hops: Vec<proto::HopSig>,
     },
     VoiceChunk {
         locator: String,
     },
-    /// End the socket (SI `terminateByEnd` / `distorySocket`).
+    /// End the socket. `attack` = SI `terminateByEnd` (plain end), else 404 page (`distorySocket`).
     Close {
-        reason: String,
+        reason: &'static str,
+        attack: bool,
     },
 }
 
 pub struct Node<'a> {
     pub route: LocalRoute<'a>,
-    pub wallet: &'a eth::EthKey,
+    pub wallet: &'a dyn WalletSigner,
     pub write_keys: WriteKeys,
 }
 
 impl Node<'_> {
-    /// `now` is unix seconds from the host clock.
-    pub fn on_post(&self, header_lines: &[&str], body_json: &str, now: i64) -> Vec<Action> {
-        let Ok(body) = serde_json::from_str::<serde_json::Value>(body_json) else {
-            return vec![Action::Close {
-                reason: "body_json".into(),
-            }];
+    pub fn on_post(&self, header_lines: &[&str], body_json: &str) -> Step {
+        let Ok(body) = serde_json::from_str::<Value>(body_json) else {
+            return Step::Close {
+                reason: "body_json",
+                attack: false,
+            };
         };
-        let Some(armor) = body.get("data").and_then(|v| v.as_str()) else {
-            return vec![Action::Close {
-                reason: "body_data".into(),
-            }];
+        let Some(armor) = body.get("data").and_then(Value::as_str) else {
+            return Step::Close {
+                reason: "body_data",
+                attack: false,
+            };
         };
+        // SI incomingHopSigsOrAttack: invalid header or more than 3 rows ends the socket.
         let hops = match proto::parse_hop_header(header_lines) {
             proto::HopHeader::Absent => vec![],
             proto::HopHeader::Rows(r) => r,
-            proto::HopHeader::TooMany(_) | proto::HopHeader::Invalid => {
-                return vec![Action::Close {
-                    reason: "hop_sigs".into(),
-                }]
+            proto::HopHeader::TooMany(_) => {
+                return Step::Close {
+                    reason: "hop_count",
+                    attack: true,
+                }
+            }
+            proto::HopHeader::Invalid => {
+                return Step::Close {
+                    reason: "hop_header",
+                    attack: true,
+                }
             }
         };
-        let valid: Vec<_> = hops.into_iter().filter(|h| verify_hop(h, now)).collect();
+        if hops.iter().any(|h| !si_crypto::eth::is_address(&h.w)) {
+            return Step::Close {
+                reason: "hop_header",
+                attack: true,
+            };
+        }
         match classify_post(armor, &self.route, &self.write_keys) {
-            Decision::Forward { key_id } => self.forward(valid, &key_id, armor, now),
+            Decision::Forward { key_id } => Step::Route {
+                key_id,
+                armor: armor.to_string(),
+                no_push: false,
+                hops,
+            },
             Decision::OnionForward { key_id, inner } => {
-                if valid.len() >= proto::MAX_SI_HOP_SIGS {
-                    return vec![Action::Close {
-                        reason: "hop_limit".into(),
-                    }];
+                if hops.len() >= proto::MAX_SI_HOP_SIGS {
+                    return Step::Close {
+                        reason: "hop_limit",
+                        attack: true,
+                    };
                 }
-                self.forward(valid, &key_id, &inner, now)
+                Step::Route {
+                    key_id,
+                    armor: inner,
+                    no_push: false,
+                    hops,
+                }
             }
             Decision::MailboxWork {
-                key_id, no_push, ..
-            } => vec![Action::DeliverLocal { key_id, no_push }],
-            Decision::AttackSameNode => vec![Action::Close {
-                reason: "same_node".into(),
-            }],
+                key_id,
+                no_push,
+                inner,
+            } => Step::Route {
+                key_id,
+                armor: inner,
+                no_push,
+                hops,
+            },
+            Decision::AttackSameNode => Step::Close {
+                reason: "same_node",
+                attack: true,
+            },
             Decision::VoiceChunk {
                 locator,
                 mac_ok: true,
                 ..
-            } => vec![Action::VoiceChunk { locator }],
-            Decision::VoiceChunk { .. } => vec![Action::Close {
-                reason: "voice_mac".into(),
-            }],
-            Decision::VoiceCommand { command } | Decision::SignedCommand { command } => {
-                let name = command
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if !proto::KNOWN_COMMANDS.contains(&name.as_str()) {
-                    return vec![Action::Close {
-                        reason: "unknown_command".into(),
-                    }];
-                }
-                vec![Action::Command { command: name }]
-            }
-            Decision::Reject { reason } => vec![Action::Close {
-                reason: reason.into(),
-            }],
+            } => Step::VoiceChunk { locator },
+            Decision::VoiceChunk { .. } => Step::Close {
+                reason: "voice_mac",
+                attack: false,
+            },
+            Decision::VoiceCommand { command } => self.command(command, false, hops),
+            Decision::SignedCommand { command } => self.command(command, true, hops),
+            Decision::Reject { reason } => Step::Close {
+                reason,
+                attack: false,
+            },
         }
     }
 
-    fn forward(
+    fn command(&self, command: Value, signed: bool, hops: Vec<proto::HopSig>) -> Step {
+        let name = command.get("command").and_then(Value::as_str).unwrap_or("");
+        if !proto::KNOWN_COMMANDS.contains(&name) {
+            return Step::Close {
+                reason: "unknown_command",
+                attack: false,
+            };
+        }
+        Step::Command {
+            command,
+            signed,
+            hops,
+        }
+    }
+
+    /// SI `signAndAppendHop`: refuse at 3 rows or when this wallet already signed; otherwise
+    /// append our row and return the full header line for the next hop. `now` = unix seconds.
+    pub fn forward_header(
         &self,
-        mut hops: Vec<proto::HopSig>,
-        key_id: &str,
+        incoming: &[proto::HopSig],
+        next_key_id: &str,
         armor: &str,
         now: i64,
-    ) -> Vec<Action> {
+    ) -> Result<String, &'static str> {
         let me = self.wallet.address();
-        if hops.len() >= proto::MAX_SI_HOP_SIGS
-            || hops.iter().any(|h| h.w.eq_ignore_ascii_case(&me))
+        if incoming.len() >= proto::MAX_SI_HOP_SIGS
+            || incoming.iter().any(|h| h.w.eq_ignore_ascii_case(&me))
         {
-            return vec![Action::Close {
-                reason: "hop_limit".into(),
-            }];
+            return Err("hop_limit");
         }
-        match sign_hop(self.wallet, armor, key_id, now) {
-            Ok(h) => hops.push(h),
-            Err(_) => {
-                return vec![Action::Close {
-                    reason: "hop_sign".into(),
-                }]
-            }
-        }
-        vec![Action::Forward {
-            key_id: key_id.into(),
-            armor_len: armor.len(),
-            hop_header: format!(
-                "{}: {}",
-                proto::SI_HOP_SIG_HEADER,
-                proto::serialize_hop_header_value(&hops)
-            ),
-            hops: hops.len(),
-        }]
+        let mut hops = incoming.to_vec();
+        hops.push(sign_hop(self.wallet, armor, next_key_id, now).map_err(|_| "hop_sign")?);
+        Ok(format!(
+            "{}: {}",
+            proto::SI_HOP_SIG_HEADER,
+            proto::serialize_hop_header_value(&hops)
+        ))
+    }
+
+    /// Prior-hop bytes to credit to the user (SI `creditUserGbFromHopSigs`).
+    pub fn verified_hop_bytes(hops: &[proto::HopSig], now: i64) -> u64 {
+        hops.iter()
+            .filter(|h| verify_hop(h, now))
+            .map(|h| h.n)
+            .sum()
     }
 }
 
-/// Convenience for hosts: build the local route from armored key material.
+/// Convenience for hosts: build the local route from armored key material (tests only;
+/// the product loads the route key inside the signer process).
 pub fn load_route(armor: &str, pass: &str) -> si_crypto::Result<(opgp::SecretCert, String)> {
-    let key = opgp::SecretCert::from_armor(armor, pass)?;
+    let key = opgp::SecretCert::from_armor(armor, pass)?.unlock()?;
     let id = key
         .public()
         .enc_key_id()

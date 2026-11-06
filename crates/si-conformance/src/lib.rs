@@ -388,7 +388,18 @@ pub fn make_artifacts(golden: &str, seed_hex: &str) -> String {
         wallet: &c.wallets["nodeA"],
         write_keys: WriteKeys::new(),
     };
-    let actions = node.on_post(&[], &json!({ "data": foreign }).to_string(), now);
+    let actions = match node.on_post(&[], &json!({ "data": foreign }).to_string()) {
+        si_core::node::Step::Route {
+            key_id,
+            armor,
+            hops,
+            ..
+        } => match node.forward_header(&hops, &key_id, &armor, now) {
+            Ok(h) => vec![json!({ "action": "forward", "keyId": key_id, "hop_header": h })],
+            Err(e) => vec![json!({ "action": "close", "reason": e })],
+        },
+        other => vec![json!({ "action": "other", "step": format!("{other:?}") })],
+    };
 
     json!({
         "now": now,

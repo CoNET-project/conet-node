@@ -63,8 +63,36 @@ pub enum Decision {
     },
 }
 
+/// Decrypts PGP messages addressed to this node's route key. In the product this is a client
+/// of the signer process, so the network process never holds the key (design v0.1 §6.2).
+pub trait RouteDecryptor: Send + Sync {
+    fn decrypt(&self, armor: &str) -> si_crypto::Result<Vec<u8>>;
+}
+
+/// In-process implementation, for tests and the conformance runner only.
+impl RouteDecryptor for opgp::SecretCert {
+    fn decrypt(&self, armor: &str) -> si_crypto::Result<Vec<u8>> {
+        opgp::decrypt(armor, self, None).map(|d| d.data)
+    }
+}
+
+/// Signs EIP-191 messages with the node wallet (hop signatures, gossip). Same remark as above.
+pub trait WalletSigner: Send + Sync {
+    fn address(&self) -> String;
+    fn sign_message(&self, message: &str) -> si_crypto::Result<String>;
+}
+
+impl WalletSigner for eth::EthKey {
+    fn address(&self) -> String {
+        eth::EthKey::address(self)
+    }
+    fn sign_message(&self, message: &str) -> si_crypto::Result<String> {
+        eth::EthKey::sign_message(self, message)
+    }
+}
+
 pub struct LocalRoute<'a> {
-    pub key: &'a opgp::SecretCert,
+    pub key: &'a dyn RouteDecryptor,
     /// Upper-case hex `getKeyIDs()[1]`.
     pub key_id: &'a str,
 }
@@ -96,8 +124,8 @@ pub fn classify_post(armor: &str, local: &LocalRoute<'_>, write_keys: &WriteKeys
             key_id: kid.to_string(),
         };
     }
-    let bytes = match opgp::decrypt(armor, local.key, None) {
-        Ok(d) => d.data,
+    let bytes = match local.key.decrypt(armor) {
+        Ok(d) => d,
         Err(_) => return Decision::Reject { reason: "decrypt" },
     };
     if bytes.len() > proto::VOICE_CHUNK_HEADER && &bytes[..4] == proto::VOICE_CHUNK_MAGIC {
@@ -284,7 +312,7 @@ pub fn verify_hop(h: &proto::HopSig, now: i64) -> bool {
 
 /// SI `signAndAppendHop`, minus the clock (passed in as `t`).
 pub fn sign_hop(
-    key: &eth::EthKey,
+    key: &dyn WalletSigner,
     armor: &str,
     next_key_id: &str,
     t: i64,
