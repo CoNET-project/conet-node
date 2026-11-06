@@ -1,6 +1,8 @@
 # conet-updater: after start, checks the signed release manifest at a random time within
 # 12 hours; restarts conet-node only when a newer version applies to this node.
 # Restart permission: a polkit rule letting user conet-updater restart conet-node.service only.
+# Release public keys and threshold are compiled into conet-updater (build env CONET_RELEASE_KEYS,
+# CONET_RELEASE_THRESHOLD); without them it never updates.
 [Unit]
 Description=CoNET node updater
 After=network-online.target
@@ -11,8 +13,6 @@ Group=conet-updater
 ExecStart=/opt/conet-node/updater/conet-updater run \
   --root /opt/conet-node \
   --manifest-url ${CONET_MANIFEST_URL_1} --manifest-url ${CONET_MANIFEST_URL_2} \
-  --trusted-key ${CONET_RELEASE_KEY_1} --trusted-key ${CONET_RELEASE_KEY_2} --trusted-key ${CONET_RELEASE_KEY_3} \
-  --threshold ${CONET_RELEASE_THRESHOLD} \
   --node-id ${CONET_NODE_WALLET} \
   --restart-cmd "systemctl restart conet-node.service" \
   --health-url http://127.0.0.1:9180/healthz

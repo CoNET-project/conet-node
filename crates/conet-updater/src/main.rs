@@ -4,7 +4,7 @@
 //!      restart only when there is a newer version for this node's cohort; repeat. No restart
 //!      contract and no fixed schedule (user decision 2026-11-06).
 //! release: offline tooling for the release keys (custody is decision N6).
-use conet_updater::agent::{random_delay, Agent, Hook, CHECK_WINDOW};
+use conet_updater::agent::{backoff, random_delay, Agent, Hook, CHECK_WINDOW};
 use conet_updater::manifest::{self, SigFile};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::path::PathBuf;
@@ -19,6 +19,27 @@ fn args(name: &str) -> Vec<String> {
 }
 fn arg(name: &str) -> Option<String> {
     args(name).into_iter().next()
+}
+
+/// Release public keys and threshold are compiled into this binary (security §3.2): a candidate
+/// release cannot bring its own keys, and changing keys takes a release signed by the old ones.
+/// Build with CONET_RELEASE_KEYS="hex,hex,..." CONET_RELEASE_THRESHOLD=k. Without them, `run`
+/// never updates.
+const RELEASE_KEYS: Option<&str> = option_env!("CONET_RELEASE_KEYS");
+const RELEASE_THRESHOLD: Option<&str> = option_env!("CONET_RELEASE_THRESHOLD");
+
+fn compiled_keys() -> (Vec<VerifyingKey>, usize) {
+    let keys = RELEASE_KEYS
+        .unwrap_or("")
+        .split(',')
+        .filter(|k| !k.trim().is_empty())
+        .filter_map(|k| hex::decode(k.trim()).ok()?.try_into().ok())
+        .filter_map(|b: [u8; 32]| VerifyingKey::from_bytes(&b).ok())
+        .collect();
+    (
+        keys,
+        RELEASE_THRESHOLD.and_then(|t| t.parse().ok()).unwrap_or(0),
+    )
 }
 
 fn trusted() -> Result<Vec<VerifyingKey>, Box<dyn std::error::Error>> {
@@ -86,11 +107,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a: Vec<String> = std::env::args().collect();
     match (a.get(1).map(String::as_str), a.get(2).map(String::as_str)) {
         (Some("run"), _) => {
+            let (keys, threshold) = compiled_keys();
             let agent = Agent::new(
                 PathBuf::from(arg("--root").ok_or("--root <dir>")?),
                 args("--manifest-url"),
-                trusted()?,
-                arg("--threshold").and_then(|t| t.parse().ok()).unwrap_or(1),
+                keys,
+                threshold,
                 arg("--node-id").ok_or("--node-id <node wallet>")?,
                 arg("--target").unwrap_or_else(|| "x86_64-unknown-linux-gnu".into()),
             )?;
@@ -104,13 +126,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let health = Health(
                 arg("--health-url").unwrap_or_else(|| "http://127.0.0.1:9180/healthz".into()),
             );
+            let mut failures = 0u32;
+            let mut wait = random_delay(CHECK_WINDOW);
             loop {
-                let wait = random_delay(CHECK_WINDOW);
                 tracing::info!(minutes = wait.as_secs() / 60, "next update check");
                 tokio::time::sleep(wait).await;
                 match agent.check_once(&restart, &health).await {
-                    Ok(d) => tracing::info!(?d, "update check"),
-                    Err(e) => tracing::warn!(err = %e.0, "update check failed"),
+                    Ok(d) => {
+                        tracing::info!(result = d.label(), "update check");
+                        failures = 0;
+                        wait = random_delay(CHECK_WINDOW);
+                    }
+                    Err(e) => {
+                        failures += 1;
+                        wait = backoff(failures, CHECK_WINDOW);
+                        tracing::warn!(err = %e.0, failures, "update check failed; backing off");
+                    }
                 }
             }
         }

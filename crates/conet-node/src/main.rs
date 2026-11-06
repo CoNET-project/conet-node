@@ -50,8 +50,49 @@ fn keys() -> Result<Keys, Box<dyn std::error::Error>> {
     Err("need --signer-socket <path> (or --insecure-dev-keys for local tests)".into())
 }
 
+/// `--selftest`: known-answer checks the updater runs on a staged binary before switching to it.
+/// The key is derived from a public test string; the answers were produced with ethers v6.
+fn selftest() -> Result<(), String> {
+    let k = si_crypto::eth::EthKey::from_hex(
+        "0x18eff4d5aacc32afd0160623fbee160db5840f3746844094c55a23488a2f906b",
+    )
+    .map_err(|e| e.to_string())?;
+    let want = "0xb56b6cdc61461439053570978e7e197fba28b7b267481b1dea5305b0ce5a88a916854ee8b216a251e51117292b1b13b4db7934c2cc39d91ef8d70e533022dc4c1b";
+    if k.sign_message("conet-node selftest")
+        .map_err(|e| e.to_string())?
+        != want
+    {
+        return Err("eip191 signature".into());
+    }
+    if si_crypto::eth::recover_message("conet-node selftest", want).map_err(|e| e.to_string())?
+        != "0xdfd105A6202b5e52913735c5C5B1915da08F25e5"
+    {
+        return Err("eip191 recover".into());
+    }
+    let sealed =
+        si_core::seal_mailbox("{\"t\":1}", &[7u8; 32], &[1u8; 12]).map_err(|e| e.to_string())?;
+    if si_core::open_mailbox(&sealed, &[7u8; 32]) != Some(("{\"t\":1}".into(), 256)) {
+        return Err("mailbox seal".into());
+    }
+    if si_crypto::eth::keccak_hex("")
+        != "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+    {
+        return Err("keccak".into());
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|a| a == "--selftest") {
+        return match selftest() {
+            Ok(()) => {
+                println!("selftest ok {}", env!("CARGO_PKG_VERSION"));
+                Ok(())
+            }
+            Err(e) => Err(format!("selftest failed: {e}").into()),
+        };
+    }
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();

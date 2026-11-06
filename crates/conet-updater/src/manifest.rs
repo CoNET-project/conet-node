@@ -25,6 +25,9 @@ pub struct Manifest {
     pub released_at: u64,
     /// Share of nodes (0–100) that take this version; picked by hash(node wallet, version).
     pub rollout_percent: u8,
+    /// Lowest version allowed to run; candidates (and rollback targets) below it are refused.
+    #[serde(default)]
+    pub min_version: Option<String>,
     /// Versions that must not run. A node on a revoked version rolls back to its previous one.
     #[serde(default)]
     pub revoked: Vec<String>,
