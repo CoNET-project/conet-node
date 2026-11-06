@@ -230,3 +230,94 @@ async fn node_wallet_endpoint() {
         "{out}"
     );
 }
+
+/// Entry A runs with its keys in the signer process; B is in-process.
+#[tokio::test(flavor = "multi_thread")]
+async fn entry_with_signer_process() {
+    let g = golden();
+    let dir = tempfile::tempdir().unwrap();
+    let kek = [9u8; 32];
+    let secrets = si_signer::keystore::Secrets {
+        wallet_hex: g["wallets"]["nodeA"]["privateKey"].as_str().unwrap().into(),
+        pgp_armored: g["keys"]["nodeA"]["armoredPrivate"]
+            .as_str()
+            .unwrap()
+            .into(),
+        pgp_pass: g["keys"]["nodeA"]["passphrase"].as_str().unwrap().into(),
+    };
+    let state = dir.path().join("state.json");
+    si_signer::server::Signer::init_state(&state, &kek).unwrap();
+    let signer = Arc::new(
+        si_signer::server::Signer::start(si_signer::server::SignerConfig {
+            keystore_file: si_signer::keystore::seal(&kek, &secrets).unwrap(),
+            kek: zeroize::Zeroizing::new(kek),
+            state_path: state,
+            verifying_contract: "0x00000000000000000000000000000000c0de0001".into(),
+            reset_floor: None,
+            allow_bind: false,
+            allow_uid: None,
+        })
+        .unwrap_or_else(|e| panic!("{}", e.0)),
+    );
+    let sock = dir.path().join("signer.sock");
+    tokio::spawn(si_signer::server::serve(
+        tokio::net::UnixListener::bind(&sock).unwrap(),
+        signer,
+    ));
+    let client = Arc::new(
+        tokio::task::spawn_blocking(move || si_signer::client::SignerClient::connect(sock))
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+
+    let (kb, idb) = key(&g, "nodeB");
+    let la = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let lb = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (aa, ab) = (la.local_addr().unwrap(), lb.local_addr().unwrap());
+    let ida = client.route_key_id().to_string();
+    let user = g["keys"]["user"]["encKeyId"].as_str().unwrap().to_string();
+    let mk_routes = |own: &str| {
+        let r = RouteTable::new(own, Duration::from_secs(3600));
+        r.replace_nodes([(ida.clone(), aa), (idb.clone(), ab)]);
+        r.set_user_route(&user, &idb);
+        Arc::new(r)
+    };
+    let store_b = Arc::new(MemoryStore::default());
+    let ctx_a = Arc::new(NodeCtx {
+        key_id: ida.clone(),
+        decryptor: client.clone(),
+        wallet: client.clone(),
+        routes: mk_routes(&ida),
+        store: Arc::new(MemoryStore::default()),
+        limits: Limits::default(),
+        connect_timeout: Duration::from_secs(2),
+        max_connections: 64,
+    });
+    let ctx_b = Arc::new(NodeCtx {
+        key_id: idb.clone(),
+        decryptor: Arc::new(kb),
+        wallet: Arc::new(wallet(&g, "nodeB")),
+        routes: mk_routes(&idb),
+        store: store_b.clone(),
+        limits: Limits::default(),
+        connect_timeout: Duration::from_secs(2),
+        max_connections: 64,
+    });
+    tokio::spawn(server::serve(la, ctx_a));
+    tokio::spawn(server::serve(lb, ctx_b));
+
+    // onion: A must decrypt (via signer) and sign the hop (via signer)
+    let inner = enc(10, "via signer", &pubkey(&g, "user"));
+    let outer = enc(11, &inner, &pubkey(&g, "nodeA"));
+    let resp = post(aa, &outer, &[]).await;
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "{resp}");
+    let got = store_b.pending(&user);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].hops, 1);
+    assert_eq!(
+        got[0].hop_bytes,
+        inner.trim_end().len() as u64,
+        "hop row signed by the signer verifies at B"
+    );
+}

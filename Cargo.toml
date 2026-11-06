@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/si-proto", "crates/si-crypto", "crates/si-core", "crates/si-conformance", "crates/si-conformance-cli", "crates/conet-si-wasm", "crates/conet-node"]
+members = ["crates/si-proto", "crates/si-crypto", "crates/si-core", "crates/si-conformance", "crates/si-conformance-cli", "crates/conet-si-wasm", "crates/conet-node", "crates/si-signer"]
 
 [workspace.package]
 edition = "2021"
@@ -27,6 +27,7 @@ si-proto = { path = "crates/si-proto" }
 si-crypto = { path = "crates/si-crypto" }
 si-core = { path = "crates/si-core" }
 si-conformance = { path = "crates/si-conformance" }
+si-signer = { path = "crates/si-signer" }
 
 [profile.release]
 opt-level = 3

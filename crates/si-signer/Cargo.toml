@@ -1,0 +1,30 @@
+[package]
+name = "si-signer"
+description = "CoNET node signer process: holds the node keys, signs only whitelisted payloads"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "conet-signer"
+path = "src/main.rs"
+
+[dependencies]
+si-proto.workspace = true
+si-crypto.workspace = true
+si-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+hex.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
+hmac.workspace = true
+sha2.workspace = true
+zeroize = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"

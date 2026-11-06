@@ -123,15 +123,23 @@ async fn post(mut stream: TcpStream, req: http::Request, ctx: Arc<NodeCtx>) {
                 let _ = stream.write_all(&http::ok_200("")).await;
             }
             Resolved::Remote(addr) => {
-                let node = Node {
-                    route: LocalRoute {
-                        key: &*ctx.decryptor,
-                        key_id: &ctx.key_id,
-                    },
-                    wallet: &*ctx.wallet,
-                    write_keys: WriteKeys::new(),
-                };
-                match node.forward_header(&hops, &key_id, &armor, now_secs()) {
+                // The wallet may be the signer client (blocking socket call): keep it off I/O threads.
+                let c = ctx.clone();
+                let (k, a, h) = (key_id.clone(), armor.clone(), hops);
+                let header = tokio::task::spawn_blocking(move || {
+                    let node = Node {
+                        route: LocalRoute {
+                            key: &*c.decryptor,
+                            key_id: &c.key_id,
+                        },
+                        wallet: &*c.wallet,
+                        write_keys: WriteKeys::new(),
+                    };
+                    node.forward_header(&h, &k, &a, now_secs())
+                })
+                .await
+                .unwrap_or(Err("join"));
+                match header {
                     Ok(header) => {
                         forward(
                             stream,
