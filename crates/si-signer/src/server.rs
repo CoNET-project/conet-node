@@ -151,10 +151,18 @@ impl Signer {
                     .map(ok)
                     .unwrap_or_else(|_| refused("sign"))
             }
-            Request::DecryptRoute { armor } => match opgp::decrypt(&armor, &self.route, None) {
-                Ok(d) => ok(B64.encode(d.data)),
-                Err(_) => refused("decrypt"),
-            },
+            Request::RouteSessionKey { pkesk } => {
+                let Ok(bytes) = B64.decode(pkesk) else {
+                    return refused("pkesk_fields");
+                };
+                match opgp::session_key_from_pkesk(&bytes, &self.route) {
+                    Ok((alg, key)) => ok(format!(
+                        "{alg}:{}",
+                        B64.encode(zeroize::Zeroizing::new(key).as_slice())
+                    )),
+                    Err(_) => refused("decrypt"),
+                }
+            }
             Request::SignStatement {
                 node_id,
                 epoch,

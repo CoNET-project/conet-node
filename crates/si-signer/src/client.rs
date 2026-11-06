@@ -56,10 +56,17 @@ impl SignerClient {
 
 impl RouteDecryptor for SignerClient {
     fn decrypt(&self, armor: &str) -> Result<Vec<u8>> {
-        let v = self.call(&Request::DecryptRoute {
-            armor: armor.to_string(),
-        })?;
-        B64.decode(v).map_err(|e| Error::Pgp(e.to_string()))
+        // Only the PKESK goes to the signer; decompression and parsing stay here.
+        let pkesk = si_crypto::opgp::pkesk_packet(armor)?;
+        let v = zeroize::Zeroizing::new(self.call(&Request::RouteSessionKey {
+            pkesk: B64.encode(pkesk),
+        })?);
+        let (alg, key) = v
+            .split_once(':')
+            .ok_or_else(|| Error::Pgp("signer reply".into()))?;
+        let alg: u8 = alg.parse().map_err(|_| Error::Pgp("signer reply".into()))?;
+        let key = zeroize::Zeroizing::new(B64.decode(key).map_err(|e| Error::Pgp(e.to_string()))?);
+        si_crypto::opgp::decrypt_with_session_key(armor, alg, &key)
     }
 }
 

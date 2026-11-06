@@ -129,6 +129,81 @@ pub fn recipient_key_ids(armor: &str) -> Result<Vec<String>> {
     }
 }
 
+/// Network side: the message's single PKESK packet, serialized with its header. This is all
+/// the signer needs; the encrypted payload never leaves the network process.
+pub fn pkesk_packet(armor: &str) -> Result<Vec<u8>> {
+    use pgp::packet::PacketTrait;
+    let (msg, _) = Message::from_string(armor).map_err(e)?;
+    let Message::Encrypted { esk, .. } = &msg else {
+        return Err(Error::Pgp("not encrypted".into()));
+    };
+    let mut pk = esk.iter().filter_map(|x| match x {
+        Esk::PublicKeyEncryptedSessionKey(p) => Some(p),
+        _ => None,
+    });
+    let (Some(p), None) = (pk.next(), pk.next()) else {
+        return Err(Error::Pgp("need exactly one PKESK".into()));
+    };
+    let mut out = vec![];
+    p.to_writer_with_header(&mut out).map_err(e)?;
+    Ok(out)
+}
+
+/// Signer side: decrypt one v3 PKESK with the route key. Returns (symmetric algorithm id, key).
+/// Parses a single small packet; never sees, decompresses or parses the payload.
+pub fn session_key_from_pkesk(pkesk: &[u8], key: &SecretCert) -> Result<(u8, Vec<u8>)> {
+    use pgp::composed::PlainSessionKey;
+    use pgp::packet::{Packet, PacketParser};
+    use pgp::types::{DecryptionKey, EskType, PkeskVersion};
+    if pkesk.len() > 4096 {
+        return Err(Error::Pgp("pkesk too large".into()));
+    }
+    let mut parser = PacketParser::new(pkesk);
+    let p = match parser.next() {
+        Some(Ok(Packet::PublicKeyEncryptedSessionKey(p))) => p,
+        _ => return Err(Error::Pgp("not a PKESK packet".into())),
+    };
+    if parser.next().is_some() {
+        return Err(Error::Pgp("trailing packets".into()));
+    }
+    if p.version() != PkeskVersion::V3 {
+        return Err(Error::Pgp("only v3 PKESK".into()));
+    }
+    let values = p.values().map_err(e)?;
+    for sub in &key.key.secret_subkeys {
+        if !p.match_identity(&sub.key.public_key()) {
+            continue;
+        }
+        let sk = sub
+            .key
+            .decrypt(&key.pw(), values, EskType::V3_4)
+            .map_err(e)?
+            .map_err(e)?;
+        return match &sk {
+            PlainSessionKey::V3_4 { sym_alg, key } => {
+                Ok((u8::from(*sym_alg), key.as_ref().to_vec()))
+            }
+            _ => Err(Error::Pgp("unexpected session key version".into())),
+        };
+    }
+    Err(Error::Pgp("PKESK is not for this key".into()))
+}
+
+/// Network side: decrypt (and decompress) with a session key from the signer.
+pub fn decrypt_with_session_key(armor: &str, sym_alg: u8, session_key: &[u8]) -> Result<Vec<u8>> {
+    use pgp::composed::PlainSessionKey;
+    let (msg, _) = Message::from_string(armor).map_err(e)?;
+    let sk = PlainSessionKey::V3_4 {
+        sym_alg: SymmetricKeyAlgorithm::from(sym_alg),
+        key: session_key.into(),
+    };
+    let mut m = msg.decrypt_with_session_key(sk).map_err(e)?;
+    if m.is_compressed() {
+        m = m.decompress().map_err(e)?;
+    }
+    m.as_data_vec().map_err(e)
+}
+
 pub struct Decrypted {
     pub data: Vec<u8>,
     /// Some(true/false) when a signer was given and the message carried a signature.
@@ -258,5 +333,58 @@ mod tests {
             k["passphrase"].as_str().unwrap()
         )
         .is_ok());
+    }
+
+    #[test]
+    fn session_key_path_matches_full_decrypt() {
+        let g: serde_json::Value =
+            serde_json::from_str(include_str!("../../../conformance/vectors/golden.json")).unwrap();
+        let k = &g["keys"]["nodeA"];
+        let key = SecretCert::from_armor(
+            k["armoredPrivate"].as_str().unwrap(),
+            k["passphrase"].as_str().unwrap(),
+        )
+        .unwrap()
+        .unlock()
+        .unwrap();
+        let other = SecretCert::from_armor(
+            g["keys"]["nodeB"]["armoredPrivate"].as_str().unwrap(),
+            g["keys"]["nodeB"]["passphrase"].as_str().unwrap(),
+        )
+        .unwrap();
+        let mut checked = 0;
+        for v in g["vectors"].as_array().unwrap() {
+            let local = v["kind"] == "pgp_decrypt"
+                || (v["kind"] == "post_classify" && v["input"]["localKey"] == "nodeA");
+            let skip =
+                ["post-not-local", "post-multi-recipient"].contains(&v["id"].as_str().unwrap());
+            if !local || skip {
+                continue;
+            }
+            let armor = v["input"]["armor"].as_str().unwrap();
+            let pk = pkesk_packet(armor).unwrap();
+            assert!(pk.len() < 200, "only the PKESK leaves the network process");
+            let (alg, sk) = session_key_from_pkesk(&pk, &key).unwrap();
+            assert_eq!(
+                decrypt_with_session_key(armor, alg, &sk).unwrap(),
+                decrypt(armor, &key, None).unwrap().data,
+                "{}",
+                v["id"]
+            );
+            assert!(session_key_from_pkesk(&pk, &other).is_err(), "wrong key");
+            checked += 1;
+        }
+        assert!(checked >= 15, "{checked}");
+        let multi = g["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["id"] == "post-multi-recipient")
+            .unwrap();
+        assert!(
+            pkesk_packet(multi["input"]["armor"].as_str().unwrap()).is_err(),
+            "multi-recipient refused"
+        );
+        assert!(session_key_from_pkesk(b"\xc1\x01\x00", &key).is_err());
     }
 }

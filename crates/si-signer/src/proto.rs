@@ -15,9 +15,10 @@ pub enum Request {
         h: String,
         k: String,
     },
-    /// Decrypt a PGP message addressed to the route key. Returns base64 plaintext.
-    DecryptRoute {
-        armor: String,
+    /// Decrypt one PKESK addressed to the route key. Returns `"<sym alg id>:<base64 session key>"`.
+    RouteSessionKey {
+        /// base64 of one serialized v3 PKESK packet (header included); never the payload.
+        pkesk: String,
     },
     /// EIP-191 over the decimal epoch (mailbox handshake `hash`).
     SignEpoch {
