@@ -139,6 +139,14 @@ impl NodeNotices for SignerClient {
             expires,
         })
     }
+    fn sign_acme_dns01(&self, key_id: &str, value: &str, op: &str, expires: i64) -> Result<String> {
+        self.call(&Request::SignAcmeDns01 {
+            key_id: key_id.into(),
+            value: value.into(),
+            dns_op: op.into(),
+            expires,
+        })
+    }
     fn sign_epoch(&self, epoch: u64) -> Result<String> {
         self.call(&Request::SignEpoch { epoch })
     }

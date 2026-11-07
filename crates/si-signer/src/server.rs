@@ -233,6 +233,32 @@ impl Signer {
                     .map(ok)
                     .unwrap_or_else(|_| refused("sign"))
             }
+            Request::SignAcmeDns01 {
+                key_id,
+                value,
+                dns_op: op,
+                expires,
+            } => {
+                let fields_ok = key_id.eq_ignore_ascii_case(&self.key_id)
+                    && sp::acme::valid_txt_value(&value)
+                    && sp::acme::valid_op(&op)
+                    && expires > now()
+                    && expires <= now() + sp::acme::DNS01_MAX_VALID_SEC;
+                if !fields_ok {
+                    return refused("acme_fields");
+                }
+                let text = sp::acme::dns01_text(
+                    &self.key_id,
+                    &self.wallet.address(),
+                    &value,
+                    &op,
+                    expires,
+                );
+                self.wallet
+                    .sign_message(&text)
+                    .map(ok)
+                    .unwrap_or_else(|_| refused("sign"))
+            }
             Request::RouteSessionKey { pkesk } => {
                 let Ok(bytes) = B64.decode(pkesk) else {
                     return refused("pkesk_fields");

@@ -504,3 +504,61 @@ pub mod webrtc {
         }
     }
 }
+
+/// ACME DNS-01 through the project's DNS daemon (decision W42; Q74: nodes on :443 keep
+/// TLS-ALPN-01, others use DNS-01). The node keeps its certificate key; it only asks the daemon,
+/// with a wallet-signed request, to set or delete the TXT record
+/// `_acme-challenge.{keyId}.conet.network`. The daemon derives the name from the key ID.
+pub mod acme {
+    pub const DNS01_DOMAIN: &str = "conet.acme.dns01.v1";
+    /// Longest validity the signer accepts for one daemon request.
+    pub const DNS01_MAX_VALID_SEC: i64 = 600;
+    pub const OP_SET: &str = "set";
+    pub const OP_DELETE: &str = "delete";
+
+    /// The DNS-01 TXT value: base64url (no padding) of a SHA-256 digest, so 43 characters.
+    pub fn valid_txt_value(v: &str) -> bool {
+        v.len() == 43
+            && v.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    }
+
+    pub fn valid_op(op: &str) -> bool {
+        op == OP_SET || op == OP_DELETE
+    }
+
+    /// Text the node wallet signs (EIP-191). The signer fills in its own key ID and wallet.
+    pub fn dns01_text(key_id: &str, wallet: &str, value: &str, op: &str, expires: i64) -> String {
+        format!(
+            "{DNS01_DOMAIN}\nkeyId:{}\nwallet:{}\nvalue:{value}\nop:{op}\nexp:{expires}",
+            key_id.to_ascii_uppercase(),
+            wallet.to_ascii_lowercase()
+        )
+    }
+
+    /// TXT record name the daemon writes for a key ID.
+    pub fn challenge_name(key_id: &str) -> String {
+        format!(
+            "_acme-challenge.{}.conet.network",
+            key_id.to_ascii_lowercase()
+        )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn values_and_text() {
+            let v = "A".repeat(42) + "_";
+            assert!(valid_txt_value(&v));
+            assert!(!valid_txt_value(&("A".repeat(42) + "=")));
+            assert!(!valid_txt_value(&"A".repeat(44)));
+            assert!(valid_op("set") && valid_op("delete") && !valid_op("SET"));
+            assert_eq!(
+                dns01_text("ab12", "0xAbC", &v, "set", 7),
+                format!("conet.acme.dns01.v1\nkeyId:AB12\nwallet:0xabc\nvalue:{v}\nop:set\nexp:7")
+            );
+            assert_eq!(challenge_name("AB12"), "_acme-challenge.ab12.conet.network");
+        }
+    }
+}

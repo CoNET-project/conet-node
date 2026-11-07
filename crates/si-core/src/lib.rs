@@ -127,6 +127,15 @@ pub trait NodeNotices: Send + Sync {
         fingerprint: &str,
         expires: i64,
     ) -> si_crypto::Result<String>;
+    /// ACME DNS-01 daemon request (`si_proto::acme::dns01_text`). The signer refuses a
+    /// `key_id` other than its own, a malformed value or op, and an expiry past 10 minutes.
+    fn sign_acme_dns01(
+        &self,
+        key_id: &str,
+        value: &str,
+        op: &str,
+        expires: i64,
+    ) -> si_crypto::Result<String>;
 }
 
 impl NodeNotices for eth::EthKey {
@@ -164,6 +173,16 @@ impl NodeNotices for eth::EthKey {
             fingerprint,
             expires,
         );
+        eth::EthKey::sign_message(self, &text)
+    }
+    fn sign_acme_dns01(
+        &self,
+        key_id: &str,
+        value: &str,
+        op: &str,
+        expires: i64,
+    ) -> si_crypto::Result<String> {
+        let text = proto::acme::dns01_text(key_id, &eth::EthKey::address(self), value, op, expires);
         eth::EthKey::sign_message(self, &text)
     }
     fn sign_epoch(&self, epoch: u64) -> si_crypto::Result<String> {

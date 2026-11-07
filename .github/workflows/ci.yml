@@ -10,6 +10,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   WASM_BINDGEN_VERSION: 0.2.130
+  PEBBLE_VERSION: v2.10.1
 
 jobs:
   rust:
@@ -27,6 +28,18 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Pebble (Let's Encrypt's test CA) and its mock DNS for the DNS-01 test (W42), built from
+      # the tagged source through the Go checksum database.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - name: Pebble ${{ env.PEBBLE_VERSION }}
+        run: |
+          GOBIN="$RUNNER_TEMP/pebble" go install "github.com/letsencrypt/pebble/v2/cmd/pebble@$PEBBLE_VERSION"
+          GOBIN="$RUNNER_TEMP/pebble" go install "github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@$PEBBLE_VERSION"
+          echo "PEBBLE_BIN=$RUNNER_TEMP/pebble/pebble" >> "$GITHUB_ENV"
+          echo "PEBBLE_CHALLTESTSRV_BIN=$RUNNER_TEMP/pebble/pebble-challtestsrv" >> "$GITHUB_ENV"
       - run: cargo test --workspace --release --locked
       - name: Build the Linux node binary
         run: cargo build --release --locked -p si-conformance-cli

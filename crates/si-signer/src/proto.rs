@@ -66,6 +66,15 @@ pub enum Request {
         fingerprint: String,
         expires: i64,
     },
+    /// ACME DNS-01 daemon request (W42); the signer adds its own route key ID and wallet.
+    SignAcmeDns01 {
+        #[serde(rename = "keyId")]
+        key_id: String,
+        value: String,
+        #[serde(rename = "dnsOp")]
+        dns_op: String,
+        expires: i64,
+    },
     /// NodeRegistryV2 BindNode consent. Refused unless the signer runs with `--allow-bind`.
     SignBind {
         operator: String,

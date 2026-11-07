@@ -60,6 +60,28 @@ Browser side (see `si_proto::webrtc` and `tools/webrtc-browser-test/index.html`)
 
 Local browser test with the golden test keys: `tools/webrtc-browser-test/run.sh [lan ip]`.
 
+## HTTPS certificates
+
+`--tls-listen <ip:port>` serves the same routes as :80 with a certificate for
+`{keyId}.conet.network`. Two ACME modes (`--acme-mode`, default `auto`):
+
+| Mode | When | How |
+| --- | --- | --- |
+| `alpn` | listener on 443 (`auto` picks it) | TLS-ALPN-01 answered on the listener itself |
+| `dns01` | any other port (`auto` picks it) | DNS-01: the node asks the project's DNS daemon to set `_acme-challenge.{keyId}.conet.network`, with a request signed by the node wallet (`conet.acme.dns01.v1`, via the signer) |
+
+```bash
+conet-node … --tls-listen 0.0.0.0:<port> --acme-cache <state dir>/acme \
+  --acme-dns-daemon <daemon url>        # dns01 only
+# --acme-staging, --acme-contact <email>, --acme-directory <url>, --tls-cert/--tls-key (fixed PEM)
+```
+
+The certificate key is made on the node and stays in `--acme-cache` (mode 0600); the daemon
+only writes TXT records. Renewal starts 30 days before expiry. The daemon side checks requests
+with `acme_dns::verify_dns01_request` and must also confirm the wallet is the registered node
+for the key ID. Test: `tests/acme_dns01.rs` against Pebble (set `PEBBLE_BIN` and
+`PEBBLE_CHALLTESTSRV_BIN`; CI builds Pebble v2.10.1).
+
 ## Rules
 
 - Never commit node IP addresses, SSH accounts, home paths, key locations, or any real node or user key.

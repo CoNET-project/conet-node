@@ -1,6 +1,7 @@
 //! CoNET Linux node host: sockets, route table, storage around the sans-IO `si-core`.
 #![forbid(unsafe_code)]
 
+pub mod acme_dns;
 pub mod chain;
 pub mod commands;
 pub mod exit;

@@ -1,7 +1,8 @@
-//! HTTPS listener (:443) with in-process ACME (decision Q13): each node gets a certificate for
-//! `{routeKeyID}.conet.network` through TLS-ALPN-01, so nothing else (no certbot, no sudo,
-//! issue S4) and no extra port is involved. Browsers on HTTPS pages, browser SIs in particular,
-//! can only reach nodes this way. Behaviour on :443 is identical to :80.
+//! HTTPS listener with in-process ACME (decision Q13): each node gets a certificate for
+//! `{routeKeyID}.conet.network`, so nothing else (no certbot, no sudo, issue S4) is involved.
+//! Browsers on HTTPS pages, browser SIs in particular, can only reach nodes this way. Behaviour
+//! is identical to :80. Two ACME modes (Q74): TLS-ALPN-01 for a node that holds :443, DNS-01
+//! through the DNS daemon (`acme_dns`, W42) for nodes on any other port.
 use crate::server::{handle, NodeCtx};
 use futures_util::StreamExt;
 use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
@@ -26,6 +27,11 @@ pub enum TlsSource {
         contact: Vec<String>,
         production: bool,
     },
+    /// DNS-01 through the project's DNS daemon; any port.
+    Dns01 {
+        opts: crate::acme_dns::Dns01Opts,
+        daemon: crate::acme_dns::DnsDaemon,
+    },
     /// Fixed PEM files (tests, local networks).
     Static { cert_pem: Vec<u8>, key_pem: Vec<u8> },
 }
@@ -46,6 +52,15 @@ fn static_config(cert_pem: &[u8], key_pem: &[u8]) -> std::io::Result<Arc<ServerC
         .with_single_cert(chain, key)
         .map_err(|e| bad(e.to_string()))?;
     Ok(Arc::new(cfg))
+}
+
+/// Server config that serves whatever certificate the DNS-01 task has put in `slot`.
+pub fn dns01_config(slot: Arc<crate::acme_dns::CertSlot>) -> Arc<ServerConfig> {
+    let mut cfg = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_cert_resolver(slot);
+    cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Arc::new(cfg)
 }
 
 pub async fn serve_tls(
@@ -78,6 +93,12 @@ pub async fn serve_tls(
             });
             info!(%domain, production, "acme certificate management started");
             (default, Some(challenge))
+        }
+        TlsSource::Dns01 { opts, daemon } => {
+            let slot = Arc::new(crate::acme_dns::CertSlot::default());
+            info!(domain = %opts.domain, "acme dns-01 certificate management started");
+            tokio::spawn(crate::acme_dns::run(opts, daemon, slot.clone()));
+            (dns01_config(slot), None)
         }
     };
     let slots = Arc::new(Semaphore::new(ctx.max_connections));

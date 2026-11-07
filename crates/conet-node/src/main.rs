@@ -189,21 +189,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             watcher::WatchOpts::default(),
         ));
     }
-    // HTTPS (:443): in-process ACME for {keyID}.conet.network (Q13), or fixed PEM files for tests.
+    // HTTPS: in-process ACME for {keyID}.conet.network (Q13), or fixed PEM files for tests.
+    // ACME mode (Q74): TLS-ALPN-01 on :443, DNS-01 through the DNS daemon on other ports (W42).
     if let Some(tls_listen) = arg("--tls-listen") {
+        use conet_node::acme_dns::{self, choose_mode, AcmeMode, Dns01Opts};
         use conet_node::tls::{node_domain, serve_tls, TlsSource};
+        let tls_port = tls_listen
+            .parse::<std::net::SocketAddr>()
+            .map_err(|_| "--tls-listen <ip:port>")?
+            .port();
+        let staging = std::env::args().any(|a| a == "--acme-staging");
+        let cache = || -> Result<std::path::PathBuf, &'static str> {
+            Ok(arg("--acme-cache")
+                .ok_or("--acme-cache <dir> (keeps the certificate across restarts)")?
+                .into())
+        };
         let src = match (arg("--tls-cert"), arg("--tls-key")) {
             (Some(c), Some(k)) => TlsSource::Static {
                 cert_pem: std::fs::read(c)?,
                 key_pem: std::fs::read(k)?,
             },
-            _ => TlsSource::Acme {
-                domain: arg("--tls-domain").unwrap_or_else(|| node_domain(&ctx.key_id)),
-                cache: arg("--acme-cache")
-                    .ok_or("--acme-cache <dir> (keeps the certificate across restarts)")?
-                    .into(),
-                contact: arg("--acme-contact").into_iter().collect(),
-                production: !std::env::args().any(|a| a == "--acme-staging"),
+            _ => match choose_mode(arg("--acme-mode").as_deref(), tls_port)? {
+                AcmeMode::Alpn => TlsSource::Acme {
+                    domain: arg("--tls-domain").unwrap_or_else(|| node_domain(&ctx.key_id)),
+                    cache: cache()?,
+                    contact: arg("--acme-contact").into_iter().collect(),
+                    production: !staging,
+                },
+                AcmeMode::Dns01 => {
+                    // The daemon derives the TXT name from the key ID, so no --tls-domain here.
+                    let domain = node_domain(&ctx.key_id);
+                    if arg("--tls-domain").is_some_and(|d| !d.eq_ignore_ascii_case(&domain)) {
+                        return Err(
+                            "--tls-domain cannot differ from {keyId}.conet.network with DNS-01"
+                                .into(),
+                        );
+                    }
+                    let daemon = arg("--acme-dns-daemon")
+                        .ok_or("--acme-dns-daemon <url> (DNS-01: the project's DNS daemon)")?;
+                    let mut opts = Dns01Opts::new(domain, cache()?, daemon.clone());
+                    opts.contact = arg("--acme-contact").into_iter().collect();
+                    opts.directory = arg("--acme-directory").unwrap_or_else(|| {
+                        if staging {
+                            acme_dns::LETS_ENCRYPT_STAGING.into()
+                        } else {
+                            acme_dns::LETS_ENCRYPT.into()
+                        }
+                    });
+                    opts.directory_root = arg("--acme-directory-root").map(Into::into);
+                    TlsSource::Dns01 {
+                        daemon: acme_dns::daemon_for(&ctx, &daemon),
+                        opts,
+                    }
+                }
             },
         };
         let l = tokio::net::TcpListener::bind(&tls_listen).await?;

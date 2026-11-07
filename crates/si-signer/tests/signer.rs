@@ -463,6 +463,50 @@ async fn webrtc_endpoint_for_own_key_only() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn acme_dns01_for_own_key_only() {
+    use si_core::NodeNotices;
+    let e = Env::new();
+    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
+    let key = c.route_key_id().to_string();
+    let addr = e.g["wallets"]["nodeA"]["address"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let v = "x".repeat(43);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let sign = |k: String, v: String, op: &'static str, exp: i64| {
+        let c = c.clone();
+        async move {
+            tokio::task::spawn_blocking(move || c.sign_acme_dns01(&k, &v, op, exp))
+                .await
+                .unwrap()
+        }
+    };
+    for op in ["set", "delete"] {
+        let sig = sign(key.clone(), v.clone(), op, now + 300).await.unwrap();
+        let text = si_proto::acme::dns01_text(&key, &addr, &v, op, now + 300);
+        assert_eq!(eth::recover_message(&text, &sig).unwrap(), addr);
+    }
+    // another key ID, bad value, bad op, expiry past 10 minutes or in the past
+    assert!(sign("0000000000000000".into(), v.clone(), "set", now + 300)
+        .await
+        .is_err());
+    assert!(sign(key.clone(), "x".repeat(42) + "=", "set", now + 300)
+        .await
+        .is_err());
+    assert!(sign(key.clone(), v.clone(), "SET", now + 300)
+        .await
+        .is_err());
+    assert!(sign(key.clone(), v.clone(), "set", now + 700)
+        .await
+        .is_err());
+    assert!(sign(key, v, "set", now - 1).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn generated_keys_serve_and_match_registration_values() {
     let (secrets, public) = keystore::generate().unwrap();
     let dir = tempfile::tempdir().unwrap();
