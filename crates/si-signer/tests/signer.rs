@@ -1,13 +1,12 @@
 //! Signer end-to-end over a real Unix socket, golden TEST keys only.
 use serde_json::Value;
-use si_core::statement::{Domain, NodeStatement};
 use si_core::{RouteDecryptor, WalletSigner};
-use si_crypto::{eip712 as e7, eth};
+use si_crypto::eth;
 use si_signer::client::SignerClient;
+use si_signer::keystore;
 use si_signer::proto::Request;
 use si_signer::server::{Signer, SignerConfig};
-use si_signer::{keystore, state};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
@@ -47,24 +46,13 @@ impl Env {
             keystore::seal(&kek, &secrets).unwrap(),
         )
         .unwrap();
-        Signer::init_state(&dir.path().join("state.json"), &kek).unwrap();
         Self { dir, kek, g }
     }
-    fn state(&self) -> PathBuf {
-        self.dir.path().join("state.json")
-    }
-    fn cfg(
-        &self,
-        reset_floor: Option<u64>,
-        allow_bind: bool,
-        allow_uid: Option<u32>,
-    ) -> SignerConfig {
+    fn cfg(&self, allow_bind: bool, allow_uid: Option<u32>) -> SignerConfig {
         SignerConfig {
             keystore_file: std::fs::read_to_string(self.dir.path().join("keystore.json")).unwrap(),
             kek: Zeroizing::new(self.kek),
-            state_path: self.state(),
             verifying_contract: REGISTRY.into(),
-            reset_floor,
             allow_bind,
             allow_uid,
         }
@@ -90,23 +78,13 @@ async fn call(c: &Arc<SignerClient>, r: Request) -> Result<String, String> {
         .unwrap()
 }
 
-fn statement(node: &str, epoch: u64, kind: u8, payload: &str) -> Request {
-    Request::SignStatement {
-        node_id: node.into(),
-        epoch,
-        kind,
-        payload_hash: payload.into(),
-    }
-}
-
-const ONLINE: &str = "0xee5c566b8f23405e1627453857d993550f9849487d1f0174d9e422bacb47098c";
 const P1: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
 const P2: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn identity_decrypt_and_hop() {
     let e = Env::new();
-    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
+    let c = Arc::new(e.start(e.cfg(false, None), "a").await);
     assert_eq!(
         c.address(),
         e.g["wallets"]["nodeA"]["address"].as_str().unwrap()
@@ -170,89 +148,9 @@ async fn identity_decrypt_and_hop() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn one_statement_per_epoch_and_kind_survives_restart() {
-    let e = Env::new();
-    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
-    let s1 = call(&c, statement("7", 10, 1, ONLINE)).await.unwrap();
-    assert_eq!(
-        call(&c, statement("7", 10, 1, ONLINE)).await.unwrap(),
-        s1,
-        "same statement, same bytes"
-    );
-    assert!(call(&c, statement("7", 10, 1, P1))
-        .await
-        .unwrap_err()
-        .contains("online_payload"));
-    call(&c, statement("7", 10, 2, P1)).await.unwrap();
-    assert!(call(&c, statement("7", 10, 2, P2))
-        .await
-        .unwrap_err()
-        .contains("double_sign"));
-    assert!(call(&c, statement("7", 9, 2, P2))
-        .await
-        .unwrap_err()
-        .contains("epoch_rewind"));
-    assert!(call(&c, statement("7", 11, 9, P2))
-        .await
-        .unwrap_err()
-        .contains("unknown_kind"));
-
-    // signature recovers to the node wallet over the spec digest
-    let st = NodeStatement::online(e7::u256_dec("7").unwrap(), 10);
-    let digest = st.digest(&Domain::new(REGISTRY).unwrap());
-    assert_eq!(
-        eth::recover_digest(&digest, &s1).unwrap(),
-        e.g["wallets"]["nodeA"]["address"].as_str().unwrap()
-    );
-
-    // restart: the record is on disk, a different payload is still refused
-    let c2 = Arc::new(e.start(e.cfg(None, false, None), "b").await);
-    assert!(call(&c2, statement("7", 10, 2, P2))
-        .await
-        .unwrap_err()
-        .contains("double_sign"));
-    assert!(call(&c2, statement("7", 11, 2, P2)).await.is_ok());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn lost_or_damaged_state_disables_statements_until_floor() {
-    let e = Env::new();
-    std::fs::remove_file(e.state()).unwrap();
-    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
-    assert!(call(&c, statement("7", 10, 1, ONLINE))
-        .await
-        .unwrap_err()
-        .contains("statement_state_unavailable"));
-    // hop and decrypt still work without statement state
-    assert!(call(&c, Request::Address).await.is_ok());
-
-    let c2 = Arc::new(e.start(e.cfg(Some(100), false, None), "b").await);
-    assert!(call(&c2, statement("7", 100, 1, ONLINE))
-        .await
-        .unwrap_err()
-        .contains("epoch_below_floor"));
-    assert!(call(&c2, statement("7", 101, 1, ONLINE)).await.is_ok());
-
-    // edited state file is detected
-    let text = std::fs::read_to_string(e.state())
-        .unwrap()
-        .replace("101", "1");
-    std::fs::write(e.state(), text).unwrap();
-    assert_eq!(
-        state::load(&e.state(), &e.kek).unwrap_err(),
-        state::LoadError::Damaged
-    );
-    let c3 = Arc::new(e.start(e.cfg(None, false, None), "c").await);
-    assert!(call(&c3, statement("7", 200, 1, ONLINE))
-        .await
-        .unwrap_err()
-        .contains("statement_state_unavailable"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn wrong_kek_does_not_open() {
     let e = Env::new();
-    let mut cfg = e.cfg(None, false, None);
+    let mut cfg = e.cfg(false, None);
     cfg.kek = Zeroizing::new([8u8; 32]);
     assert!(Signer::start(cfg).is_err());
 }
@@ -276,12 +174,12 @@ async fn bind_consent_only_when_enabled_and_for_own_key() {
         nonce: "0".into(),
         deadline: "9999999999".into(),
     };
-    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
+    let c = Arc::new(e.start(e.cfg(false, None), "a").await);
     assert!(call(&c, bind(&own))
         .await
         .unwrap_err()
         .contains("bind_disabled"));
-    let c2 = Arc::new(e.start(e.cfg(None, true, None), "b").await);
+    let c2 = Arc::new(e.start(e.cfg(true, None), "b").await);
     assert!(call(&c2, bind("0x0102030405060708"))
         .await
         .unwrap_err()
@@ -295,10 +193,10 @@ async fn peer_uid_check() {
     let me = std::fs::metadata(Path::new(e.dir.path()))
         .map(|m| std::os::unix::fs::MetadataExt::uid(&m))
         .unwrap();
-    let ok = e.start(e.cfg(None, false, Some(me)), "a").await;
+    let ok = e.start(e.cfg(false, Some(me)), "a").await;
     assert!(ok.call(&Request::Address).is_ok());
     let sock = e.dir.path().join("b.sock");
-    let signer = Arc::new(Signer::start(e.cfg(None, false, Some(me + 1))).unwrap());
+    let signer = Arc::new(Signer::start(e.cfg(false, Some(me + 1))).unwrap());
     let l = tokio::net::UnixListener::bind(&sock).unwrap();
     tokio::spawn(si_signer::server::serve(l, signer));
     assert!(
@@ -313,7 +211,7 @@ async fn peer_uid_check() {
 async fn notices_use_fixed_texts() {
     use si_core::NodeNotices;
     let e = Env::new();
-    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
+    let c = Arc::new(e.start(e.cfg(false, None), "a").await);
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -399,7 +297,7 @@ async fn notices_use_fixed_texts() {
 async fn webrtc_endpoint_for_own_key_only() {
     use si_core::NodeNotices;
     let e = Env::new();
-    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
+    let c = Arc::new(e.start(e.cfg(false, None), "a").await);
     let key = c.route_key_id().to_string();
     let addr = e.g["wallets"]["nodeA"]["address"]
         .as_str()
@@ -466,7 +364,7 @@ async fn webrtc_endpoint_for_own_key_only() {
 async fn acme_dns01_for_own_key_only() {
     use si_core::NodeNotices;
     let e = Env::new();
-    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
+    let c = Arc::new(e.start(e.cfg(false, None), "a").await);
     let key = c.route_key_id().to_string();
     let addr = e.g["wallets"]["nodeA"]["address"]
         .as_str()
@@ -516,14 +414,11 @@ async fn generated_keys_serve_and_match_registration_values() {
         keystore::seal(&kek, &secrets).unwrap(),
     )
     .unwrap();
-    Signer::init_state(&dir.path().join("state.json"), &kek).unwrap();
     let signer = Arc::new(
         Signer::start(SignerConfig {
             keystore_file: std::fs::read_to_string(dir.path().join("keystore.json")).unwrap(),
             kek: Zeroizing::new(kek),
-            state_path: dir.path().join("state.json"),
             verifying_contract: REGISTRY.into(),
-            reset_floor: None,
             allow_bind: false,
             allow_uid: None,
         })
@@ -567,15 +462,11 @@ async fn route_key_rotation_keeps_the_old_key_until_retired() {
     let kek = [4u8; 32];
     let start = |secrets: &keystore::Secrets, name: &str| {
         let ks = keystore::seal(&kek, secrets).unwrap();
-        let state = dir.path().join(format!("{name}.json"));
-        Signer::init_state(&state, &kek).unwrap();
         let signer = Arc::new(
             Signer::start(SignerConfig {
                 keystore_file: ks,
                 kek: Zeroizing::new(kek),
-                state_path: state,
                 verifying_contract: REGISTRY.into(),
-                reset_floor: None,
                 allow_bind: false,
                 allow_uid: None,
             })

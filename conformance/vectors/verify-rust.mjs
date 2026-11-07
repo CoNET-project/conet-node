@@ -102,11 +102,11 @@ await check('entry-forward-hop-header', async () => {
 	return { pass: Array.isArray(hops) && hops.length === 1 && valid.length === 1 && hops[0].h === hopArmorHash(a.entryForward.armor) && hops[0].w === new ethers.Wallet(g.wallets.nodeA.privateKey).address, hops }
 })
 
-await check('node-statement-eip712', async () => {
-	const n = a.nodeStatement
-	const types = { NodeStatement: [{ name: 'nodeId', type: 'uint256' }, { name: 'epoch', type: 'uint64' }, { name: 'kind', type: 'uint8' }, { name: 'payloadHash', type: 'bytes32' }] }
+await check('anchor-receipt-eip712', async () => {
+	const n = a.anchorReceipt
+	const types = { AnchorReceipt: [{ name: 'nodeId', type: 'uint256' }, { name: 'anchorNodeId', type: 'uint256' }, { name: 'onlineSeq', type: 'uint64' }, { name: 'onlineUntil', type: 'uint64' }] }
 	const signer = ethers.verifyTypedData(n.domain, types, n.value, n.signature)
-	return { pass: signer === n.address && n.value.payloadHash === ethers.keccak256(ethers.toUtf8Bytes('CONET_NODE_ONLINE_V1')) }
+	return { pass: signer === n.address }
 })
 
 await check('rust-generated-route-key', async () => {

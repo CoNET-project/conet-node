@@ -186,19 +186,10 @@ pub mod node_registry {
     pub const CHAIN_ID: u64 = 224_422;
     pub const EIP712_DOMAIN_TYPE: &str =
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
-    pub const NODE_STATEMENT_TYPE: &str =
-        "NodeStatement(uint256 nodeId,uint64 epoch,uint8 kind,bytes32 payloadHash)";
-    pub const NODE_STATEMENT_TYPEHASH: &str =
-        "0x777931cef703365b5622fddecd9d7e860372412bbe578d0b1628957c3a6220b5";
     pub const BIND_NODE_TYPE: &str =
         "BindNode(address operator,uint256 nodeId,bytes32 ipHash,bytes8 keyId,bytes32 pgpHash,uint256 nonce,uint256 deadline)";
     pub const BIND_NODE_TYPEHASH: &str =
         "0x578569fb8156d106c3abea91cae98010b24ba8ebef4a028965f06553c1ea2d03";
-    /// kind 1 payload: keccak256("CONET_NODE_ONLINE_V1").
-    pub const ONLINE_PAYLOAD_TEXT: &str = "CONET_NODE_ONLINE_V1";
-    pub const KIND_ONLINE: u8 = 1;
-    pub const KIND_SERVICE: u8 = 2;
-    pub const KIND_CAPABILITY: u8 = 3;
 
     // NodeRegistryV2 v0.1 (node line, Q77). Type strings copied from NodeRegistryTypes.sol.
     pub const REGISTER_REQUEST_TYPE: &str = "RegisterRequest(address operator,address beneficiary,address nodeWallet,uint8 nodeType,bytes32 ipHash,uint16 tcpPort,uint16 udpPort,bytes32 pgpHash,bytes8 keyId,uint16 services,uint256 sponsorNodeId,uint256 nonce,uint256 deadline)";
@@ -224,6 +215,81 @@ pub mod node_registry {
     pub const TYPE_MOBILE: u8 = 3;
     pub const MODE_WEBRTC: u8 = 1;
     pub const MODE_SSE: u8 = 2;
+
+    /// Canonical IP text (node line v0.1.47 §8.4.38, Q77-3); `ipHash` is keccak256 of it.
+    /// IPv4: four dotted decimal parts 0-255 without leading zeros. IPv6: RFC 5952 (lower
+    /// case, no leading zeros in a group, the longest run of two or more zero groups, leftmost
+    /// on a tie, as `::`). No port, brackets or zone; no embedded IPv4 (register the IPv4).
+    pub fn canonical_ip(ip: std::net::IpAddr) -> Result<String, &'static str> {
+        match ip {
+            std::net::IpAddr::V4(a) => Ok(a.to_string()),
+            std::net::IpAddr::V6(a) => {
+                if a.to_ipv4_mapped().is_some() {
+                    return Err("embedded_ipv4");
+                }
+                let t = a.to_string();
+                // std prints RFC 5952 except for IPv4-mapped (refused above).
+                if t.contains('.') {
+                    return Err("embedded_ipv4");
+                }
+                Ok(t)
+            }
+        }
+    }
+
+    /// Accept only text already in canonical form (what the contract accepts).
+    pub fn check_canonical_ip(text: &str) -> Result<std::net::IpAddr, &'static str> {
+        if text.contains('.') && text.contains(':') {
+            return Err("embedded_ipv4");
+        }
+        let ip: std::net::IpAddr = text.parse().map_err(|_| "not_an_ip")?;
+        if canonical_ip(ip)? != text {
+            return Err("not_canonical");
+        }
+        Ok(ip)
+    }
+
+    #[cfg(test)]
+    mod ip_tests {
+        use super::*;
+        #[test]
+        fn canonical_forms() {
+            for ok in [
+                "192.0.2.10",
+                "0.0.0.0",
+                "255.255.255.255",
+                "2001:db8::1",
+                "2001:db8::1:0:0:1",
+                "2001:db8:0:1:1:1:1:1",
+                "::1",
+                "::",
+                "fe80::1",
+                "1::",
+            ] {
+                assert_eq!(check_canonical_ip(ok).map(|_| ()), Ok(()), "{ok}");
+            }
+            for (bad, why) in [
+                ("192.168.001.1", "not_an_ip"),
+                ("1.2.3", "not_an_ip"),
+                ("256.1.1.1", "not_an_ip"),
+                ("2001:DB8::1", "not_canonical"),
+                ("2001:0db8::1", "not_canonical"),
+                ("2001:db8:0:0:1:0:0:1", "not_canonical"),
+                ("2001:db8::0:1", "not_canonical"),
+                ("2001:db8::1:1:1:1:1", "not_canonical"),
+                ("::ffff:1.2.3.4", "embedded_ipv4"),
+                ("::ffff:102:304", "embedded_ipv4"),
+                ("::1.2.3.4", "embedded_ipv4"),
+                ("[2001:db8::1]", "not_an_ip"),
+                ("2001:db8::1%eth0", "not_an_ip"),
+                ("192.0.2.10:443", "embedded_ipv4"),
+                (" 192.0.2.10", "not_an_ip"),
+                ("", "not_an_ip"),
+            ] {
+                assert_eq!(check_canonical_ip(bad).map(|_| ()), Err(why), "{bad}");
+            }
+        }
+    }
 }
 
 /// Texts the node wallet signs for the Beamio API (CoNET-SI `util.ts`, rev 74c6cfd).

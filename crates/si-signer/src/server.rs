@@ -1,12 +1,10 @@
 //! Signer service: policy checks, then the operation. Logs never contain payloads.
 use crate::proto::{self, Request, Response};
-use crate::state::{self, Records};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use si_core::statement::{BindNode, Domain, GuardDecision, NodeStatement, StatementGuard};
+use si_core::statement::{BindNode, Domain};
 use si_crypto::{eip712 as e7, eth, opgp};
 use si_proto as sp;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
@@ -20,10 +18,6 @@ pub struct Signer {
     /// Retiring route key (R11), if any.
     previous: Option<(opgp::SecretCert, String)>,
     domain: Domain,
-    kek: Zeroizing<[u8; 32]>,
-    state_path: PathBuf,
-    /// None = statement signing disabled (state missing or damaged, no floor given).
-    statements: Mutex<Option<(Records, StatementGuard)>>,
     pub allow_bind: bool,
     /// When set, only this peer uid may connect.
     pub allow_uid: Option<u32>,
@@ -32,10 +26,7 @@ pub struct Signer {
 pub struct SignerConfig {
     pub keystore_file: String,
     pub kek: Zeroizing<[u8; 32]>,
-    pub state_path: PathBuf,
     pub verifying_contract: String,
-    /// Operator-set floor when the state file is missing (e.g. a rebuilt server).
-    pub reset_floor: Option<u64>,
     pub allow_bind: bool,
     pub allow_uid: Option<u32>,
 }
@@ -75,39 +66,15 @@ impl Signer {
         };
         drop(secrets);
         let domain = Domain::new(&cfg.verifying_contract).map_err(|e| StartError(e.to_string()))?;
-        let statements = match (state::load(&cfg.state_path, &cfg.kek), cfg.reset_floor) {
-            (Ok(r), _) => Some((r.clone(), state::guard_from(&r))),
-            (Err(_), Some(floor)) => {
-                let r = Records {
-                    signed: vec![],
-                    floor: Some(floor),
-                };
-                state::save(&cfg.state_path, &cfg.kek, &r)
-                    .map_err(|e| StartError(format!("state write: {e}")))?;
-                Some((r.clone(), state::guard_from(&r)))
-            }
-            (Err(e), None) => {
-                warn!(?e, "statement state unavailable: statement signing disabled until --reset-statement-floor");
-                None
-            }
-        };
         Ok(Self {
             wallet,
             route,
             key_id,
             previous,
             domain,
-            kek: cfg.kek,
-            state_path: cfg.state_path,
-            statements: Mutex::new(statements),
             allow_bind: cfg.allow_bind,
             allow_uid: cfg.allow_uid,
         })
-    }
-
-    /// Create an empty state file for a fresh keystore (first start of a new node).
-    pub fn init_state(path: &std::path::Path, kek: &[u8; 32]) -> std::io::Result<()> {
-        state::save(path, kek, &Records::default())
     }
 
     pub fn handle(&self, req: Request) -> Response {
@@ -275,51 +242,6 @@ impl Signer {
                     )),
                     Err(_) => refused("decrypt"),
                 }
-            }
-            Request::SignStatement {
-                node_id,
-                epoch,
-                kind,
-                payload_hash,
-            } => {
-                let (Ok(node_id), Ok(payload_hash)) =
-                    (e7::u256_dec(&node_id), e7::bytes32(&payload_hash))
-                else {
-                    return refused("statement_fields");
-                };
-                let st = NodeStatement {
-                    node_id,
-                    epoch,
-                    kind,
-                    payload_hash,
-                };
-                if kind == sp::node_registry::KIND_ONLINE
-                    && st != NodeStatement::online(node_id, epoch)
-                {
-                    return refused("online_payload");
-                }
-                let mut guard = self.statements.lock().expect("statement lock");
-                let Some((records, g)) = guard.as_mut() else {
-                    return refused("statement_state_unavailable");
-                };
-                match g.check(&st) {
-                    GuardDecision::Refuse(r) => return refused(r),
-                    GuardDecision::SameAsBefore => {}
-                    GuardDecision::PersistThenSign { record } => {
-                        let mut next = records.clone();
-                        next.push(record.0, record.1, &record.2);
-                        if state::save(&self.state_path, &self.kek, &next).is_err() {
-                            return refused("state_write");
-                        }
-                        *records = next;
-                        g.commit(record);
-                    }
-                }
-                drop(guard);
-                self.wallet
-                    .sign_digest(&st.digest(&self.domain))
-                    .map(ok)
-                    .unwrap_or_else(|_| refused("sign"))
             }
             Request::SignBind {
                 operator,

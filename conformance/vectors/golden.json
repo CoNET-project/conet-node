@@ -905,90 +905,6 @@
    }
   },
   {
-   "id": "nodestatement-online",
-   "kind": "eip712",
-   "input": {
-    "wallet": "nodeA",
-    "domain": {
-     "name": "CoNETNodeRegistry",
-     "version": "1",
-     "chainId": 224422,
-     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
-    },
-    "primaryType": "NodeStatement",
-    "value": {
-     "nodeId": "1",
-     "epoch": "1234567",
-     "kind": 1,
-     "payloadHash": "0xee5c566b8f23405e1627453857d993550f9849487d1f0174d9e422bacb47098c"
-    }
-   },
-   "expect": {
-    "typeHash": "0x777931cef703365b5622fddecd9d7e860372412bbe578d0b1628957c3a6220b5",
-    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
-    "structHash": "0xf102dbb146bccf566be6be8a42094ffb4969469d90c44dd71b750a3f24a68c3a",
-    "digest": "0xb3c630ae3c1c86faa37952b070a622e22c7afbbac1d9bf58359c50da8b8fb646",
-    "signature": "0xbbcbfd2411fc4e0a82a9f75230372158678f47826b4948ceeb03a40208a8a57b17ec862e018af33c046cb0e0b3590220ed74be05c3c7e8a8f4218549cfc439b21b",
-    "address": "0x9329BB53905b5E07F4AD525C306dF204eE17767e"
-   }
-  },
-  {
-   "id": "nodestatement-service",
-   "kind": "eip712",
-   "input": {
-    "wallet": "nodeA",
-    "domain": {
-     "name": "CoNETNodeRegistry",
-     "version": "1",
-     "chainId": 224422,
-     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
-    },
-    "primaryType": "NodeStatement",
-    "value": {
-     "nodeId": "571",
-     "epoch": "1234568",
-     "kind": 2,
-     "payloadHash": "0x2e7696e94c5c9dfff5f89b1390c8e7b391de0fec67dcd52dbe81787faf28bcee"
-    }
-   },
-   "expect": {
-    "typeHash": "0x777931cef703365b5622fddecd9d7e860372412bbe578d0b1628957c3a6220b5",
-    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
-    "structHash": "0xbaa2c2830c3286efde3621ee082eaf7cdc81740fed8b8481b07f9a285428dd14",
-    "digest": "0x8eabbd3a82725456fb649ada0335d1185aa5d29410c3b7955d06bd0039a6672d",
-    "signature": "0xdeb4d47afaaf762c127891c8ad0b379a0751ab632f34bfe4343b6c94c5d83a6b02ce9d79c6c12f2c6f67bb48614633fcb5967d4ef231f899039d95d74d6d88551b",
-    "address": "0x9329BB53905b5E07F4AD525C306dF204eE17767e"
-   }
-  },
-  {
-   "id": "nodestatement-capability",
-   "kind": "eip712",
-   "input": {
-    "wallet": "nodeB",
-    "domain": {
-     "name": "CoNETNodeRegistry",
-     "version": "1",
-     "chainId": 224422,
-     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
-    },
-    "primaryType": "NodeStatement",
-    "value": {
-     "nodeId": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
-     "epoch": "18446744073709551615",
-     "kind": 3,
-     "payloadHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
-    }
-   },
-   "expect": {
-    "typeHash": "0x777931cef703365b5622fddecd9d7e860372412bbe578d0b1628957c3a6220b5",
-    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
-    "structHash": "0x8649f7ac9ed7c858234a51c4ea766d56f74e8eeae9656ed3b38df6944c81670d",
-    "digest": "0x1e369469696138a614e51aa257ad7defc2e14796ee1ffe5f46f674c1fbe8e9b4",
-    "signature": "0xd8ee12cd8329fee7ddb4da259e1ddb254907966d20eddab913899dc1921f65201ab21c7f7db66944bf6e1dfea374b747de8603067a8eeeae567da5b0b647aaf71c",
-    "address": "0xb614156Cd087a94847B70337A425512E83dF0a5C"
-   }
-  },
-  {
    "id": "bindnode-new",
    "kind": "eip712",
    "input": {
@@ -1638,6 +1554,270 @@
     "digest": "0x1d49caa5d9cc76c265f65a11749e1e5cbc5a3fb60d737431843398d41fa93c74",
     "signature": "0x0f76a41f7b8dfa693ef2e15418535413acb330a858834b6c79bebca922e6e111363aca294a4ce6411b0683c3bae9b0d6172cf68e465b233e543c25334a00a6e11c",
     "address": "0xc2127c05F2Ecf13C94A0DE44AD131b4E2035cd7b"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-0",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "192.0.2.10"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0x464bbde869ae74fa898f9e6d5a8d24894716c0e5626ba4b7c0a94d5f87b6d24e"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-1",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "0.0.0.0"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0x30923e6ac488e77c4ce5040ec9507c46114f3a7facf7d50649b19d732e9ef7a3"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-2",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "255.255.255.255"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0xda4d8e3c627a31d2e79ed3fef57be778cf30f2f17b36753196a1d0c0ad7989ed"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-3",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "2001:db8::1"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0x04a7c120e46d9538a05effac960504b5d18928c6f7344cc4201da4892b3f6496"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-4",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "2001:db8::1:0:0:1"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0x16a6d03788e01c68c5442db1fbaead56aae318dd069e082f37e87438c71afe70"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-5",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "2001:db8:0:1:1:1:1:1"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0xaef1aa9f1acb60640850e82f5bbeb9269c3d5e7fe5e237a7f98f2b66ffc20239"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-6",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "::1"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0xee4471b027d48c09e83019c5f33c6ebd1411c632b75ef30214472400c701c343"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-7",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "::"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0xcf8a940c1fc7c078691af05e55a31984d774d59c3b459c02aa0b96f305a1da08"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-8",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "fe80::1"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0x16f614177224966c8ea40ef88dc421ee853fccad91d7eb83d1d8597344c1519c"
+   }
+  },
+  {
+   "id": "nr2-iphash-ok-9",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "1::"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0x369cd9b15e8b93a9675df06d1c3f2469430c603b3b3762b286b8c1009c1ebdcd"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-0",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "192.168.001.1"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_an_ip"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-1",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "1.2.3"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_an_ip"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-2",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "256.1.1.1"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_an_ip"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-3",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "2001:DB8::1"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_canonical"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-4",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "2001:0db8::1"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_canonical"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-5",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "2001:db8:0:0:1:0:0:1"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_canonical"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-6",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "2001:db8::0:1"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_canonical"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-7",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "2001:db8::1:1:1:1:1"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_canonical"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-8",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "::ffff:1.2.3.4"
+   },
+   "expect": {
+    "ok": false,
+    "error": "embedded_ipv4"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-9",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "::ffff:102:304"
+   },
+   "expect": {
+    "ok": false,
+    "error": "embedded_ipv4"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-10",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "[2001:db8::1]"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_an_ip"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-11",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "2001:db8::1%eth0"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_an_ip"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-12",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "192.0.2.10:443"
+   },
+   "expect": {
+    "ok": false,
+    "error": "embedded_ipv4"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-13",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": " 192.0.2.10"
+   },
+   "expect": {
+    "ok": false,
+    "error": "not_an_ip"
    }
   }
  ]

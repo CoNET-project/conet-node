@@ -251,15 +251,11 @@ async fn entry_with_signer_process() {
         previous_pgp_armored: String::new(),
         previous_pgp_pass: String::new(),
     };
-    let state = dir.path().join("state.json");
-    si_signer::server::Signer::init_state(&state, &kek).unwrap();
     let signer = Arc::new(
         si_signer::server::Signer::start(si_signer::server::SignerConfig {
             keystore_file: si_signer::keystore::seal(&kek, &secrets).unwrap(),
             kek: zeroize::Zeroizing::new(kek),
-            state_path: state,
             verifying_contract: "0x00000000000000000000000000000000c0de0001".into(),
-            reset_floor: None,
             allow_bind: false,
             allow_uid: None,
         })

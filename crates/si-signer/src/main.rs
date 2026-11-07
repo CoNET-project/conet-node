@@ -37,7 +37,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match std::env::args().nth(1).as_deref() {
         Some("init") => {
             let out = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
-            let state = PathBuf::from(arg("--state").ok_or("--state <path>")?);
             if out.exists() {
                 return Err("keystore exists; refusing to overwrite".into());
             }
@@ -51,19 +50,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let sealed = Zeroizing::new(keystore::seal(&kek, &secrets).map_err(|e| e.to_string())?);
             write_private(&out, sealed.as_bytes())?;
-            server::Signer::init_state(&state, &kek)?;
-            println!("keystore written; state initialised");
+            println!("keystore written");
         }
         Some("keygen") => {
             let out = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
-            let state = PathBuf::from(arg("--state").ok_or("--state <path>")?);
             if out.exists() {
                 return Err("keystore exists; refusing to overwrite".into());
             }
             let (secrets, public) = keystore::generate().map_err(|e| e.to_string())?;
             let sealed = Zeroizing::new(keystore::seal(&kek, &secrets).map_err(|e| e.to_string())?);
             write_private(&out, sealed.as_bytes())?;
-            server::Signer::init_state(&state, &kek)?;
             // Public values only: wallet address and route key, for node registration.
             let wallet = si_crypto::eth::EthKey::from_hex(&secrets.wallet_hex)
                 .map_err(|e| e.to_string())?
@@ -109,10 +105,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     arg("--keystore").ok_or("--keystore <path>")?,
                 )?,
                 kek,
-                state_path: PathBuf::from(arg("--state").ok_or("--state <path>")?),
                 verifying_contract: arg("--verifying-contract")
                     .ok_or("--verifying-contract <NodeRegistryV2 address>")?,
-                reset_floor: arg("--reset-statement-floor").and_then(|s| s.parse().ok()),
                 allow_bind: flag("--allow-bind"),
                 allow_uid: arg("--allow-uid").and_then(|s| s.parse().ok()),
             };

@@ -48,15 +48,6 @@ pub enum Request {
         expires_at: i64,
         timestamp: i64,
     },
-    /// NodeRegistryV2 NodeStatement (one per epoch and kind).
-    SignStatement {
-        #[serde(rename = "nodeId")]
-        node_id: String,
-        epoch: u64,
-        kind: u8,
-        #[serde(rename = "payloadHash")]
-        payload_hash: String,
-    },
     /// WebRTC endpoint statement (W35); the signer adds its own route key ID and wallet.
     SignWebrtcEndpoint {
         #[serde(rename = "keyId")]

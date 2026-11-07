@@ -318,14 +318,10 @@ add('epoch-gossip', 'eip191', { wallet: 'nodeA', message: epochMsg }, { signatur
 // ---- 11. NodeRegistryV2 EIP-712 (v0.1.2 §6.2). verifyingContract is a placeholder until deployment.
 const REGISTRY_PLACEHOLDER = '0x00000000000000000000000000000000c0de0001'
 const nrDomain = { name: 'CoNETNodeRegistry', version: '1', chainId: 224422, verifyingContract: REGISTRY_PLACEHOLDER }
-const nodeStatementTypes = { NodeStatement: [
-	{ name: 'nodeId', type: 'uint256' }, { name: 'epoch', type: 'uint64' }, { name: 'kind', type: 'uint8' }, { name: 'payloadHash', type: 'bytes32' },
-] }
 const bindNodeTypes = { BindNode: [
 	{ name: 'operator', type: 'address' }, { name: 'nodeId', type: 'uint256' }, { name: 'ipHash', type: 'bytes32' }, { name: 'keyId', type: 'bytes8' },
 	{ name: 'pgpHash', type: 'bytes32' }, { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' },
 ] }
-const ONLINE_PAYLOAD = ethers.keccak256(ethers.toUtf8Bytes('CONET_NODE_ONLINE_V1'))
 const domainSeparator = ethers.TypedDataEncoder.hashDomain(nrDomain)
 const eip712Vector = async (id, primary, types, value, wallet) => {
 	const enc = ethers.TypedDataEncoder.from(types)
@@ -338,9 +334,6 @@ const eip712Vector = async (id, primary, types, value, wallet) => {
 		address: wallets[wallet].address,
 	})
 }
-await eip712Vector('nodestatement-online', 'NodeStatement', nodeStatementTypes, { nodeId: '1', epoch: '1234567', kind: 1, payloadHash: ONLINE_PAYLOAD }, 'nodeA')
-await eip712Vector('nodestatement-service', 'NodeStatement', nodeStatementTypes, { nodeId: '571', epoch: '1234568', kind: 2, payloadHash: ethers.keccak256(ethers.toUtf8Bytes('served:12345678')) }, 'nodeA')
-await eip712Vector('nodestatement-capability', 'NodeStatement', nodeStatementTypes, { nodeId: '115792089237316195423570985008687907853269984665640564039457584007913129639935', epoch: '18446744073709551615', kind: 3, payloadHash: ethers.ZeroHash }, 'nodeB')
 // NOTE (Q77): these two M0 vectors hash the raw armor for pgpHash. NodeRegistryV2 v0.1 hashes the
 // armor's canonical base64 instead (see nr2.mjs pgpHash); they only check the signing encoding.
 await eip712Vector('bindnode-new', 'BindNode', bindNodeTypes, {

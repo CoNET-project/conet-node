@@ -186,8 +186,8 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
         }
         "eip712" => {
             use si_core::statement::{
-                anchors_hash, pgp_hash, AnchorReceipt, BindNode, Domain, NodeStatement,
-                OnlineDeclaration, RegisterRequest, SeqDeclaration,
+                anchors_hash, pgp_hash, AnchorReceipt, BindNode, Domain, OnlineDeclaration,
+                RegisterRequest, SeqDeclaration,
             };
             use si_crypto::eip712 as e7;
             let d = &input["domain"];
@@ -292,19 +292,6 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
                     };
                     (d.type_string, d.struct_hash(), d.digest(&domain))
                 }
-                "NodeStatement" => {
-                    let st = NodeStatement {
-                        node_id: e7::u256_dec(s(v, "nodeId")).map_err(es)?,
-                        epoch: s(v, "epoch").parse().map_err(|_| "epoch")?,
-                        kind: v["kind"].as_u64().ok_or("kind")? as u8,
-                        payload_hash: e7::bytes32(s(v, "payloadHash")).map_err(es)?,
-                    };
-                    (
-                        proto::node_registry::NODE_STATEMENT_TYPE,
-                        st.struct_hash(),
-                        st.digest(&domain),
-                    )
-                }
                 "BindNode" => {
                     let b = BindNode {
                         operator: e7::address_word(s(v, "operator")).map_err(es)?,
@@ -336,6 +323,10 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
             out.as_object_mut().expect("object").extend(extra);
             out
         }
+        "nr2_ip_hash" => match si_core::statement::ip_hash(s(input, "ip")) {
+            Ok(h) => json!({ "ok": true, "ipHash": si_crypto::eip712::to_hex(&h) }),
+            Err(e) => json!({ "ok": false, "error": e }),
+        },
         "payment_required" => {
             json!({ "statusLine": "HTTP/1.1 402 Payment Required", "html": proto::payment_required_html() })
         }
@@ -557,7 +548,7 @@ pub fn make_artifacts(golden: &str, seed_hex: &str) -> String {
         "udp": { "payload": udp, "keyB64": B64.encode(udp_key), "plaintext": "udp from rust" },
         "eip191": { "message": message, "signature": sign_message, "address": client.address() },
         "entryForward": { "armor": foreign, "actions": actions },
-        "nodeStatement": node_statement_artifact(&c, now),
+        "anchorReceipt": anchor_receipt_artifact(&c, now),
         "generatedKey": generated_key_artifact(&mut rng, &c),
     })
     .to_string()
@@ -634,15 +625,22 @@ pub fn bench(golden: &str, op: &str, n: u32) -> String {
     last
 }
 
-fn node_statement_artifact(c: &Ctx, now: i64) -> Value {
-    use si_core::statement::{Domain, NodeStatement};
+/// An AnchorReceipt signed in Rust (what a TCP anchor signs), for ethers to verify.
+fn anchor_receipt_artifact(c: &Ctx, now: i64) -> Value {
+    use si_core::statement::{AnchorReceipt, Domain};
+    use si_crypto::eip712::u64_word;
     let verifying = "0x00000000000000000000000000000000c0de0001";
     let domain = Domain::new(verifying).unwrap();
-    let st = NodeStatement::online(si_crypto::eip712::u64_word(7), now as u64);
-    let sig = c.wallets["nodeA"].sign_digest(&st.digest(&domain)).unwrap();
+    let r = AnchorReceipt {
+        node_id: u64_word(12),
+        anchor_node_id: u64_word(5),
+        online_seq: 4,
+        online_until: now as u64 + 3600,
+    };
+    let sig = c.wallets["nodeA"].sign_digest(&r.digest(&domain)).unwrap();
     json!({
         "domain": { "name": proto::node_registry::DOMAIN_NAME, "version": proto::node_registry::DOMAIN_VERSION, "chainId": proto::node_registry::CHAIN_ID, "verifyingContract": verifying },
-        "value": { "nodeId": "7", "epoch": now.to_string(), "kind": 1, "payloadHash": si_crypto::eip712::to_hex(&st.payload_hash) },
+        "value": { "nodeId": "12", "anchorNodeId": "5", "onlineSeq": "4", "onlineUntil": (now + 3600).to_string() },
         "signature": sig,
         "address": c.wallets["nodeA"].address(),
     })
