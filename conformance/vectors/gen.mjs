@@ -341,6 +341,8 @@ const eip712Vector = async (id, primary, types, value, wallet) => {
 await eip712Vector('nodestatement-online', 'NodeStatement', nodeStatementTypes, { nodeId: '1', epoch: '1234567', kind: 1, payloadHash: ONLINE_PAYLOAD }, 'nodeA')
 await eip712Vector('nodestatement-service', 'NodeStatement', nodeStatementTypes, { nodeId: '571', epoch: '1234568', kind: 2, payloadHash: ethers.keccak256(ethers.toUtf8Bytes('served:12345678')) }, 'nodeA')
 await eip712Vector('nodestatement-capability', 'NodeStatement', nodeStatementTypes, { nodeId: '115792089237316195423570985008687907853269984665640564039457584007913129639935', epoch: '18446744073709551615', kind: 3, payloadHash: ethers.ZeroHash }, 'nodeB')
+// NOTE (Q77): these two M0 vectors hash the raw armor for pgpHash. NodeRegistryV2 v0.1 hashes the
+// armor's canonical base64 instead (see nr2.mjs pgpHash); they only check the signing encoding.
 await eip712Vector('bindnode-new', 'BindNode', bindNodeTypes, {
 	operator: wallets.other.address, nodeId: '0', ipHash: ethers.keccak256(ethers.toUtf8Bytes('192.0.2.10')), keyId: '0x' + keys.nodeA.encKeyId.toLowerCase(),
 	pgpHash: ethers.keccak256(ethers.toUtf8Bytes(keys.nodeA.armoredPublic)), nonce: '0', deadline: String(now + 3600),
