@@ -330,3 +330,177 @@ pub fn payment_required_html() -> String {
     let body = "CoNET Passport has expired Please purchase a new certificate\r\nCoNETパスポートの有効期限が切れています。新しいを購入してください。\r\nCoNET通证已过期请购买新证书";
     format!("<html>\r\n<head><title>{title}</title></head>\r\n<body>\r\n<center><h1>{body}</h1></center>\r\n<hr><center>nginx/1.18.0</center>\r\n</body>\r\n</html>\r\n")
 }
+
+/// WebRTC entry without signalling (decision W35): the node listens ICE-lite on one UDP port
+/// with a long-lived self-signed DTLS certificate and publishes a wallet-signed endpoint
+/// statement. A browser builds the node's SDP answer locally from that statement, so no HTTPS
+/// and no CA certificate is involved. Both sides use the same random `ufrag` as ICE username
+/// fragment and password; the node learns it from the first STUN binding request.
+pub mod webrtc {
+    pub const ENDPOINT_DOMAIN: &str = "conet.webrtc.endpoint.v1";
+    /// Longest validity the signer accepts for one endpoint statement.
+    pub const ENDPOINT_MAX_VALID_SEC: i64 = 7 * 24 * 60 * 60;
+    pub const UFRAG_PREFIX: &str = "conet1";
+    const UFRAG_RANDOM_LEN: usize = 32;
+    /// Data-channel message size both sides use (chunks of HTTP bytes).
+    pub const MAX_MESSAGE: usize = 16 * 1024;
+    /// SCTP port in the SDP (fixed, both sides).
+    pub const SCTP_PORT: u16 = 5000;
+
+    /// `conet1` + 32 ASCII letters or digits (ICE needs ≥ 22 chars for the password).
+    pub fn valid_ufrag(u: &str) -> bool {
+        u.len() == UFRAG_PREFIX.len() + UFRAG_RANDOM_LEN
+            && u.starts_with(UFRAG_PREFIX)
+            && u[UFRAG_PREFIX.len()..]
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric())
+    }
+
+    /// `sha-256 AB:CD:…` with 32 upper-case hex bytes, as SDP `a=fingerprint` carries it.
+    pub fn valid_fingerprint(fp: &str) -> bool {
+        let Some(hex) = fp.strip_prefix("sha-256 ") else {
+            return false;
+        };
+        let parts: Vec<&str> = hex.split(':').collect();
+        parts.len() == 32
+            && parts.iter().all(|p| {
+                p.len() == 2
+                    && p.bytes()
+                        .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
+            })
+    }
+
+    /// Text the node wallet signs (EIP-191). The signer fills in its own key ID and wallet.
+    pub fn endpoint_text(
+        key_id: &str,
+        wallet: &str,
+        ip: &str,
+        port: u16,
+        fingerprint: &str,
+        expires: i64,
+    ) -> String {
+        format!(
+            "{ENDPOINT_DOMAIN}\nkeyId:{}\nwallet:{}\naddr:{ip}:{port}\nfp:{fingerprint}\nexp:{expires}",
+            key_id.to_ascii_uppercase(),
+            wallet.to_ascii_lowercase()
+        )
+    }
+
+    /// The node's SDP answer, built by the browser from the endpoint statement (IPv4 only).
+    pub fn answer_sdp(ip: &str, port: u16, ufrag: &str, fingerprint: &str) -> String {
+        [
+            "v=0".to_string(),
+            format!("o=- 0 0 IN IP4 {ip}"),
+            "s=-".into(),
+            "t=0 0".into(),
+            "a=group:BUNDLE 0".into(),
+            "a=ice-lite".into(),
+            format!("m=application {port} UDP/DTLS/SCTP webrtc-datachannel"),
+            format!("c=IN IP4 {ip}"),
+            "a=mid:0".into(),
+            format!("a=ice-ufrag:{ufrag}"),
+            format!("a=ice-pwd:{ufrag}"),
+            format!("a=fingerprint:{fingerprint}"),
+            "a=setup:passive".into(),
+            format!("a=sctp-port:{SCTP_PORT}"),
+            format!("a=max-message-size:{MAX_MESSAGE}"),
+            format!("a=candidate:1467250027 1 UDP 1467250027 {ip} {port} typ host"),
+            "a=end-of-candidates".into(),
+            String::new(),
+        ]
+        .join("\r\n")
+    }
+
+    /// Replace the browser offer's ICE credentials with `ufrag` (username and password).
+    pub fn munge_offer(offer: &str, ufrag: &str) -> String {
+        let mut out: Vec<String> = Vec::new();
+        for line in offer.split("\r\n") {
+            if line.starts_with("a=ice-ufrag:") {
+                out.push(format!("a=ice-ufrag:{ufrag}"));
+            } else if line.starts_with("a=ice-pwd:") {
+                out.push(format!("a=ice-pwd:{ufrag}"));
+            } else {
+                out.push(line.to_string());
+            }
+        }
+        out.join("\r\n")
+    }
+
+    /// Username of a STUN binding request (`<node ufrag>:<browser ufrag>`), without checking
+    /// integrity (str0m does that). None for anything else.
+    pub fn stun_binding_username(pkt: &[u8]) -> Option<&str> {
+        if pkt.len() < 20
+            || pkt[0] != 0x00
+            || pkt[1] != 0x01
+            || pkt[4..8] != [0x21, 0x12, 0xA4, 0x42]
+        {
+            return None;
+        }
+        let len = u16::from_be_bytes([pkt[2], pkt[3]]) as usize;
+        let body = pkt.get(20..20 + len)?;
+        let mut i = 0;
+        while i + 4 <= body.len() {
+            let t = u16::from_be_bytes([body[i], body[i + 1]]);
+            let l = u16::from_be_bytes([body[i + 2], body[i + 3]]) as usize;
+            let v = body.get(i + 4..i + 4 + l)?;
+            if t == 0x0006 {
+                return std::str::from_utf8(v).ok();
+            }
+            i += 4 + l.div_ceil(4) * 4;
+        }
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn ufrag_rules() {
+            assert!(valid_ufrag("conet1ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"));
+            assert!(!valid_ufrag("conet1ABCDEFGHIJKLMNOPQRSTUVWXYZ01234"));
+            assert!(!valid_ufrag("conet1ABCDEFGHIJKLMNOPQRSTUVWXYZ01234+"));
+            assert!(!valid_ufrag("xonet1ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"));
+        }
+
+        #[test]
+        fn fingerprint_rules() {
+            let ok = format!("sha-256 {}", vec!["AB"; 32].join(":"));
+            assert!(valid_fingerprint(&ok));
+            assert!(!valid_fingerprint(&ok.to_lowercase()));
+            assert!(!valid_fingerprint(&format!(
+                "sha-1 {}",
+                vec!["AB"; 20].join(":")
+            )));
+        }
+
+        #[test]
+        fn stun_username() {
+            let user = b"conet1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:abcd";
+            let mut attr = vec![0x00, 0x06, 0, user.len() as u8];
+            attr.extend_from_slice(user);
+            while attr.len() % 4 != 0 {
+                attr.push(0);
+            }
+            let mut p = vec![0x00, 0x01];
+            p.extend_from_slice(&(attr.len() as u16).to_be_bytes());
+            p.extend_from_slice(&[0x21, 0x12, 0xA4, 0x42]);
+            p.extend_from_slice(&[7u8; 12]);
+            p.extend_from_slice(&attr);
+            assert_eq!(
+                stun_binding_username(&p),
+                Some("conet1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:abcd")
+            );
+            p[1] = 0x11; // not a binding request
+            assert_eq!(stun_binding_username(&p), None);
+            assert_eq!(stun_binding_username(&[0u8; 8]), None);
+        }
+
+        #[test]
+        fn munge_keeps_other_lines() {
+            let o = "v=0\r\na=ice-ufrag:x\r\na=ice-pwd:y\r\na=mid:0\r\n";
+            let m = munge_offer(o, "U");
+            assert_eq!(m, "v=0\r\na=ice-ufrag:U\r\na=ice-pwd:U\r\na=mid:0\r\n");
+        }
+    }
+}

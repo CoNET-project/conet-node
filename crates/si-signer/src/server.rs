@@ -200,6 +200,39 @@ impl Signer {
                     .map(ok)
                     .unwrap_or_else(|_| refused("sign"))
             }
+            Request::SignWebrtcEndpoint {
+                key_id,
+                ip,
+                port,
+                fingerprint,
+                expires,
+            } => {
+                let ip_ok = ip
+                    .parse::<std::net::Ipv4Addr>()
+                    .map(|a| !a.is_unspecified() && !a.is_broadcast() && !a.is_multicast())
+                    .unwrap_or(false);
+                let fields_ok = ip_ok
+                    && key_id.eq_ignore_ascii_case(&self.key_id)
+                    && port != 0
+                    && sp::webrtc::valid_fingerprint(&fingerprint)
+                    && expires > now()
+                    && expires <= now() + sp::webrtc::ENDPOINT_MAX_VALID_SEC;
+                if !fields_ok {
+                    return refused("webrtc_fields");
+                }
+                let text = sp::webrtc::endpoint_text(
+                    &self.key_id,
+                    &self.wallet.address(),
+                    &ip,
+                    port,
+                    &fingerprint,
+                    expires,
+                );
+                self.wallet
+                    .sign_message(&text)
+                    .map(ok)
+                    .unwrap_or_else(|_| refused("sign"))
+            }
             Request::RouteSessionKey { pkesk } => {
                 let Ok(bytes) = B64.decode(pkesk) else {
                     return refused("pkesk_fields");

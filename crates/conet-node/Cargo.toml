@@ -27,6 +27,7 @@ rustls-acme = { version = "0.15", features = ["tokio"] }
 futures-util = "0.3"
 hickory-resolver = "0.26"
 if-addrs = "0.15"
+str0m = { version = "0.25", default-features = false, features = ["aws-lc-rs"] }
 hex.workspace = true
 base64.workspace = true
 rand_core = { workspace = true, features = ["getrandom"] }
@@ -38,6 +39,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 pgp = { workspace = true }
 tempfile = "3"
+str0m = { version = "0.25", default-features = false, features = ["aws-lc-rs"] }
 zeroize = "1"
 rand_chacha.workspace = true
 rand_core.workspace = true

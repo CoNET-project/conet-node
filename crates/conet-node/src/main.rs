@@ -210,6 +210,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!(%tls_listen, "https listening");
         tokio::spawn(serve_tls(l, ctx.clone(), src));
     }
+    // WebRTC entry (W35): ICE-lite on one UDP port; browsers build the SDP from GET /webrtc
+    // (or the published statement) and need no HTTPS.
+    if let Some(rtc_listen) = arg("--webrtc-listen") {
+        use conet_node::webrtc::{serve_webrtc, statement, Endpoint, WebRtcOpts};
+        let bind: std::net::SocketAddr = rtc_listen.parse()?;
+        let public: std::net::SocketAddr = match arg("--webrtc-public") {
+            Some(p) => p.parse()?,
+            None => bind,
+        };
+        if !public.is_ipv4() || public.ip().is_unspecified() {
+            return Err("--webrtc-public <ipv4:port> (the address browsers dial)".into());
+        }
+        let ep = Arc::new(Endpoint::load_or_create(std::path::Path::new(
+            &arg("--webrtc-cert").ok_or("--webrtc-cert <file> (kept across restarts)")?,
+        ))?);
+        // Valid 24 h, re-signed every 12 h.
+        let (c, e) = (ctx.clone(), ep.clone());
+        tokio::spawn(async move {
+            loop {
+                match statement(&c, &e, public, Duration::from_secs(24 * 3600)) {
+                    Ok(s) => *c.webrtc.write().expect("webrtc") = Some(s),
+                    Err(err) => tracing::warn!(%err, "webrtc endpoint statement"),
+                }
+                tokio::time::sleep(Duration::from_secs(12 * 3600)).await;
+            }
+        });
+        let sock = tokio::net::UdpSocket::bind(bind).await?;
+        tracing::info!(fingerprint = %ep.fingerprint(), "webrtc listening");
+        tokio::spawn(serve_webrtc(sock, ctx.clone(), ep, WebRtcOpts::new(public)));
+    }
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     tracing::info!(%listen, key_id = %ctx.key_id, "conet-node listening");
     server::serve(listener, ctx).await?;

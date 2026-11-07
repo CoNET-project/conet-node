@@ -117,6 +117,16 @@ pub trait NodeNotices: Send + Sync {
         expires_at: i64,
         timestamp: i64,
     ) -> si_crypto::Result<String>;
+    /// WebRTC endpoint statement (`si_proto::webrtc::endpoint_text`). The signer refuses a
+    /// `key_id` other than its own route key ID; the wallet is always the signer's own.
+    fn sign_webrtc_endpoint(
+        &self,
+        key_id: &str,
+        ip: &str,
+        port: u16,
+        fingerprint: &str,
+        expires: i64,
+    ) -> si_crypto::Result<String>;
 }
 
 impl NodeNotices for eth::EthKey {
@@ -135,6 +145,24 @@ impl NodeNotices for eth::EthKey {
             expires_at,
             timestamp,
             &eth::EthKey::address(self),
+        );
+        eth::EthKey::sign_message(self, &text)
+    }
+    fn sign_webrtc_endpoint(
+        &self,
+        key_id: &str,
+        ip: &str,
+        port: u16,
+        fingerprint: &str,
+        expires: i64,
+    ) -> si_crypto::Result<String> {
+        let text = proto::webrtc::endpoint_text(
+            key_id,
+            &eth::EthKey::address(self),
+            ip,
+            port,
+            fingerprint,
+            expires,
         );
         eth::EthKey::sign_message(self, &text)
     }

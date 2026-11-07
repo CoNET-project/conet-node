@@ -396,6 +396,73 @@ async fn notices_use_fixed_texts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn webrtc_endpoint_for_own_key_only() {
+    use si_core::NodeNotices;
+    let e = Env::new();
+    let c = Arc::new(e.start(e.cfg(None, false, None), "a").await);
+    let key = c.route_key_id().to_string();
+    let addr = e.g["wallets"]["nodeA"]["address"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let fp = format!("sha-256 {}", ["A1"; 32].join(":"));
+    let exp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+        + 3600;
+    let sign = |k: String, ip: &'static str, port: u16, fp: String, exp: i64| {
+        let c = c.clone();
+        async move {
+            tokio::task::spawn_blocking(move || c.sign_webrtc_endpoint(&k, ip, port, &fp, exp))
+                .await
+                .unwrap()
+        }
+    };
+    let sig = sign(key.clone(), "203.0.113.7", 4433, fp.clone(), exp)
+        .await
+        .unwrap();
+    let text = si_proto::webrtc::endpoint_text(&key, &addr, "203.0.113.7", 4433, &fp, exp);
+    assert_eq!(eth::recover_message(&text, &sig).unwrap(), addr);
+    // another key ID, bad fingerprint, port 0, IPv6, expiry past 7 days or in the past
+    assert!(sign(
+        "0000000000000000".into(),
+        "203.0.113.7",
+        4433,
+        fp.clone(),
+        exp
+    )
+    .await
+    .is_err());
+    assert!(
+        sign(key.clone(), "203.0.113.7", 4433, fp.to_lowercase(), exp)
+            .await
+            .is_err()
+    );
+    assert!(sign(key.clone(), "203.0.113.7", 0, fp.clone(), exp)
+        .await
+        .is_err());
+    assert!(sign(key.clone(), "2001:db8::1", 4433, fp.clone(), exp)
+        .await
+        .is_err());
+    assert!(sign(key.clone(), "0.0.0.0", 4433, fp.clone(), exp)
+        .await
+        .is_err());
+    assert!(sign(
+        key.clone(),
+        "203.0.113.7",
+        4433,
+        fp.clone(),
+        exp + 8 * 86400
+    )
+    .await
+    .is_err());
+    assert!(sign(key, "203.0.113.7", 4433, fp, exp - 7200)
+        .await
+        .is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn generated_keys_serve_and_match_registration_values() {
     let (secrets, public) = keystore::generate().unwrap();
     let dir = tempfile::tempdir().unwrap();

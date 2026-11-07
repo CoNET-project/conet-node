@@ -57,6 +57,15 @@ pub enum Request {
         #[serde(rename = "payloadHash")]
         payload_hash: String,
     },
+    /// WebRTC endpoint statement (W35); the signer adds its own route key ID and wallet.
+    SignWebrtcEndpoint {
+        #[serde(rename = "keyId")]
+        key_id: String,
+        ip: String,
+        port: u16,
+        fingerprint: String,
+        expires: i64,
+    },
     /// NodeRegistryV2 BindNode consent. Refused unless the signer runs with `--allow-bind`.
     SignBind {
         operator: String,

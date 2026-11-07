@@ -123,6 +123,22 @@ impl NodeNotices for SignerClient {
             timestamp,
         })
     }
+    fn sign_webrtc_endpoint(
+        &self,
+        key_id: &str,
+        ip: &str,
+        port: u16,
+        fingerprint: &str,
+        expires: i64,
+    ) -> Result<String> {
+        self.call(&Request::SignWebrtcEndpoint {
+            key_id: key_id.into(),
+            ip: ip.into(),
+            port,
+            fingerprint: fingerprint.into(),
+            expires,
+        })
+    }
     fn sign_epoch(&self, epoch: u64) -> Result<String> {
         self.call(&Request::SignEpoch { epoch })
     }

@@ -37,6 +37,29 @@ Reverse check (Rust output verified by openpgp.js and SI code):
 node conformance/vectors/verify-rust.mjs conformance/vectors/golden.json art.json
 ```
 
+## WebRTC entry
+
+Browsers can deliver over a WebRTC data channel instead of HTTPS (no CA certificate, no
+signalling server). The node listens ICE-lite on one UDP port and publishes a wallet-signed
+endpoint statement (`GET /webrtc`): IP, port, DTLS fingerprint, expiry.
+
+```bash
+conet-node … --webrtc-listen 0.0.0.0:<udp port> --webrtc-public <public ipv4>:<udp port> \
+  --webrtc-cert <state dir>/webrtc-cert.json   # created on first start, keep it (fingerprint)
+```
+
+Browser side (see `si_proto::webrtc` and `tools/webrtc-browser-test/index.html`):
+
+1. Check the statement: signature by the node wallet from the node table, not expired.
+2. `pc.createDataChannel(...)`, `createOffer()`, replace the offer's ICE ufrag and password with
+   one random `conet1` + 32 letters/digits (`munge_offer`), `setLocalDescription`.
+3. `setRemoteDescription` with `answer_sdp(ip, port, ufrag, fingerprint)` built locally.
+4. One data channel per HTTP request, carrying the same bytes as TCP :80 (`/post`, SSE listens,
+   voice, exit). Send in 16 KB messages; read the response by its length or stream, do not wait
+   for the channel to close (SCTP's delayed ack makes the close ~200 ms late).
+
+Local browser test with the golden test keys: `tools/webrtc-browser-test/run.sh [lan ip]`.
+
 ## Rules
 
 - Never commit node IP addresses, SSH accounts, home paths, key locations, or any real node or user key.

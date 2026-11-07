@@ -47,6 +47,8 @@ pub struct NodeCtx {
     pub ip_limiter: Arc<IpLimiter>,
     /// Accept the legacy `mining` + `listenKind:"chat"` presence listen (decision U3).
     pub legacy_chat_listen: bool,
+    /// Signed WebRTC endpoint statement (W35), served on `GET /webrtc`; None = no WebRTC entry.
+    pub webrtc: std::sync::RwLock<Option<String>>,
 }
 
 impl NodeCtx {
@@ -79,6 +81,7 @@ impl NodeCtx {
             max_connections: 4096,
             ip_limiter: IpLimiter::new(IpPolicy::default()),
             legacy_chat_listen: true,
+            webrtc: std::sync::RwLock::new(None),
         }
     }
 
@@ -154,6 +157,14 @@ pub(crate) async fn handle(mut stream: Conn, peer: SocketAddr, ctx: Arc<NodeCtx>
             let _ = stream.write_all(&http::options_204()).await;
         }
         ("POST", p) if p.starts_with("/post") => post(stream, peer, req, ctx).await,
+        ("GET", "/webrtc") => {
+            let st = ctx.webrtc.read().expect("webrtc").clone();
+            let resp = match st {
+                Some(json) => http::ok_200(&json),
+                None => http::not_found(),
+            };
+            let _ = stream.write_all(&resp).await;
+        }
         _ => {
             let _ = stream.write_all(&http::not_found()).await;
         }
