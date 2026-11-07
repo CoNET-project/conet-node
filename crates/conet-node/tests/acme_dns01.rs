@@ -258,7 +258,8 @@ async fn handshake(slot: Arc<CertSlot>, root_pem: &[u8]) {
     let acceptor = tokio_rustls::TlsAcceptor::from(conet_node::tls::dns01_config(slot));
     let server = tokio::spawn(async move { acceptor.accept(b).await.map(|_| ()) });
     let name = ServerName::try_from(conet_node::tls::node_domain(KEY_ID)).unwrap();
-    tokio_rustls::TlsConnector::from(Arc::new(ccfg))
+    // Keep the client side open until the server finishes (it writes session tickets).
+    let _client = tokio_rustls::TlsConnector::from(Arc::new(ccfg))
         .connect(name, a)
         .await
         .expect("client trusts the DNS-01 certificate for the node name");
