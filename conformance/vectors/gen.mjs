@@ -14,6 +14,7 @@ import { encryptUdpPayload } from './si-src/udpForwardCrypto.ts'
 import { voicePayText, voiceListenText, chunkMac, VOICE_CHUNK_MAGIC, voiceCallPushText } from './si-src/voiceHelpers.ts'
 import { verifyVoiceListenV3, frameLine, voiceHeaders, voiceHandshake } from './si-src/voiceListen.ts'
 import { paymentRequiredHtml } from './si-src/htmlResponse.ts'
+import { nr2Vectors } from './nr2.mjs'
 
 const zlib = { preferredCompressionAlgorithm: openpgp.enums.compression.zlib }
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64')
@@ -348,6 +349,9 @@ await eip712Vector('bindnode-existing', 'BindNode', bindNodeTypes, {
 	operator: wallets.billing.address, nodeId: '42', ipHash: ethers.keccak256(ethers.toUtf8Bytes('198.51.100.7')), keyId: '0x' + keys.nodeB.encKeyId.toLowerCase(),
 	pgpHash: ethers.keccak256(ethers.toUtf8Bytes(keys.nodeB.armoredPublic)), nonce: '7', deadline: String(now + 600),
 }, 'nodeB')
+
+// ---- 11b. NodeRegistryV2 v0.1 types (node line, Q77); also refreshable alone with gen-nr2.mjs
+vectors.push(...await nr2Vectors(wallets, keys))
 
 // ---- 12. Voice v3 relay (SI voiceForward.ts verbatim excerpts): listen checks, frames, push text
 const relayKeyId = keys.nodeA.encKeyId

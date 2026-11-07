@@ -199,6 +199,31 @@ pub mod node_registry {
     pub const KIND_ONLINE: u8 = 1;
     pub const KIND_SERVICE: u8 = 2;
     pub const KIND_CAPABILITY: u8 = 3;
+
+    // NodeRegistryV2 v0.1 (node line, Q77). Type strings copied from NodeRegistryTypes.sol.
+    pub const REGISTER_REQUEST_TYPE: &str = "RegisterRequest(address operator,address beneficiary,address nodeWallet,uint8 nodeType,bytes32 ipHash,uint16 tcpPort,uint16 udpPort,bytes32 pgpHash,bytes8 keyId,uint16 services,uint256 sponsorNodeId,uint256 nonce,uint256 deadline)";
+    pub const REGISTER_REQUEST_TYPEHASH: &str =
+        "0x1e7bf51b93c245e42df224425850ab516fe6b1879477a4adbf507799bc34bd3c";
+    pub const ONLINE_DECLARATION_TYPE: &str = "OnlineDeclaration(uint256 nodeId,uint8 mode,bytes32 anchorsHash,uint16 servicesNow,uint64 onlineUntil,uint64 onlineSeq,uint256 deadline)";
+    pub const ONLINE_DECLARATION_TYPEHASH: &str =
+        "0x3d7ff6cd3e2108bebd3524b93794bb8787aa55077bdd71d30b31eb6160245e04";
+    pub const ANCHOR_RECEIPT_TYPE: &str =
+        "AnchorReceipt(uint256 nodeId,uint256 anchorNodeId,uint64 onlineSeq,uint64 onlineUntil)";
+    pub const ANCHOR_RECEIPT_TYPEHASH: &str =
+        "0xdff513776e6931a9796b834a206d67e27166ffa7957c3480cd8deb840814fe6d";
+    pub const EXTEND_DECLARATION_TYPE: &str =
+        "ExtendDeclaration(uint256 nodeId,uint64 onlineSeq,uint64 newUntil,uint256 deadline)";
+    pub const EXTEND_DECLARATION_TYPEHASH: &str =
+        "0x23f07b2ecda1b0fd223f87579b25fbc91bc345460efe0f4bbd624f752d4bc96f";
+    pub const PAUSE_DECLARATION_TYPE: &str =
+        "PauseDeclaration(uint256 nodeId,uint64 onlineSeq,uint64 pauseAt,uint256 deadline)";
+    pub const PAUSE_DECLARATION_TYPEHASH: &str =
+        "0x1d48dc7dcc124e4fddd97ee9669f8e23c8358ab7afc634a783bcfe262241c7b1";
+    pub const TYPE_TCP: u8 = 1;
+    pub const TYPE_BROWSER: u8 = 2;
+    pub const TYPE_MOBILE: u8 = 3;
+    pub const MODE_WEBRTC: u8 = 1;
+    pub const MODE_SSE: u8 = 2;
 }
 
 /// Texts the node wallet signs for the Beamio API (CoNET-SI `util.ts`, rev 74c6cfd).

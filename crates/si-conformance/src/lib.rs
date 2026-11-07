@@ -15,6 +15,8 @@ struct Ctx {
     secs: HashMap<String, opgp::SecretCert>,
     wallets: HashMap<String, eth::EthKey>,
     node_a_id: String,
+    /// Armored public keys as given (NodeRegistryV2 pgpHash covers the armor's base64).
+    armors: HashMap<String, String>,
 }
 
 fn s<'a>(v: &'a Value, k: &str) -> &'a str {
@@ -45,11 +47,18 @@ fn load(g: &Value) -> Result<Ctx, String> {
         );
     }
     let node_a_id = pubs["nodeA"].enc_key_id().ok_or("nodeA subkey")?;
+    let armors = g["keys"]
+        .as_object()
+        .ok_or("keys")?
+        .iter()
+        .map(|(n, k)| (n.clone(), s(k, "armoredPublic").to_string()))
+        .collect();
     Ok(Ctx {
         pubs,
         secs,
         wallets,
         node_a_id,
+        armors,
     })
 }
 
@@ -176,7 +185,10 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
             json!({ "payload": proto::hop_sig_payload(&h.w, h.t, h.n, &h.h, &h.k), "signature": h.s })
         }
         "eip712" => {
-            use si_core::statement::{BindNode, Domain, NodeStatement};
+            use si_core::statement::{
+                anchors_hash, pgp_hash, AnchorReceipt, BindNode, Domain, NodeStatement,
+                OnlineDeclaration, RegisterRequest, SeqDeclaration,
+            };
             use si_crypto::eip712 as e7;
             let d = &input["domain"];
             if s(d, "name") != proto::node_registry::DOMAIN_NAME
@@ -187,7 +199,99 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
             }
             let domain = Domain::new(s(d, "verifyingContract")).map_err(es)?;
             let v = &input["value"];
+            let u = |k: &str| -> Result<u64, String> {
+                match &v[k] {
+                    Value::Number(n) => n.as_u64().ok_or(k.to_string()),
+                    Value::String(t) => t.parse().map_err(|_| k.to_string()),
+                    _ => Err(k.to_string()),
+                }
+            };
+            let w = |k: &str| e7::u256_dec(s(v, k)).map_err(es);
+            let mut extra = serde_json::Map::new();
             let (type_str, sh, dg) = match s(input, "primaryType") {
+                "RegisterRequest" => {
+                    let r = RegisterRequest {
+                        operator: e7::address_word(s(v, "operator")).map_err(es)?,
+                        beneficiary: e7::address_word(s(v, "beneficiary")).map_err(es)?,
+                        node_wallet: e7::address_word(s(v, "nodeWallet")).map_err(es)?,
+                        node_type: u("nodeType")? as u8,
+                        ip_hash: e7::bytes32(s(v, "ipHash")).map_err(es)?,
+                        tcp_port: u("tcpPort")? as u16,
+                        udp_port: u("udpPort")? as u16,
+                        pgp_hash: e7::bytes32(s(v, "pgpHash")).map_err(es)?,
+                        key_id: e7::fixed_bytes_word(s(v, "keyId"), 8).map_err(es)?,
+                        services: u("services")? as u16,
+                        sponsor_node_id: w("sponsorNodeId")?,
+                        nonce: w("nonce")?,
+                        deadline: w("deadline")?,
+                    };
+                    // pgpHash and key ID from the armored key, as the contract derives them.
+                    if let Some(k) = input.get("pgpKey").and_then(Value::as_str) {
+                        let armor = c.armors.get(k).ok_or("pgpKey")?;
+                        extra.insert("pgpHash".into(), json!(e7::to_hex(&pgp_hash(armor))));
+                        let id = c.pubs[k].enc_key_id().ok_or("enc key id")?;
+                        extra.insert("pgpKeyId".into(), json!(id));
+                    }
+                    (
+                        proto::node_registry::REGISTER_REQUEST_TYPE,
+                        r.struct_hash(),
+                        r.digest(&domain),
+                    )
+                }
+                "OnlineDeclaration" => {
+                    let o = OnlineDeclaration {
+                        node_id: w("nodeId")?,
+                        mode: u("mode")? as u8,
+                        anchors_hash: e7::bytes32(s(v, "anchorsHash")).map_err(es)?,
+                        services_now: u("servicesNow")? as u16,
+                        online_until: u("onlineUntil")?,
+                        online_seq: u("onlineSeq")?,
+                        deadline: w("deadline")?,
+                    };
+                    if let Some(ids) = input.get("anchorNodeIds").and_then(Value::as_array) {
+                        let ids = ids
+                            .iter()
+                            .map(|i| e7::u256_dec(i.as_str().unwrap_or("")).map_err(es))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        extra.insert("anchorsHash".into(), json!(e7::to_hex(&anchors_hash(&ids))));
+                    }
+                    (
+                        proto::node_registry::ONLINE_DECLARATION_TYPE,
+                        o.struct_hash(),
+                        o.digest(&domain),
+                    )
+                }
+                "AnchorReceipt" => {
+                    let a = AnchorReceipt {
+                        node_id: w("nodeId")?,
+                        anchor_node_id: w("anchorNodeId")?,
+                        online_seq: u("onlineSeq")?,
+                        online_until: u("onlineUntil")?,
+                    };
+                    (
+                        proto::node_registry::ANCHOR_RECEIPT_TYPE,
+                        a.struct_hash(),
+                        a.digest(&domain),
+                    )
+                }
+                "ExtendDeclaration" | "PauseDeclaration" => {
+                    let d = if s(input, "primaryType") == "ExtendDeclaration" {
+                        SeqDeclaration::extend(
+                            w("nodeId")?,
+                            u("onlineSeq")?,
+                            u("newUntil")?,
+                            w("deadline")?,
+                        )
+                    } else {
+                        SeqDeclaration::pause(
+                            w("nodeId")?,
+                            u("onlineSeq")?,
+                            u("pauseAt")?,
+                            w("deadline")?,
+                        )
+                    };
+                    (d.type_string, d.struct_hash(), d.digest(&domain))
+                }
                 "NodeStatement" => {
                     let st = NodeStatement {
                         node_id: e7::u256_dec(s(v, "nodeId")).map_err(es)?,
@@ -219,16 +323,18 @@ fn run_one(c: &Ctx, v: &Value) -> Result<Value, String> {
                 }
                 t => return Err(format!("primaryType {t}")),
             };
-            let w = &c.wallets[s(input, "wallet")];
-            let sig = w.sign_digest(&dg).map_err(es)?;
-            json!({
+            let key = &c.wallets[s(input, "wallet")];
+            let sig = key.sign_digest(&dg).map_err(es)?;
+            let mut out = json!({
                 "typeHash": e7::to_hex(&e7::type_hash(type_str)),
                 "domainSeparator": e7::to_hex(&domain.separator),
                 "structHash": e7::to_hex(&sh),
                 "digest": e7::to_hex(&dg),
                 "signature": sig,
                 "address": eth::recover_digest(&dg, &sig).map_err(es)?,
-            })
+            });
+            out.as_object_mut().expect("object").extend(extra);
+            out
         }
         "payment_required" => {
             json!({ "statusLine": "HTTP/1.1 402 Payment Required", "html": proto::payment_required_html() })

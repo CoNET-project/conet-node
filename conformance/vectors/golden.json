@@ -1373,6 +1373,272 @@
     "statusLine": "HTTP/1.1 402 Payment Required",
     "html": "<html>\r\n<head><title>402 Payment Required</title></head>\r\n<body>\r\n<center><h1>CoNET Passport has expired Please purchase a new certificate\r\nCoNETパスポートの有効期限が切れています。新しいを購入してください。\r\nCoNET通证已过期请购买新证书</h1></center>\r\n<hr><center>nginx/1.18.0</center>\r\n</body>\r\n</html>\r\n"
    }
+  },
+  {
+   "id": "nr2-register-tcp",
+   "kind": "eip712",
+   "input": {
+    "wallet": "other",
+    "domain": {
+     "name": "CoNETNodeRegistry",
+     "version": "1",
+     "chainId": 224422,
+     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
+    },
+    "primaryType": "RegisterRequest",
+    "value": {
+     "operator": "0xf805b80b8d7B4144B04621D8ad6cB8b4aBcb7656",
+     "beneficiary": "0xf1906395136E19B9d1a326B282Ed20585B78C744",
+     "nodeWallet": "0x9329BB53905b5E07F4AD525C306dF204eE17767e",
+     "nodeType": 1,
+     "ipHash": "0x464bbde869ae74fa898f9e6d5a8d24894716c0e5626ba4b7c0a94d5f87b6d24e",
+     "tcpPort": 8443,
+     "udpPort": 18443,
+     "pgpHash": "0x8c1712c2c97213909022c4ad596ffe5c683661fa81a99e076427447b7bf5c719",
+     "keyId": "0x23eedc7e286f0b58",
+     "services": 11,
+     "sponsorNodeId": "7",
+     "nonce": "1",
+     "deadline": "1800000000"
+    },
+    "pgpKey": "nodeA"
+   },
+   "expect": {
+    "typeHash": "0x1e7bf51b93c245e42df224425850ab516fe6b1879477a4adbf507799bc34bd3c",
+    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
+    "structHash": "0xceaea95d35859ee2348781f4420e22be976801ecb71067991c07be9b5cc7f9a9",
+    "digest": "0x7cd8d55730580c536113ce6d9968b9432b825d3642f4832992b3fd4a711545a8",
+    "signature": "0x98661e1c455febe4ece40ac64b54b2918dc48cef7949e339e0d72b2bdc0010fb3edd31089648f071be262d9f358dd945c5cae4b49e50f59ef999a3d715d9d0911c",
+    "address": "0xf805b80b8d7B4144B04621D8ad6cB8b4aBcb7656",
+    "pgpHash": "0x8c1712c2c97213909022c4ad596ffe5c683661fa81a99e076427447b7bf5c719",
+    "pgpKeyId": "23EEDC7E286F0B58"
+   }
+  },
+  {
+   "id": "nr2-bind-for-register-tcp",
+   "kind": "eip712",
+   "input": {
+    "wallet": "nodeA",
+    "domain": {
+     "name": "CoNETNodeRegistry",
+     "version": "1",
+     "chainId": 224422,
+     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
+    },
+    "primaryType": "BindNode",
+    "value": {
+     "operator": "0xf805b80b8d7B4144B04621D8ad6cB8b4aBcb7656",
+     "nodeId": "0",
+     "ipHash": "0x464bbde869ae74fa898f9e6d5a8d24894716c0e5626ba4b7c0a94d5f87b6d24e",
+     "keyId": "0x23eedc7e286f0b58",
+     "pgpHash": "0x8c1712c2c97213909022c4ad596ffe5c683661fa81a99e076427447b7bf5c719",
+     "nonce": "1",
+     "deadline": "1800000000"
+    }
+   },
+   "expect": {
+    "typeHash": "0x578569fb8156d106c3abea91cae98010b24ba8ebef4a028965f06553c1ea2d03",
+    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
+    "structHash": "0x6adfce7752ea09e994eeeb0ceb5d9be1e23f7ba3d3da36ced3b072c2c01f2ebe",
+    "digest": "0xd9c31732571d725a14bd3358bbc1174499a5a3362819e1fcf0934ee081915c3d",
+    "signature": "0x15b22c7aaa37b20fde71c8b526b1ec01a813b1b03483898b8c47b2e87fd6e0655e8f614faec88b06945cfd3926128c2337dae15ae771a514692afce7759ec33a1b",
+    "address": "0x9329BB53905b5E07F4AD525C306dF204eE17767e"
+   }
+  },
+  {
+   "id": "nr2-register-browser-max",
+   "kind": "eip712",
+   "input": {
+    "wallet": "other",
+    "domain": {
+     "name": "CoNETNodeRegistry",
+     "version": "1",
+     "chainId": 224422,
+     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
+    },
+    "primaryType": "RegisterRequest",
+    "value": {
+     "operator": "0xf805b80b8d7B4144B04621D8ad6cB8b4aBcb7656",
+     "beneficiary": "0xf805b80b8d7B4144B04621D8ad6cB8b4aBcb7656",
+     "nodeWallet": "0xc2127c05F2Ecf13C94A0DE44AD131b4E2035cd7b",
+     "nodeType": 2,
+     "ipHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+     "tcpPort": 0,
+     "udpPort": 0,
+     "pgpHash": "0xd9b814d072d040a3cb09188ed3287c7dac1d1aced865899297fdba712ac31451",
+     "keyId": "0x896285e36329918a",
+     "services": 5,
+     "sponsorNodeId": "0",
+     "nonce": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+     "deadline": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    },
+    "pgpKey": "nodeB"
+   },
+   "expect": {
+    "typeHash": "0x1e7bf51b93c245e42df224425850ab516fe6b1879477a4adbf507799bc34bd3c",
+    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
+    "structHash": "0x3a20121d39f3692116fcf891d10eab554c719e53ebf70256fcfc1854626a9408",
+    "digest": "0x94591c9f06f6cd82459a89103554e28e73994376397567bf00fad13afc38a5e7",
+    "signature": "0x88aa4c3bc52138453b74762aefc0f92aa76c184b99fe79f17a744bacf10cd44836d14911f316c258586cbe0a6f8cc92a1a4ec29463efe99573e6f30cf0243b7a1b",
+    "address": "0xf805b80b8d7B4144B04621D8ad6cB8b4aBcb7656",
+    "pgpHash": "0xd9b814d072d040a3cb09188ed3287c7dac1d1aced865899297fdba712ac31451",
+    "pgpKeyId": "896285E36329918A"
+   }
+  },
+  {
+   "id": "nr2-online-webrtc",
+   "kind": "eip712",
+   "input": {
+    "wallet": "nodeC",
+    "domain": {
+     "name": "CoNETNodeRegistry",
+     "version": "1",
+     "chainId": 224422,
+     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
+    },
+    "primaryType": "OnlineDeclaration",
+    "value": {
+     "nodeId": "12",
+     "mode": 1,
+     "anchorsHash": "0xa9bc9a3a348c357ba16b37005d7e6b3236198c0e939f4af8c5f19b8deeb8ebc0",
+     "servicesNow": 5,
+     "onlineUntil": "1790000000",
+     "onlineSeq": "4",
+     "deadline": "1800000000"
+    },
+    "anchorNodeIds": [
+     "3",
+     "5"
+    ]
+   },
+   "expect": {
+    "typeHash": "0x3d7ff6cd3e2108bebd3524b93794bb8787aa55077bdd71d30b31eb6160245e04",
+    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
+    "structHash": "0x49e5421e28598081d76bb24317581b582777f592b9780f2eed85d67febad7ced",
+    "digest": "0xf0fc08f9e9fde4701eb3b4f802d43f7c406371da0ba31c746cbc6c84ab6cfe8a",
+    "signature": "0x5992bb5170e4c9e6f4d94edc6eb67d4b608ff6f76983a4ac7a833f390ba35b5d7f96bbe82cf342296f746b12b51ffca1d1fa00c9334052fc8586a21b3c339fee1b",
+    "address": "0xc2127c05F2Ecf13C94A0DE44AD131b4E2035cd7b",
+    "anchorsHash": "0xa9bc9a3a348c357ba16b37005d7e6b3236198c0e939f4af8c5f19b8deeb8ebc0"
+   }
+  },
+  {
+   "id": "nr2-online-sse-max",
+   "kind": "eip712",
+   "input": {
+    "wallet": "nodeC",
+    "domain": {
+     "name": "CoNETNodeRegistry",
+     "version": "1",
+     "chainId": 224422,
+     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
+    },
+    "primaryType": "OnlineDeclaration",
+    "value": {
+     "nodeId": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+     "mode": 2,
+     "anchorsHash": "0xa9c584056064687e149968cbab758a3376d22aedc6a55823d1b3ecbee81b8fb9",
+     "servicesNow": 65535,
+     "onlineUntil": "18446744073709551615",
+     "onlineSeq": "18446744073709551615",
+     "deadline": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    },
+    "anchorNodeIds": [
+     "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ]
+   },
+   "expect": {
+    "typeHash": "0x3d7ff6cd3e2108bebd3524b93794bb8787aa55077bdd71d30b31eb6160245e04",
+    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
+    "structHash": "0x1f08517029e388712ea2bc8c391de5cd08f723b0f2f713005f3ea8549086031b",
+    "digest": "0x54af8262779a1333bf82d1d8ec86573c4693cd105039a8cb7a4697ca1552cb87",
+    "signature": "0x1c3d7b0dbf82b6d97782429607af7204bc6b50faa2157c5e193052ef37432d8074d5317da15d8eedf88c8d8aecadefb717a1f6450eebecbe366625193aa41cb11c",
+    "address": "0xc2127c05F2Ecf13C94A0DE44AD131b4E2035cd7b",
+    "anchorsHash": "0xa9c584056064687e149968cbab758a3376d22aedc6a55823d1b3ecbee81b8fb9"
+   }
+  },
+  {
+   "id": "nr2-anchor-receipt",
+   "kind": "eip712",
+   "input": {
+    "wallet": "nodeA",
+    "domain": {
+     "name": "CoNETNodeRegistry",
+     "version": "1",
+     "chainId": 224422,
+     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
+    },
+    "primaryType": "AnchorReceipt",
+    "value": {
+     "nodeId": "12",
+     "anchorNodeId": "5",
+     "onlineSeq": "4",
+     "onlineUntil": "1790000000"
+    }
+   },
+   "expect": {
+    "typeHash": "0xdff513776e6931a9796b834a206d67e27166ffa7957c3480cd8deb840814fe6d",
+    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
+    "structHash": "0x55863674a9ac3c35f8262e3e82d75ba16b5dcf9c9b283232a00cc604d03a6cb9",
+    "digest": "0x2a5cc3a37cd149aa16d2b22e41abbd750538c13857713a8da0adf3a1d21a81b9",
+    "signature": "0xb5e072e51f19340c51d956b2e771e1f807f44eccb170869174119bb1e2b13a0e2f035c85c2d9cebcbbd1a5f4c8b367b419d51af716b7475d02c165cbe6e7b27e1b",
+    "address": "0x9329BB53905b5E07F4AD525C306dF204eE17767e"
+   }
+  },
+  {
+   "id": "nr2-extend",
+   "kind": "eip712",
+   "input": {
+    "wallet": "nodeC",
+    "domain": {
+     "name": "CoNETNodeRegistry",
+     "version": "1",
+     "chainId": 224422,
+     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
+    },
+    "primaryType": "ExtendDeclaration",
+    "value": {
+     "nodeId": "12",
+     "onlineSeq": "4",
+     "newUntil": "1790003600",
+     "deadline": "1800000000"
+    }
+   },
+   "expect": {
+    "typeHash": "0x23f07b2ecda1b0fd223f87579b25fbc91bc345460efe0f4bbd624f752d4bc96f",
+    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
+    "structHash": "0x6615c944053798f2ddff16140a789d8723baf9fa188efcc10c90890126e633aa",
+    "digest": "0x1b505592e523de90edbc6c12fbcf5f6505a530089bd1307c37704ee44caf486a",
+    "signature": "0x6ffa4d5ed097f12f185ce10a3b122e10dc81aaf89f9b98be3e43e4f5b6434947528acb30119ccd2555ee0f0646b7d2213b134953055ad9f3e2ed65fe7fe8c42b1b",
+    "address": "0xc2127c05F2Ecf13C94A0DE44AD131b4E2035cd7b"
+   }
+  },
+  {
+   "id": "nr2-pause",
+   "kind": "eip712",
+   "input": {
+    "wallet": "nodeC",
+    "domain": {
+     "name": "CoNETNodeRegistry",
+     "version": "1",
+     "chainId": 224422,
+     "verifyingContract": "0x00000000000000000000000000000000c0de0001"
+    },
+    "primaryType": "PauseDeclaration",
+    "value": {
+     "nodeId": "12",
+     "onlineSeq": "4",
+     "pauseAt": "1789990000",
+     "deadline": "1800000000"
+    }
+   },
+   "expect": {
+    "typeHash": "0x1d48dc7dcc124e4fddd97ee9669f8e23c8358ab7afc634a783bcfe262241c7b1",
+    "domainSeparator": "0x73ea299f4b82520d424852e2588c318ef02c6d3293a84eb27f16cef41e06c7cb",
+    "structHash": "0xea4cef360c76d1ec4cb649d85ca72e00692a65dbf9c5392eabe1f12f08c43bbb",
+    "digest": "0x1d49caa5d9cc76c265f65a11749e1e5cbc5a3fb60d737431843398d41fa93c74",
+    "signature": "0x0f76a41f7b8dfa693ef2e15418535413acb330a858834b6c79bebca922e6e111363aca294a4ce6411b0683c3bae9b0d6172cf68e465b233e543c25334a00a6e11c",
+    "address": "0xc2127c05F2Ecf13C94A0DE44AD131b4E2035cd7b"
+   }
   }
  ]
 }
