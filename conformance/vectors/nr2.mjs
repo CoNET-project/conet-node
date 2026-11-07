@@ -39,7 +39,7 @@ export const types = {
 }
 
 // Contract conventions: pgpHash = keccak256(canonical base64 of the armored public key);
-// ipHash = keccak256(UTF-8 IP text) in the contract tests (canonical form still to be fixed);
+// ipHash = keccak256(UTF-8 IP text) over canonical IP text (Q77-3);
 // anchorsHash = keccak256(abi.encodePacked(uint256[])).
 export const pgpField = (armored) => Buffer.from(armored, 'utf8').toString('base64')
 export const pgpHash = (armored) => ethers.keccak256(ethers.toUtf8Bytes(pgpField(armored)))
@@ -102,12 +102,15 @@ export async function nr2Vectors(wallets, keys) {
 	await vec('nr2-pause', 'PauseDeclaration', { nodeId: '12', onlineSeq: '4', pauseAt: '1789990000', deadline: DEADLINE }, 'nodeC')
 	// ipHash over canonical IP text (v0.1.47 §8.4.38, Q77-3). Labels are by hand from that rule;
 	// accepted text hashes as its UTF-8 bytes, anything else must be refused.
-	const canonical = ['192.0.2.10', '0.0.0.0', '255.255.255.255', '2001:db8::1', '2001:db8::1:0:0:1', '2001:db8:0:1:1:1:1:1', '::1', '::', 'fe80::1', '1::']
+	const canonical = ['192.0.2.10', '0.0.0.0', '255.255.255.255', '2001:db8::1', '2001:db8::1:0:0:1', '2001:db8:0:1:1:1:1:1', '::1', '::', 'fe80::1', '1::',
+		'::102:304'] // v0.1.48 §8.4.39: deprecated IPv4-compatible ::/96 in hex form is accepted
 	const refused = {
 		'192.168.001.1': 'not_an_ip', '1.2.3': 'not_an_ip', '256.1.1.1': 'not_an_ip', '2001:DB8::1': 'not_canonical',
 		'2001:0db8::1': 'not_canonical', '2001:db8:0:0:1:0:0:1': 'not_canonical', '2001:db8::0:1': 'not_canonical',
 		'2001:db8::1:1:1:1:1': 'not_canonical', '::ffff:1.2.3.4': 'embedded_ipv4', '::ffff:102:304': 'embedded_ipv4',
 		'[2001:db8::1]': 'not_an_ip', '2001:db8::1%eth0': 'not_an_ip', '192.0.2.10:443': 'embedded_ipv4', ' 192.0.2.10': 'not_an_ip',
+		// v0.1.48 §8.4.39: IPv4-mapped ::ffff:0:0/96 refused in any form; dotted IPv4-compatible refused.
+		'::ffff:0:0': 'embedded_ipv4', '::1.2.3.4': 'embedded_ipv4',
 	}
 	canonical.forEach((ip, i) => out.push({ id: `nr2-iphash-ok-${i}`, kind: 'nr2_ip_hash', input: { ip }, expect: { ok: true, ipHash: ipHash(ip) } }))
 	Object.entries(refused).forEach(([ip, error], i) => out.push({ id: `nr2-iphash-bad-${i}`, kind: 'nr2_ip_hash', input: { ip }, expect: { ok: false, error } }))

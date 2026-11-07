@@ -265,6 +265,7 @@ pub mod node_registry {
                 "::",
                 "fe80::1",
                 "1::",
+                "::102:304",
             ] {
                 assert_eq!(check_canonical_ip(ok).map(|_| ()), Ok(()), "{ok}");
             }
@@ -280,6 +281,7 @@ pub mod node_registry {
                 ("::ffff:1.2.3.4", "embedded_ipv4"),
                 ("::ffff:102:304", "embedded_ipv4"),
                 ("::1.2.3.4", "embedded_ipv4"),
+                ("::ffff:0:0", "embedded_ipv4"),
                 ("[2001:db8::1]", "not_an_ip"),
                 ("2001:db8::1%eth0", "not_an_ip"),
                 ("192.0.2.10:443", "embedded_ipv4"),

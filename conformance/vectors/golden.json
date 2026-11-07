@@ -1667,6 +1667,17 @@
    }
   },
   {
+   "id": "nr2-iphash-ok-10",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "::102:304"
+   },
+   "expect": {
+    "ok": true,
+    "ipHash": "0x542be752a0acafbc54ac9c69dec381b77da928756c85aa9cbf1fbe84a5ceb7bf"
+   }
+  },
+  {
    "id": "nr2-iphash-bad-0",
    "kind": "nr2_ip_hash",
    "input": {
@@ -1818,6 +1829,28 @@
    "expect": {
     "ok": false,
     "error": "not_an_ip"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-14",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "::ffff:0:0"
+   },
+   "expect": {
+    "ok": false,
+    "error": "embedded_ipv4"
+   }
+  },
+  {
+   "id": "nr2-iphash-bad-15",
+   "kind": "nr2_ip_hash",
+   "input": {
+    "ip": "::1.2.3.4"
+   },
+   "expect": {
+    "ok": false,
+    "error": "embedded_ipv4"
    }
   }
  ]
