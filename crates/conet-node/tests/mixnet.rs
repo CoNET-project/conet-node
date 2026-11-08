@@ -230,19 +230,24 @@ impl Listen {
             }
         }
     }
-    /// Next frame carrying `armor` (skips others), within `secs`.
-    async fn expect(&mut self, armor: &str, secs: u64) -> bool {
+    /// Next frame carrying `armor` (skips others), within `secs`; returns the armor as received.
+    async fn take(&mut self, armor: &str, secs: u64) -> Option<String> {
         let end = tokio::time::Instant::now() + Duration::from_secs(secs);
         while tokio::time::Instant::now() < end {
             match self.next(secs).await {
-                Some(f) if f["data"].as_str().map(str::trim_end) == Some(armor.trim_end()) => {
-                    return true
+                Some(f) => {
+                    let got = f["data"].as_str().unwrap_or("");
+                    if got.trim_end() == armor.trim_end() {
+                        return Some(got.to_string());
+                    }
                 }
-                Some(_) => continue,
-                None => return false,
+                None => return None,
             }
         }
-        false
+        None
+    }
+    async fn expect(&mut self, armor: &str, secs: u64) -> bool {
+        self.take(armor, secs).await.is_some()
     }
 }
 
