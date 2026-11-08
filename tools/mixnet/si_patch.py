@@ -8,6 +8,9 @@ here and must apply exactly once, so a new SI revision that moves the code fails
 2. Treasury V3 vote listener: not started (it would sign bridge votes with the node wallet).
 3. Listen address: bind the node's own IP (MIXNET_LISTEN_HOST), so several SI nodes can share
    port 80 on one host's loopback range.
+4. Node wallet list: live SI only forwards to a node whose wallet it learned from the DL API
+   (apiv4 `miningRate.nodeWallets`), not from the chain. Inside the namespace that API is
+   unreachable, so the same JSON is read from MIXNET_NODE_WALLETS (written by setup.mjs).
 
 Contract addresses are not patched: setup.mjs places the contracts at their mainnet addresses
 on the local chain. Outbound HTTPS (API, IPFS) fails inside the isolated network namespace.
@@ -36,6 +39,11 @@ PATCHES = [
         "src/endpoint/server.ts",
         "server.listen ( this.initData?.ipV4Port, () => {",
         "server.listen ( this.initData?.ipV4Port, process.env.MIXNET_LISTEN_HOST as string, () => {",
+    ),
+    (
+        "src/util/localNodeCommand.ts",
+        "const wallets = await httpsPostToUrl(rateUrl, '')",
+        "const wallets = process.env.MIXNET_NODE_WALLETS ? require('node:fs').readFileSync(process.env.MIXNET_NODE_WALLETS, 'utf8') : await httpsPostToUrl(rateUrl, '')",
     ),
 ]
 

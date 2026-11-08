@@ -50,7 +50,7 @@ for _ in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:8545 && break; slee
 node tools/mixnet/setup.mjs "$NET"
 
 start_si() { # name ip
-  (cd "$WORK/si" && HOME="$NET/$1/home" MIXNET_RPC=http://127.0.0.1:8545 MIXNET_LISTEN_HOST="$2" \
+  (cd "$WORK/si" && HOME="$NET/$1/home" MIXNET_RPC=http://127.0.0.1:8545 MIXNET_LISTEN_HOST="$2" MIXNET_NODE_WALLETS="$NET/node-wallets.json" \
     node -e "new (require('./dist/endpoint/server').default)()") > "$WORK/logs/$1.log" 2>&1 &
   PIDS+=($!)
 }

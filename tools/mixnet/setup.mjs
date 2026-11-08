@@ -155,6 +155,8 @@ const main = async () => {
 		exitTarget: '9.9.9.9:7',
 	}
 	fs.writeFileSync(path.join(work, 'mixnet.json'), JSON.stringify(config, null, 2))
+	// What the DL API (apiv4 miningRate) serves to live SI: the wallet of every node, by IP.
+	fs.writeFileSync(path.join(work, 'node-wallets.json'), JSON.stringify({ nodeWallets: nodes.map(n => ({ ipAddr: n.ip, wallet: n.address })) }))
 	console.log(`mixnet setup done: ${nodes.map(n => `${n.name}=${n.keyId}@${n.ip}`).join(' ')}`)
 }
 
