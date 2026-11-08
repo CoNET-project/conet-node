@@ -1,0 +1,51 @@
+name: mixnet
+
+# M3 mixed-network regression: live CoNET-SI (public repo, pinned revision) and conet-node in one
+# network, inside a loopback-only network namespace with a local anvil. TEST keys only.
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      si_rev:
+        description: CoNET-SI revision
+        default: 74c6cfd
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mixnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: mixnet-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Mixed network (SI ${{ inputs.si_rev || '74c6cfd' }})
+        env:
+          MIXNET_WORK: ${{ runner.temp }}/mixnet
+        run: tools/mixnet/run.sh "${{ inputs.si_rev || '74c6cfd' }}"
+      - name: Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mixnet-logs
+          path: ${{ runner.temp }}/mixnet/logs
+          retention-days: 7
