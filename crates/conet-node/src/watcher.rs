@@ -49,14 +49,16 @@ fn rand_below(max: Duration) -> Duration {
 
 /// Apply a snapshot unless it shrank suspiciously. Returns true when applied.
 pub fn apply(routes: &RouteTable, snap: &TableSnapshot, port: u16, min_keep: f64) -> bool {
-    let entries: Vec<(String, SocketAddr)> = snap
+    let entries: Vec<(String, SocketAddr, bool)> = snap
         .nodes
         .iter()
         .filter_map(|n| {
-            format!("{}:{port}", n.ip)
-                .parse()
-                .ok()
-                .map(|a| (n.key_id.clone(), a))
+            let ip: std::net::IpAddr = n.ip.parse().ok()?;
+            Some((
+                n.key_id.clone(),
+                SocketAddr::new(ip, n.port.unwrap_or(port)),
+                n.mailbox,
+            ))
         })
         .collect();
     let current = routes.node_count();
@@ -68,7 +70,7 @@ pub fn apply(routes: &RouteTable, snap: &TableSnapshot, port: u16, min_keep: f64
         );
         return false;
     }
-    routes.replace_nodes(entries);
+    routes.replace_node_entries(entries, snap.lists_all_active);
     true
 }
 

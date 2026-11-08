@@ -49,6 +49,9 @@ pub struct NodeCtx {
     pub legacy_chat_listen: bool,
     /// Signed WebRTC endpoint statement (W35), served on `GET /webrtc`; None = no WebRTC entry.
     pub webrtc: std::sync::RwLock<Option<String>>,
+    /// Multi-mailbox delivery timing (§23.4) and the per-node network failure record.
+    pub delivery: crate::deliver::DeliveryOpts,
+    pub fail_cache: Arc<crate::deliver::FailCache>,
 }
 
 impl NodeCtx {
@@ -82,6 +85,8 @@ impl NodeCtx {
             ip_limiter: IpLimiter::new(IpPolicy::default()),
             legacy_chat_listen: true,
             webrtc: std::sync::RwLock::new(None),
+            delivery: crate::deliver::DeliveryOpts::default(),
+            fail_cache: Arc::new(crate::deliver::FailCache::default()),
         }
     }
 
@@ -94,9 +99,9 @@ impl NodeCtx {
         let Some(ur) = &self.user_routes else {
             return r;
         };
-        match tokio::time::timeout(Duration::from_secs(5), ur.route_of_user_key(key_id)).await {
-            Ok(Ok(Some(node))) => {
-                self.routes.set_user_route(key_id, &node);
+        match tokio::time::timeout(Duration::from_secs(5), ur.routes_of_user_key(key_id)).await {
+            Ok(Ok(Some(route))) => {
+                self.routes.set_user_routes(key_id, route);
                 self.routes.resolve(key_id)
             }
             Ok(Ok(None)) => {
@@ -108,7 +113,7 @@ impl NodeCtx {
     }
 }
 
-fn now_secs() -> i64 {
+pub(crate) fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -204,6 +209,9 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
             no_push,
             hops,
         } => match ctx.resolve(&key_id).await {
+            Resolved::Plan(plan) => {
+                crate::deliver::deliver(stream, plan, key_id, armor, no_push, hops, ctx).await;
+            }
             Resolved::NoRoute => {
                 let _ = stream
                     .write_all(&http::ok_200(r#"{"ok":false,"error":"no_route"}"#))

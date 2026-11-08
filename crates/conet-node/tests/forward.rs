@@ -258,6 +258,7 @@ async fn entry_with_signer_process() {
             verifying_contract: "0x00000000000000000000000000000000c0de0001".into(),
             allow_bind: false,
             allow_uid: None,
+            anchor_node_id: None,
         })
         .unwrap_or_else(|e| panic!("{}", e.0)),
     );

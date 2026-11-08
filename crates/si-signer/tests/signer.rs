@@ -55,6 +55,7 @@ impl Env {
             verifying_contract: REGISTRY.into(),
             allow_bind,
             allow_uid,
+            anchor_node_id: None,
         }
     }
     /// Start a signer on a fresh socket; returns the client.
@@ -421,6 +422,7 @@ async fn generated_keys_serve_and_match_registration_values() {
             verifying_contract: REGISTRY.into(),
             allow_bind: false,
             allow_uid: None,
+            anchor_node_id: None,
         })
         .unwrap_or_else(|e| panic!("{}", e.0)),
     );
@@ -469,6 +471,7 @@ async fn route_key_rotation_keeps_the_old_key_until_retired() {
                 verifying_contract: REGISTRY.into(),
                 allow_bind: false,
                 allow_uid: None,
+                anchor_node_id: None,
             })
             .unwrap_or_else(|e| panic!("{}", e.0)),
         );
@@ -533,5 +536,55 @@ async fn route_key_rotation_keeps_the_old_key_until_retired() {
 mod rand_core_test {
     pub fn seeded(seed: u8) -> rand_chacha::ChaCha20Rng {
         <rand_chacha::ChaCha20Rng as rand_core::SeedableRng>::from_seed([seed; 32])
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn anchor_receipt_for_own_node_id_only() {
+    use si_core::statement::{AnchorReceipt, Domain};
+    let e = Env::new();
+    let receipt = |node: &str, seq: u64, until: u64| Request::SignAnchorReceipt {
+        node_id: node.into(),
+        online_seq: seq,
+        online_until: until,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let off = Arc::new(e.start(e.cfg(false, None), "a").await);
+    assert!(call(&off, receipt("12", 4, now + 3600))
+        .await
+        .unwrap_err()
+        .contains("anchor_disabled"));
+    let mut cfg = e.cfg(false, None);
+    cfg.anchor_node_id = Some("5".into());
+    let c = Arc::new(e.start(cfg, "b").await);
+    let sig = call(&c, receipt("12", 4, now + 3600)).await.unwrap();
+    let digest = AnchorReceipt {
+        node_id: si_crypto::eip712::u64_word(12),
+        anchor_node_id: si_crypto::eip712::u64_word(5),
+        online_seq: 4,
+        online_until: now + 3600,
+    }
+    .digest(&Domain::new(REGISTRY).unwrap());
+    let addr = e.g["wallets"]["nodeA"]["address"]
+        .as_str()
+        .unwrap()
+        .to_lowercase();
+    assert_eq!(
+        eth::recover_digest(&digest, &sig).unwrap().to_lowercase(),
+        addr
+    );
+    // own node, node 0, seq 0, expired, past the 7-day ceiling, not a number
+    for bad in [
+        receipt("5", 4, now + 3600),
+        receipt("0", 4, now + 3600),
+        receipt("12", 0, now + 3600),
+        receipt("12", 4, now - 1),
+        receipt("12", 4, now + 7 * 24 * 3600 + 60),
+        receipt("x", 4, now + 3600),
+    ] {
+        assert!(call(&c, bad).await.unwrap_err().contains("anchor_fields"));
     }
 }

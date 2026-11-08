@@ -18,7 +18,7 @@ httparse = "1"
 httpdate = "1"
 tracing = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
-alloy-sol-types = "1"
+alloy-sol-types = { version = "1", features = ["json"] }
 alloy-primitives = "1"
 redb = "4"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12", "logging"] }
@@ -31,6 +31,7 @@ hickory-resolver = "0.26"
 if-addrs = "0.15"
 str0m = { version = "0.25", default-features = false, features = ["aws-lc-rs"] }
 hex.workspace = true
+sha2.workspace = true
 base64.workspace = true
 rand_core = { workspace = true, features = ["getrandom"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

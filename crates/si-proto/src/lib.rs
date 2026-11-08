@@ -215,6 +215,17 @@ pub mod node_registry {
     pub const TYPE_MOBILE: u8 = 3;
     pub const MODE_WEBRTC: u8 = 1;
     pub const MODE_SSE: u8 = 2;
+    /// Service bits (NodeRegistryTypes.sol, design v0.1.40).
+    pub const SVC_ENTRY: u16 = 1 << 0;
+    pub const SVC_MAILBOX: u16 = 1 << 1;
+    pub const SVC_FETCH: u16 = 1 << 2;
+    pub const SVC_MAINT: u16 = 1 << 3;
+    pub const SVC_CPU: u16 = 1 << 4;
+    pub const SVC_EGRESS_TCP: u16 = 1 << 5;
+    pub const SVC_EGRESS_HTTP: u16 = 1 << 6;
+    pub const SVC_GPU: u16 = 1 << 7;
+    /// Node status values.
+    pub const ST_ACTIVE: u8 = 1;
 
     /// Canonical IP text (node line v0.1.47 §8.4.38, Q77-3); `ipHash` is keccak256 of it.
     /// IPv4: four dotted decimal parts 0-255 without leading zeros. IPv6: RFC 5952 (lower

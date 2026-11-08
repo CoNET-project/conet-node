@@ -102,6 +102,7 @@ async fn start() -> Net {
     );
     cx.exit = Some(Arc::new(Exit::new(
         EgressPolicy {
+            rules: conet_node::egress::PolicyRules::allow_all(),
             local: Default::default(),
             allow_loopback_for_tests: true,
         },
@@ -118,6 +119,7 @@ async fn start() -> Net {
     );
     cy.exit = Some(Arc::new(Exit::new(
         EgressPolicy {
+            rules: conet_node::egress::PolicyRules::allow_all(),
             local: Default::default(),
             allow_loopback_for_tests: false,
         },

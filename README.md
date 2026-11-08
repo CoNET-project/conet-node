@@ -82,6 +82,51 @@ with `acme_dns::verify_dns01_request` and must also confirm the wallet is the re
 for the key ID. Test: `tests/acme_dns01.rs` against Pebble (set `PEBBLE_BIN` and
 `PEBBLE_CHALLTESTSRV_BIN`; CI builds Pebble v2.10.1).
 
+## NodeRegistryV2 (node line v0.1.54, not deployed)
+
+ABIs live in `crates/conet-node/abi/` (compiled from the node line's sources; see its README).
+
+- **Node table**: `--node-registry <addr> --node-lens <addr>` (with `--rpc`) reads active TCP
+  nodes through the Lens, pinned to one block. Rows must have a canonical IP and a PGP key whose
+  first subkey is the registered key ID. Changes are found by `tableVersion` plus a log scan of
+  the node events. Without the two flags the node keeps reading GuardianNodesInfoV6.
+- **Mailbox slots**: a user may have up to two primary mailboxes and one secondary. A slot whose
+  node is not listed, not active or has no mailbox bit is skipped at once. The entry sends to all
+  valid primaries in parallel (the second after a random 0–3 s); the first stored copy answers
+  the sender. Only if no primary stores does the secondary get it. "Recipient unpaid"
+  (`recipient_unpaid`) is reported, not counted as a failure. Timeouts: connect 3 s (one retry),
+  reply 5 s, 10 s per stage; a node with three network failures in a row is skipped for 60 s.
+  AddressPGP has one slot; AddressPGPV2 `getRoutes` plugs in when its ABI is final.
+- **Anchor receipts**: `conet-signer serve … --anchor-node-id <id>` signs `AnchorReceipt` for
+  other nodes' online declarations (never its own id, window ≤ 7 days).
+- **Registration data**: `conet-register` prints typed data, digests and calldata for
+  `registerFor`, `registerReserved` and `setEgressPolicy`. It never sends a transaction.
+
+## Exit policy
+
+The SilentPass exit (`SaaS_Sock5*`) is off unless the operator gives a policy file:
+
+```bash
+conet-node … --rpc <url> --egress-policy <policy.json> \
+  [--egress-open-confirm]          # needed for mode "open" or "denylist"
+  [--node-registry <addr> --node-lens <addr> | --egress-no-chain-check]
+  [--exit-max-per-wallet N --exit-max-conns N --exit-idle-secs N --exit-connect-secs N]
+```
+
+```json
+{"version":1,"mode":"allowlist","allow":["example.com","*.cdn.example.net","198.51.100.0/24"],
+ "deny":[],"ports":[80,443],"limits":{"maxConnsPerWallet":32,"maxConns":1000,"idleSecs":120,"connectSecs":10},
+ "notes":"free text for users"}
+```
+
+- Compiled rules always apply first (global unicast IPv4 only, no local addresses, strict IP
+  literals, one DNS lookup, ports 0 and 25 refused); a policy cannot open port 25.
+- Limits: the smallest of the compiled ceiling, the operator's flags and the policy.
+- With a registry the exit serves only while `egressPolicyOf(nodeId)` equals the file's 36-byte
+  CID (`0x01551220` + sha256, file ≤ 256 KiB). The operator sets it with
+  `conet-register egress-policy --node-id N --policy <file>`; publish the same file with
+  `ipfs add --cid-version 1 --raw-leaves`.
+
 ## Rules
 
 - Never commit node IP addresses, SSH accounts, home paths, key locations, or any real node or user key.

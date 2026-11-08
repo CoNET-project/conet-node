@@ -80,6 +80,16 @@ pub enum Request {
         nonce: String,
         deadline: String,
     },
+    /// NodeRegistryV2 `AnchorReceipt` for a browser or mobile node's online declaration. The
+    /// signer fills in its own node id; refused unless it runs with `--anchor-node-id`.
+    SignAnchorReceipt {
+        #[serde(rename = "nodeId")]
+        node_id: String,
+        #[serde(rename = "onlineSeq")]
+        online_seq: u64,
+        #[serde(rename = "onlineUntil")]
+        online_until: u64,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]

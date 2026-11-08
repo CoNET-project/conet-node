@@ -7,6 +7,9 @@
 //!   dotted-quad literals; ports 0 and 25 refused; a name is resolved once (DNS only, no hosts
 //!   file) and the checked address is the one dialled; refusals close silently and the log never
 //!   carries the target.
+//! - On top of those compiled rules: the provider's policy file and the layered limits
+//!   (`egress.rs`, Q66); the exit closes to new connections while the policy differs from the
+//!   chain pointer.
 use crate::chain::{BoxFut, Rpc};
 use crate::http;
 use crate::server::{Conn, NodeCtx};
@@ -32,6 +35,8 @@ pub enum Refusal {
     NotGlobal,
     Local,
     Resolve,
+    /// The provider's policy file does not allow it (egress.rs).
+    Policy,
 }
 
 /// Strict dotted quad: four decimal octets 0-255, no leading zeros, nothing else.
@@ -79,10 +84,12 @@ pub struct EgressPolicy {
     pub local: HashSet<IpAddr>,
     /// Tests only: allow loopback targets so an echo server can stand in for the internet.
     pub allow_loopback_for_tests: bool,
+    /// The provider's policy (layer 3); checked after the compiled rules.
+    pub rules: crate::egress::PolicyRules,
 }
 
 impl EgressPolicy {
-    pub fn from_system(extra_public: &[IpAddr]) -> Self {
+    pub fn from_system(extra_public: &[IpAddr], rules: crate::egress::PolicyRules) -> Self {
         let mut local: HashSet<IpAddr> = if_addrs::get_if_addrs()
             .map(|v| v.into_iter().map(|i| i.ip()).collect())
             .unwrap_or_default();
@@ -90,6 +97,7 @@ impl EgressPolicy {
         Self {
             local,
             allow_loopback_for_tests: false,
+            rules,
         }
     }
 
@@ -159,6 +167,7 @@ pub async fn vet_target(
         && (last.bytes().all(|b| b.is_ascii_digit())
             || ((last.starts_with("0x") || last.starts_with("0X"))
                 && last[2..].bytes().all(|b| b.is_ascii_hexdigit())));
+    let mut name = None;
     let ip = if let Some(ip) = parse_ipv4_strict(host) {
         ip
     } else if host.is_empty() || host.contains(':') || host.starts_with('[') || numeric_last {
@@ -166,6 +175,7 @@ pub async fn vet_target(
         return Err(Refusal::Literal);
     } else {
         // A name: one DNS query, first A record (SI takes ipv4s[0]).
+        name = Some(host);
         *resolver
             .resolve_v4(host)
             .await
@@ -173,6 +183,7 @@ pub async fn vet_target(
             .ok_or(Refusal::Resolve)?
     };
     policy.check_ip(ip, port)?;
+    policy.rules.check(name, ip, port)?;
     Ok(SocketAddr::new(IpAddr::V4(ip), port))
 }
 
@@ -267,7 +278,11 @@ pub struct Exit {
     pending: Mutex<HashMap<String, Pending>>,
     /// Open exit connections per paying wallet.
     per_wallet: Mutex<HashMap<String, usize>>,
-    pub max_per_wallet: usize,
+    total: std::sync::atomic::AtomicUsize,
+    /// Compiled ceiling, operator and policy limits (strictest).
+    pub limits: crate::egress::Limits,
+    /// Closed while the loaded policy differs from the chain pointer; None = no chain check.
+    pub gate: Option<Arc<crate::egress::ChainGate>>,
 }
 
 struct Pending {
@@ -288,8 +303,25 @@ impl Exit {
             passport,
             pending: Mutex::new(HashMap::new()),
             per_wallet: Mutex::new(HashMap::new()),
-            max_per_wallet: 256,
+            total: std::sync::atomic::AtomicUsize::new(0),
+            limits: crate::egress::Limits::default(),
+            gate: None,
         }
+    }
+
+    pub fn with_limits(mut self, l: crate::egress::Limits) -> Self {
+        self.limits = l;
+        self
+    }
+
+    pub fn with_gate(mut self, g: Arc<crate::egress::ChainGate>) -> Self {
+        self.gate = Some(g);
+        self
+    }
+
+    /// Serving now? (false while the policy differs from the chain pointer)
+    pub fn open(&self) -> bool {
+        self.gate.as_ref().map(|g| g.is_open()).unwrap_or(true)
     }
 }
 
@@ -301,6 +333,9 @@ struct WalletSlot {
 
 impl Drop for WalletSlot {
     fn drop(&mut self) {
+        self.exit
+            .total
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         let mut m = self.exit.per_wallet.lock().expect("exit");
         if let Some(n) = m.get_mut(&self.wallet) {
             *n -= 1;
@@ -314,10 +349,14 @@ impl Drop for WalletSlot {
 fn take_slot(exit: &Arc<Exit>, wallet: &str) -> Option<WalletSlot> {
     let mut m = exit.per_wallet.lock().expect("exit");
     let n = m.entry(wallet.to_string()).or_insert(0);
-    if *n >= exit.max_per_wallet {
+    if *n >= exit.limits.max_per_wallet
+        || exit.total.load(std::sync::atomic::Ordering::Relaxed) >= exit.limits.max_conns
+    {
         return None;
     }
     *n += 1;
+    exit.total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Some(WalletSlot {
         exit: exit.clone(),
         wallet: wallet.to_string(),
@@ -348,7 +387,7 @@ fn request_target(c: &Value) -> Option<(String, i64, Vec<u8>)> {
 
 async fn connect(exit: &Exit, host: &str, port: i64, wallet: &str) -> Option<TcpStream> {
     match vet_target(&exit.policy, &*exit.resolver, host, port).await {
-        Ok(addr) => tokio::time::timeout(Duration::from_secs(10), TcpStream::connect(addr))
+        Ok(addr) => tokio::time::timeout(exit.limits.connect, TcpStream::connect(addr))
             .await
             .ok()?
             .ok(),
@@ -361,7 +400,7 @@ async fn connect(exit: &Exit, host: &str, port: i64, wallet: &str) -> Option<Tcp
 
 /// Entry point for both commands (after `checkSign`).
 pub async fn handle(mut stream: Conn, command: Value, ctx: Arc<NodeCtx>) {
-    let Some(exit) = ctx.exit.clone() else {
+    let Some(exit) = ctx.exit.clone().filter(|e| e.open()) else {
         let _ = stream.write_all(&http::not_found()).await;
         return;
     };
@@ -407,7 +446,7 @@ async fn v1(
     if !buffer.is_empty() && target.write_all(&buffer).await.is_err() {
         return;
     }
-    pipe_with_idle(stream, target, Duration::from_secs(120)).await;
+    pipe_with_idle(stream, target, exit.limits.idle).await;
 }
 
 async fn pipe_with_idle(mut a: Conn, mut b: TcpStream, idle: Duration) {
@@ -599,6 +638,7 @@ mod tests {
     async fn vetting_rules() {
         let me: IpAddr = "203.0.114.7".parse().unwrap(); // pretend public address of this node
         let p = EgressPolicy {
+            rules: crate::egress::PolicyRules::allow_all(),
             local: [me].into(),
             allow_loopback_for_tests: false,
         };

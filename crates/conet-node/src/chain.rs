@@ -1,8 +1,7 @@
 //! Chain reads behind replaceable interfaces.
 //!
 //! - [`NodeSource`]: the node table. First implementation reads GuardianNodesInfoV6 (change
-//!   detection by storage root, like SI's watcher); NodeRegistryV2 will add a `tableVersion`
-//!   source with the same interface.
+//!   detection by storage root, like SI's watcher); NodeRegistryV2 is [`crate::nr2::Nr2Source`].
 //! - [`UserRoutes`]: user key ↔ wallet ↔ mailbox node (AddressPGP today).
 //!
 //! Calls never set `from`, so the RPC does not learn which wallet asks (privacy audit gap 1).
@@ -129,6 +128,13 @@ pub struct ChainNode {
     pub key_id: String,
     pub ip: String,
     pub pgp_armored: String,
+    /// Forward port (NodeRegistryV2 `tcpPort`); None = the watcher's default (V6 rows).
+    pub port: Option<u16>,
+    /// Service bits (V2); V6 rows carry none.
+    pub services: u16,
+    /// May hold mailboxes. V6 has no service bits, so every V6 node may.
+    pub mailbox: bool,
+    pub wallet: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +145,9 @@ pub struct TableSnapshot {
     pub nodes: Vec<ChainNode>,
     /// Rows dropped because the declared key ID does not match the key (K-A local check).
     pub rejected: usize,
+    /// The source lists every active node with its mailbox bit (NodeRegistryV2): a node missing
+    /// from it may not hold mailboxes now.
+    pub lists_all_active: bool,
 }
 
 pub trait NodeSource: Send + Sync {
@@ -205,6 +214,10 @@ pub fn check_row(id: u64, pgp_b64: &str, declared: &str, ip: &str) -> Option<Cha
         key_id,
         ip: ip.to_string(),
         pgp_armored: armored,
+        port: None,
+        services: 0,
+        mailbox: true,
+        wallet: None,
     })
 }
 
@@ -239,6 +252,7 @@ impl NodeSource for GuardianV6 {
                         block,
                         nodes,
                         rejected,
+                        lists_all_active: false,
                     });
                 }
                 start += rows.len() as u64;
@@ -266,6 +280,19 @@ pub trait UserRoutes: Send + Sync {
         &'a self,
         user_key: &'a str,
     ) -> BoxFut<'a, Result<Option<String>, ChainError>>;
+    /// User PGP key ID → all mailbox slots (primary and secondary). AddressPGP has one slot;
+    /// AddressPGPV2 `getRoutes` (not final yet) will override this.
+    fn routes_of_user_key<'a>(
+        &'a self,
+        user_key: &'a str,
+    ) -> BoxFut<'a, Result<Option<crate::route::UserRoute>, ChainError>> {
+        Box::pin(async move {
+            Ok(self
+                .route_of_user_key(user_key)
+                .await?
+                .map(|n| crate::route::UserRoute::single(&n)))
+        })
+    }
     /// Wallet → its user PGP key ID (AddressPGP `searchKey`).
     fn user_key_of_wallet<'a>(
         &'a self,

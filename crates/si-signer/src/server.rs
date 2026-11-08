@@ -1,7 +1,7 @@
 //! Signer service: policy checks, then the operation. Logs never contain payloads.
 use crate::proto::{self, Request, Response};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use si_core::statement::{BindNode, Domain};
+use si_core::statement::{AnchorReceipt, BindNode, Domain};
 use si_crypto::{eip712 as e7, eth, opgp};
 use si_proto as sp;
 use std::sync::Arc;
@@ -21,7 +21,12 @@ pub struct Signer {
     pub allow_bind: bool,
     /// When set, only this peer uid may connect.
     pub allow_uid: Option<u32>,
+    /// This node's NodeRegistryV2 id; None = no anchor receipts.
+    pub anchor_node_id: Option<String>,
 }
+
+/// Contract ceiling for an online window (`ONLINE_TTL_CEIL`, 7 days): a receipt never covers more.
+pub const ANCHOR_MAX_TTL_SEC: i64 = 7 * 24 * 3600;
 
 pub struct SignerConfig {
     pub keystore_file: String,
@@ -29,6 +34,8 @@ pub struct SignerConfig {
     pub verifying_contract: String,
     pub allow_bind: bool,
     pub allow_uid: Option<u32>,
+    /// `--anchor-node-id`: this node's NodeRegistryV2 id (decimal). None = no anchor receipts.
+    pub anchor_node_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -74,6 +81,7 @@ impl Signer {
             domain,
             allow_bind: cfg.allow_bind,
             allow_uid: cfg.allow_uid,
+            anchor_node_id: cfg.anchor_node_id,
         })
     }
 
@@ -277,6 +285,38 @@ impl Signer {
                 }
                 self.wallet
                     .sign_digest(&b.digest(&self.domain))
+                    .map(ok)
+                    .unwrap_or_else(|_| refused("sign"))
+            }
+            Request::SignAnchorReceipt {
+                node_id,
+                online_seq,
+                online_until,
+            } => {
+                let Some(own) = &self.anchor_node_id else {
+                    return refused("anchor_disabled");
+                };
+                let (Ok(node), Ok(anchor)) = (e7::u256_dec(&node_id), e7::u256_dec(own)) else {
+                    return refused("anchor_fields");
+                };
+                // Never a receipt for ourselves, for node 0, or for an expired or overlong window.
+                let t = now();
+                if node == anchor
+                    || node == [0u8; 32]
+                    || (online_until as i64) <= t
+                    || (online_until as i64) > t + ANCHOR_MAX_TTL_SEC
+                    || online_seq == 0
+                {
+                    return refused("anchor_fields");
+                }
+                let r = AnchorReceipt {
+                    node_id: node,
+                    anchor_node_id: anchor,
+                    online_seq,
+                    online_until,
+                };
+                self.wallet
+                    .sign_digest(&r.digest(&self.domain))
                     .map(ok)
                     .unwrap_or_else(|_| refused("sign"))
             }

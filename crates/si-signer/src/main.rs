@@ -108,6 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 verifying_contract: arg("--verifying-contract")
                     .ok_or("--verifying-contract <NodeRegistryV2 address>")?,
                 allow_bind: flag("--allow-bind"),
+                anchor_node_id: arg("--anchor-node-id"),
                 allow_uid: arg("--allow-uid").and_then(|s| s.parse().ok()),
             };
             let signer = Arc::new(server::Signer::start(cfg).map_err(|e| e.0)?);

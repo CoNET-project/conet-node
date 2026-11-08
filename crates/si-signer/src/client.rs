@@ -45,6 +45,20 @@ impl SignerClient {
         &self.old_key_ids
     }
 
+    /// NodeRegistryV2 `AnchorReceipt` signed with the node wallet (signer adds its own node id).
+    pub fn sign_anchor_receipt(
+        &self,
+        node_id: &str,
+        online_seq: u64,
+        online_until: u64,
+    ) -> Result<String> {
+        self.call(&Request::SignAnchorReceipt {
+            node_id: node_id.to_string(),
+            online_seq,
+            online_until,
+        })
+    }
+
     pub fn call(&self, req: &Request) -> Result<String> {
         let io = |e: std::io::Error| Error::Eth(format!("signer io: {e}"));
         let mut s = UnixStream::connect(&self.path).map_err(io)?;

@@ -3,8 +3,15 @@
 //! Production: `--signer-socket <path>`; keys stay in the `conet-signer` process.
 //! `--insecure-dev-keys` reads a TEST route key and wallet for local networks only.
 //!
-//! Routes: `--rpc <url>` reads the node table (GuardianNodesInfoV6) and AddressPGP from chain;
+//! Routes: `--rpc <url>` reads the node table (GuardianNodesInfoV6, or NodeRegistryV2 with
+//! `--node-registry <addr> --node-lens <addr>`) and AddressPGP from chain;
 //! `--routes <routes.json>` uses a static table (local test networks).
+//!
+//! Exit (SilentPass `SaaS_Sock5*`): off unless `--egress-policy <file>` is given. Open-type
+//! policies also need `--egress-open-confirm`. With `--node-registry` the exit serves only while
+//! the chain pointer `egressPolicyOf(nodeId)` equals the file's CID; without a registry the
+//! operator must say `--egress-no-chain-check` (V6 era). Operator limits:
+//! `--exit-max-per-wallet`, `--exit-max-conns`, `--exit-idle-secs`, `--exit-connect-secs`.
 use conet_node::chain::{AddressPgp, GuardianV6, NodeSource, Rpc, UserRoutes};
 use conet_node::push::{BeamioApi, Push};
 use conet_node::route::{RouteTable, StaticRoutes};
@@ -124,7 +131,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (routes, user_routes): (Arc<RouteTable>, Option<Arc<dyn UserRoutes>>) =
         if let Some(url) = arg("--rpc") {
             let rpc = Rpc::new(&url)?;
-            source = Some(Arc::new(GuardianV6::new(rpc.clone())));
+            source = Some(match (arg("--node-registry"), arg("--node-lens")) {
+                (Some(reg), Some(lens)) => {
+                    Arc::new(conet_node::nr2::Nr2Source::new(rpc.clone(), &reg, &lens))
+                        as Arc<dyn NodeSource>
+                }
+                (None, None) => Arc::new(GuardianV6::new(rpc.clone())),
+                _ => return Err("--node-registry and --node-lens go together".into()),
+            });
             (
                 Arc::new(RouteTable::new(&key_id, Duration::from_secs(600))),
                 Some(Arc::new(AddressPgp::new(rpc))),
@@ -151,19 +165,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ctx.mailbox = Arc::new(Mailbox::new(store, api.clone()));
         ctx.push = api;
     }
-    // SilentPass exit: needs the chain for passport checks; --no-exit turns it off.
-    if let (Some(url), false) = (arg("--rpc"), std::env::args().any(|a| a == "--no-exit")) {
-        use conet_node::exit::{ChainPassport, DnsResolver, EgressPolicy, Exit};
-        let public: Vec<std::net::IpAddr> = arg("--public-ip")
-            .into_iter()
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        let exit = Exit::new(
-            EgressPolicy::from_system(&public),
-            Arc::new(DnsResolver::new()?),
-            Arc::new(ChainPassport::new(Rpc::new(&url)?)),
-        );
-        ctx.exit = Some(Arc::new(exit));
+    // SilentPass exit: needs a policy file and the chain (passport checks); off otherwise.
+    if let (Some(url), Some(path)) = (arg("--rpc"), arg("--egress-policy")) {
+        if let Some(exit) = egress_exit(&url, &path, ctx.wallet.address())? {
+            ctx.exit = Some(Arc::new(exit));
+        }
+    } else if arg("--egress-policy").is_some() {
+        eprintln!("exit off: --egress-policy needs --rpc (passport checks)");
     }
     ctx.user_routes = user_routes;
     ctx.offers = offers;
@@ -182,12 +190,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ctx.clone(),
     ));
     if let Some(src) = source {
-        tokio::spawn(watcher::run(
-            src,
-            routes,
-            ctx.chain.clone(),
-            watcher::WatchOpts::default(),
-        ));
+        let mut opts = watcher::WatchOpts::default();
+        if arg("--node-registry").is_some() {
+            // V2 reads are paged through the Lens and change detection is event based: react
+            // sooner, and re-read hourly because time alone can change `active`.
+            opts.jitter = Duration::from_secs(15);
+            opts.force_full = Duration::from_secs(3600);
+        }
+        tokio::spawn(watcher::run(src, routes, ctx.chain.clone(), opts));
     }
     // HTTPS: in-process ACME for {keyID}.conet.network (Q13), or fixed PEM files for tests.
     // ACME mode (Q74): TLS-ALPN-01 on :443, DNS-01 through the DNS daemon on other ports (W42).
@@ -282,4 +292,84 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%listen, key_id = %ctx.key_id, "conet-node listening");
     server::serve(listener, ctx).await?;
     Ok(())
+}
+
+fn flag(name: &str) -> bool {
+    std::env::args().any(|a| a == name)
+}
+
+/// Build the exit from the policy file and the operator's limits; None = stays off (reason
+/// printed). Errors only for unreadable or invalid policy files.
+fn egress_exit(
+    rpc_url: &str,
+    policy_path: &str,
+    own_wallet: String,
+) -> Result<Option<conet_node::exit::Exit>, Box<dyn std::error::Error>> {
+    use conet_node::egress::{self, ChainGate, LimitSet, Limits, StartRefusal};
+    use conet_node::exit::{ChainPassport, DnsResolver, EgressPolicy, Exit};
+    let (policy, cid) = egress::load(policy_path)?;
+    match egress::start_check(&policy, flag("--egress-open-confirm")) {
+        Ok(()) => {}
+        Err(StartRefusal::NeedsOpenConfirm) => {
+            eprintln!("exit off: the policy lets users reach unlisted destinations (mode {:?}); start again with --egress-open-confirm to accept that", policy.mode);
+            return Ok(None);
+        }
+        Err(StartRefusal::PolicyOff) => {
+            eprintln!("exit off: policy mode is off");
+            return Ok(None);
+        }
+    }
+    let gate = match arg("--node-registry") {
+        Some(registry) => {
+            let g = ChainGate::new(cid, false);
+            tokio::spawn(egress::sync_loop(
+                conet_node::nr2::Nr2Reader {
+                    rpc: Rpc::new(rpc_url)?,
+                    registry,
+                },
+                own_wallet,
+                g.clone(),
+                Duration::from_secs(30),
+            ));
+            g
+        }
+        None if flag("--egress-no-chain-check") => {
+            eprintln!(
+                "WARNING: exit policy is not checked against the chain (--egress-no-chain-check)"
+            );
+            ChainGate::new(cid, true)
+        }
+        None => {
+            eprintln!("exit off: no --node-registry to check the policy pointer against; use --egress-no-chain-check to run without it");
+            return Ok(None);
+        }
+    };
+    let num = |n: &str| arg(n).and_then(|v| v.parse().ok());
+    let operator = LimitSet {
+        max_conns_per_wallet: num("--exit-max-per-wallet"),
+        max_conns: num("--exit-max-conns"),
+        idle_secs: num("--exit-idle-secs").map(|v: usize| v as u64),
+        connect_secs: num("--exit-connect-secs").map(|v: usize| v as u64),
+    };
+    let limits = Limits::layered(&operator, &policy.limits);
+    let public: Vec<std::net::IpAddr> = arg("--public-ip")
+        .into_iter()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    eprintln!("{}", egress::RISK_NOTICE);
+    tracing::warn!(
+        cid = %conet_node::register::cid_text(&cid),
+        mode = ?policy.mode,
+        ?limits,
+        "exit configured (with a registry it serves only while the chain pointer matches)"
+    );
+    Ok(Some(
+        Exit::new(
+            EgressPolicy::from_system(&public, policy.rules()?),
+            Arc::new(DnsResolver::new()?),
+            Arc::new(ChainPassport::new(Rpc::new(rpc_url)?)),
+        )
+        .with_limits(limits)
+        .with_gate(gate),
+    ))
 }

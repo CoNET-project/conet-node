@@ -4,11 +4,15 @@
 pub mod acme_dns;
 pub mod chain;
 pub mod commands;
+pub mod deliver;
+pub mod egress;
 pub mod exit;
 pub mod http;
 pub mod limits;
 pub mod mailbox;
+pub mod nr2;
 pub mod push;
+pub mod register;
 pub mod route;
 pub mod server;
 pub mod store;
