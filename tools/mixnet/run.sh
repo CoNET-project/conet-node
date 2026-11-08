@@ -25,7 +25,7 @@ if [ "${MIXNET_INNER:-}" != 1 ]; then
     mkdir -p "$WORK/si"
     git -C "$WORK/si-repo" archive "$SI_REV" | tar -x -C "$WORK/si"
     python3 tools/mixnet/si_patch.py "$WORK/si"
-    (cd "$WORK/si" && npm ci --no-audit --no-fund --loglevel=error && npx tsc --project tsconfig.json)
+    (cd "$WORK/si" && npm ci --no-audit --no-fund --loglevel=error && npm install --no-save --no-audit --no-fund --loglevel=error typescript@5.4.5 && npx tsc --project tsconfig.json && cp src/endpoint/index.html dist/endpoint/)
   fi
   (cd conformance/vectors && [ -d node_modules ] || npm ci --ignore-scripts --no-audit --no-fund --loglevel=error)
   cargo build --release --locked -p conet-node --bin conet-node
