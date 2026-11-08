@@ -288,16 +288,23 @@ async fn offline_then_ack(m: &Mix, user: &str, send_via: &str, ack_via: &str) {
     assert!(r.starts_with("HTTP/1.1 200"), "post via {send_via}: {r}");
     tokio::time::sleep(Duration::from_millis(500)).await;
     let mut l = Listen::connect(m, user, ack_via).await;
-    assert!(
-        l.expect(&msg, 10).await,
-        "{user}: stored mail flushed on listen"
-    );
+    let got = l
+        .take(&msg, 10)
+        .await
+        .unwrap_or_else(|| panic!("{user}: stored mail flushed on listen"));
     drop(l);
+    // Clients ACK the hash of the armor as they received it.
     let w = m.user_wallet(user);
-    let ack = json!({ "command": "gossip_delivery_ack", "walletAddress": w.address(), "armorHash": armor_hash(msg.trim_end()), "timestamp": now() });
+    let ack = json!({ "command": "gossip_delivery_ack", "walletAddress": w.address(), "armorHash": armor_hash(&got), "timestamp": now() });
     let r = post_raw(m.addr(ack_via), &m.command(&w, ack, &m.mailbox_of(user))).await;
     let v: Value = serde_json::from_str(body(&r)).unwrap_or(Value::Null);
     assert_eq!(v["ok"], true, "ack via {ack_via}: {r}");
+    assert_eq!(
+        v["removed"],
+        true,
+        "ack removed the stored mail at {}: {r}",
+        m.mailbox_of(user)
+    );
     let mut l = Listen::connect(m, user, ack_via).await;
     assert!(!l.expect(&msg, 3).await, "acked mail is not flushed again");
 }
