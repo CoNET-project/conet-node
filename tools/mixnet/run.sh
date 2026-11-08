@@ -28,8 +28,8 @@ if [ "${MIXNET_INNER:-}" != 1 ]; then
     (cd "$WORK/si" && npm ci --no-audit --no-fund --loglevel=error && npm install --no-save --no-audit --no-fund --loglevel=error typescript@5.4.5 && npx tsc --project tsconfig.json && cp src/endpoint/index.html dist/endpoint/)
   fi
   (cd conformance/vectors && [ -d node_modules ] || npm ci --ignore-scripts --no-audit --no-fund --loglevel=error)
-  cargo build --release --locked -p conet-node --bin conet-node
-  cargo test --release --locked -p conet-node --test mixnet --no-run
+  cargo build --locked -p conet-node --bin conet-node
+  cargo test --locked -p conet-node --test mixnet --no-run
   echo "== entering an isolated network namespace"
   exec sudo -E env "PATH=$PATH" HOME="$HOME" MIXNET_INNER=1 MIXNET_WORK="$WORK" \
     unshare --net -- bash "$ROOT/tools/mixnet/run.sh" "$SI_REV"
@@ -56,7 +56,7 @@ start_si() { # name ip
 }
 start_rust() { # name ip wallet
   CONET_DEV_ROUTE_PASS="" CONET_DEV_WALLET_KEY="$(jq -r ".wallets.$3.privateKey" $G)" RUST_LOG=conet_node=debug \
-    target/release/conet-node --insecure-dev-keys --dev-route-key "$NET/$1/route.sec" \
+    target/debug/conet-node --insecure-dev-keys --dev-route-key "$NET/$1/route.sec" \
     --listen "$2:80" --health-listen "$2:9180" --rpc http://127.0.0.1:8545 \
     --mailbox-db "$NET/$1/mailbox.redb" --public-ip "$2" \
     --egress-policy "$WORK/policy-open.json" --egress-open-confirm --egress-no-chain-check \
@@ -97,7 +97,7 @@ ready || { echo "network did not come up"; tail -n 40 "$WORK"/logs/*.log; exit 1
 echo "== network up"
 
 set +e
-MIXNET_CONFIG="$NET/mixnet.json" cargo test --release --locked --offline -p conet-node --test mixnet -- --test-threads=1
+MIXNET_CONFIG="$NET/mixnet.json" cargo test --locked --offline -p conet-node --test mixnet -- --test-threads=1
 rc=$?
 set -e
 if [ $rc -ne 0 ]; then

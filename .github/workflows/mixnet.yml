@@ -20,7 +20,7 @@ env:
 jobs:
   mixnet:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain (from rust-toolchain.toml)
@@ -31,7 +31,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: mixnet-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: mixnet-debug-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
