@@ -25,13 +25,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup show active-toolchain || rustup toolchain install
-      - uses: actions/cache@v4
+      # Restore/save split so a failed run still keeps the build for the next one.
+      - uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
           key: mixnet-debug-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: mixnet-debug-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -42,6 +44,14 @@ jobs:
         env:
           MIXNET_WORK: ${{ runner.temp }}/mixnet
         run: tools/mixnet/run.sh "${{ inputs.si_rev || '74c6cfd' }}"
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: mixnet-debug-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
       - name: Logs
         if: always()
         uses: actions/upload-artifact@v4
