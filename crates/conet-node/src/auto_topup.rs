@@ -197,3 +197,107 @@ pub fn bump_bid(
     let (m, t) = (up(max_fee), up(tip));
     (m <= max_fee_cap && t <= tip_cap).then_some((m, t))
 }
+
+// ---- send flow: pricing wired to the plan (N6 fifth review) ----
+
+/// A top-up of ours that was signed, with the fees of its latest version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Priced {
+    pub nonce: u64,
+    pub value: u128,
+    pub max_fee: u128,
+    pub tip: u128,
+}
+
+/// Pricing settings: the signer's caps and the tip the node would like to pay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PriceConfig {
+    pub max_fee_cap: u128,
+    pub tip_cap: u128,
+    pub wanted_tip: u128,
+}
+
+/// What the sender does next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendAction {
+    /// Ask the signer for this transaction (`replaces` = same-nonce replacement of ours).
+    Sign {
+        nonce: u64,
+        value: u128,
+        max_fee: u128,
+        tip: u128,
+        replaces: Option<u64>,
+    },
+    /// Broadcast the same signed transaction again.
+    Rebroadcast {
+        nonce: u64,
+    },
+    /// Cannot bump any further under the caps: report busy; `alert` close to the end (the operator
+    /// should deposit through the web page).
+    Busy {
+        alert: bool,
+    },
+    Nothing,
+}
+
+/// Turn a [`Plan`] into the next step. `pending` = our latest signed top-up (if its nonce is
+/// unused); `priced_out` = it has not been mined for long enough while the base fee moved past it
+/// (the caller decides, e.g. N blocks); `left` = seconds to the term end.
+#[allow(clippy::too_many_arguments)]
+pub fn next_action(
+    plan: &Plan,
+    pending: Option<&Priced>,
+    wallet_nonce: u64,
+    base_fee: u128,
+    priced_out: bool,
+    left: u64,
+    p: &PriceConfig,
+    cfg: &Config,
+) -> SendAction {
+    let busy = SendAction::Busy {
+        alert: left <= cfg.busy_alert,
+    };
+    match (plan, pending) {
+        (Plan::Send { value }, None) => {
+            let (max_fee, tip) = first_bid(base_fee, p.wanted_tip, p.max_fee_cap, p.tip_cap);
+            SendAction::Sign {
+                nonce: wallet_nonce,
+                value: *value,
+                max_fee,
+                tip,
+                replaces: None,
+            }
+        }
+        (Plan::Rebroadcast { nonce }, Some(q)) if q.nonce == *nonce => {
+            if !priced_out {
+                return SendAction::Rebroadcast { nonce: *nonce };
+            }
+            match bump_bid(q.max_fee, q.tip, p.max_fee_cap, p.tip_cap) {
+                Some((max_fee, tip)) => SendAction::Sign {
+                    nonce: q.nonce,
+                    value: q.value,
+                    max_fee,
+                    tip,
+                    replaces: Some(q.nonce),
+                },
+                None => busy,
+            }
+        }
+        (Plan::Replace { nonce, value }, Some(q)) if q.nonce == *nonce => {
+            match bump_bid(q.max_fee, q.tip, p.max_fee_cap, p.tip_cap) {
+                Some((max_fee, tip)) => SendAction::Sign {
+                    nonce: q.nonce,
+                    value: *value,
+                    max_fee,
+                    tip,
+                    replaces: Some(q.nonce),
+                },
+                None => busy,
+            }
+        }
+        (Plan::WalletBusy { alert_use_web, .. }, _) => SendAction::Busy {
+            alert: *alert_use_web,
+        },
+        _ => SendAction::Nothing,
+    }
+}

@@ -482,3 +482,83 @@ fn normal_renewal_same_term_length_per_contract() {
     assert_eq!(n2("endAfter"), n2("endBefore") + n2("lenBefore"));
     assert_eq!(n2("baseAfter"), n(&f["A"]["afterEnd"]["thresholdAtEnd"]));
 }
+
+/// The send flow wires first_bid / bump_bid to the plan (pure logic; the anvil run is
+/// tests/topup_anvil.rs).
+#[test]
+fn send_flow_first_bid_bump_busy_alert() {
+    let gwei = 1_000_000_000u128;
+    let p = PriceConfig {
+        max_fee_cap: 50 * gwei,
+        tip_cap: 100_000_000,
+        wanted_tip: 100_000_000,
+    };
+    let cfg = Config::default();
+    let first = next_action(
+        &Plan::Send { value: 5 * C },
+        None,
+        7,
+        gwei,
+        false,
+        3 * DAY,
+        &p,
+        &cfg,
+    );
+    assert_eq!(
+        first,
+        SendAction::Sign {
+            nonce: 7,
+            value: 5 * C,
+            max_fee: 4 * gwei + 75_000_000,
+            tip: 75_000_000,
+            replaces: None
+        }
+    );
+    let q = Priced {
+        nonce: 7,
+        value: 5 * C,
+        max_fee: 4 * gwei + 75_000_000,
+        tip: 75_000_000,
+    };
+    let plan = Plan::Rebroadcast { nonce: 7 };
+    assert_eq!(
+        next_action(&plan, Some(&q), 7, gwei, false, 3 * DAY, &p, &cfg),
+        SendAction::Rebroadcast { nonce: 7 }
+    );
+    assert!(matches!(
+        next_action(&plan, Some(&q), 7, gwei, true, 3 * DAY, &p, &cfg),
+        SendAction::Sign {
+            replaces: Some(7),
+            ..
+        }
+    ));
+    let at_cap = Priced {
+        tip: 100_000_000,
+        ..q
+    };
+    assert_eq!(
+        next_action(&plan, Some(&at_cap), 7, gwei, true, 3 * DAY, &p, &cfg),
+        SendAction::Busy { alert: false }
+    );
+    assert_eq!(
+        next_action(&plan, Some(&at_cap), 7, gwei, true, 3_600, &p, &cfg),
+        SendAction::Busy { alert: true }
+    );
+    // Replace (web deposit covered part of the gap): lower value, bumped fees, same nonce.
+    let rep = next_action(
+        &Plan::Replace {
+            nonce: 7,
+            value: 2 * C,
+        },
+        Some(&q),
+        7,
+        gwei,
+        false,
+        3 * DAY,
+        &p,
+        &cfg,
+    );
+    assert!(
+        matches!(rep, SendAction::Sign { nonce: 7, value, replaces: Some(7), .. } if value == 2 * C)
+    );
+}
