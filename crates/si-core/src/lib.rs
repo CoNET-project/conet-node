@@ -6,6 +6,7 @@
 
 pub mod node;
 pub mod probe;
+pub mod probe_signer;
 pub mod statement;
 pub mod voice;
 

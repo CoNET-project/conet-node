@@ -1,0 +1,19 @@
+{
+ "domain": {
+  "name": "CoNET-NodeProbeSigner",
+  "version": "1",
+  "chainId": 224422,
+  "verifyingContract": "0x00000000000000000000000000000000c0de0001"
+ },
+ "value": {
+  "nodeId": "573",
+  "nodeWallet": "0x433c1e782436a20454967EF3A9A9586d7186BDBd",
+  "probeSigner": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+  "purpose": "0xe87cec9f8bd9f9ba700cb398da31b9fa2ccc8644134a578e8d464ae614a16fb8"
+ },
+ "domainSeparator": "0x24ded74dbf78f5c3afee95af335f247f3d71788db74c8b626d32cb262445abc0",
+ "structHash": "0xa420170e4b174bec2dd7b8b9cbfe9e30aa77f37380352fa48c02fd72abc766eb",
+ "digest": "0x50fa04fc3b5cf4a0ed51037a720e0b226b511a33b9598db0afeaf0d68d6267ec",
+ "digestInProbeMessageDomain": "0xc0b3b3618874acacb4f86564bc50346510b1b6834fc4ca6238faa7541fc1e9c2",
+ "signature": "0x1a0449083ce174113d86317d2045bc7b249011e022737e38af12193dc4e5e4a151d5ca8531568060d42baea90fd285bf5defdd4f704fb81c4ebf141de0589e1c1b"
+}
