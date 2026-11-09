@@ -506,3 +506,26 @@ fn initial_set_exempts_first_admission_only() {
     // Recovery always needs a vote, members included.
     assert!(needs_vote(Kind::Recovery, 7, "0xabc", &set));
 }
+
+/// D8 browser endpoint hash: the same bytes as the JS harness (tools/client-browser-e2e), which
+/// hashes the DTLS fingerprint Chrome reports. Case and colons do not matter.
+#[test]
+fn browser_endpoint_hash_matches_js_harness() {
+    let fp = "26:c6:61:C7:3D:96:D6:DE:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:01:23:45:67:89:AB:CD:EF";
+    let direct = Endpoint::Browser {
+        dtls_fingerprint: fp.into(),
+        relay: None,
+    };
+    let relayed = Endpoint::Browser {
+        dtls_fingerprint: fp.into(),
+        relay: Some("turn:relay-1.test:3478".into()),
+    };
+    assert_eq!(
+        hex::encode(direct.endpoint_hash().unwrap()),
+        "b3f96bd5a0572c7ba335ca960f7e6c9512ea1596037397c38d6a335d00f0e878"
+    );
+    assert_eq!(
+        hex::encode(relayed.endpoint_hash().unwrap()),
+        "4d60b9e47c8698bec8814a73e59700734c0234e98915953db2eca4b26aeccd57"
+    );
+}

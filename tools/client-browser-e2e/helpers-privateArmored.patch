@@ -1,0 +1,23 @@
+--- test/node-registry-v2/helpers.ts	2026-11-08 22:10:20
++++ test/node-registry-v2/helpers.ts	2026-11-08 22:55:06
+@@ -31,10 +31,10 @@
+ // PGP keys
+ // ---------------------------------------------------------------------------------------------
+ 
+-export type Key = { armored: string; field: string; keyId: string; keyIdStr: string };
++export type Key = { armored: string; field: string; keyId: string; keyIdStr: string; privateArmored?: string };
+ 
+ export async function newKey(name = "node", version: 4 | 6 = 4): Promise<Key> {
+-  const { publicKey } =
++  const { publicKey, privateKey } =
+     version === 4
+       ? await openpgp.generateKey({ type: "ecc", curve: "curve25519Legacy", userIDs: [{ name }], format: "armored" })
+       : await openpgp.generateKey({ type: "curve25519", userIDs: [{ name }], format: "armored", config: { v6Keys: true } });
+@@ -46,6 +46,7 @@
+     field: Buffer.from(publicKey, "utf8").toString("base64"),
+     keyId: "0x" + keyIdStr,
+     keyIdStr,
++    privateArmored: privateKey, // e2e copy only: voters and the browser node sign with PGP
+   };
+ }
+ 
