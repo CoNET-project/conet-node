@@ -1,10 +1,10 @@
 //! Votes under base-fee spikes on a LOCAL anvil (chain 224422), TEST keys only (VOTE-MUST).
 //!
 //! Runs only with `F5_RPC` and `F5_REGISTRY` (state from `tools/vote-gate/setup.sh`). The vote
-//! is priced once with `vote_price::estimate`, then anvil raises the next block's base fee to
-//! 20x, 100x and to 1,000 gwei: the same transaction must still be mined, and the wallet pays
-//! base fee + tip, not maxFee. A balance too low for the base fee is an obstacle; after a top-up
-//! the vote goes out. Transactions go through anvil impersonation (nothing is signed); every
+//! is priced with `vote_price::estimate`, then anvil raises the next block's base fee to 20x,
+//! 100x and to 1,000 gwei: the send loop's replacement (`on_pending`) gets it mined, and the
+//! wallet pays base fee + tip, not maxFee. A balance too low for the base fee is an obstacle;
+//! after a top-up the vote goes out. Transactions go through anvil impersonation (nothing is signed); every
 //! scenario runs inside `evm_snapshot` / `evm_revert`.
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
@@ -167,15 +167,23 @@ async fn votes_go_out_through_base_fee_spikes() {
         };
         a.next_base_fee(spiked).await;
         let before = a.balance(&wc).await;
-        let rc = a.send(&wc, vote.clone(), e.price).await;
+        // The price made at the old base fee no longer fits: anvil refuses it outright (geth
+        // would keep it pending). The send loop treats both as "priced out" and replaces at
+        // the latest base fee.
+        let price = match on_pending(&cfg, e.price, 0, 30, spiked, 10 * CNET, GAS, u64::MAX) {
+            Step::Replace(p) => p,
+            Step::Rebroadcast => e.price,
+            other => panic!("{what}: {other:?}"),
+        };
+        let rc = a.send(&wc, vote.clone(), price).await;
         assert_eq!(rc["status"], "0x1", "{what}: {rc}");
         let paid = before - a.balance(&wc).await;
         let used = hexu(&rc["gasUsed"]);
         let eff = hexu(&rc["effectiveGasPrice"]);
         // Charged base fee + tip, never maxFee.
-        assert_eq!(eff, spiked as u128 + e.price.tip_wei as u128, "{what}");
+        assert_eq!(eff, spiked as u128 + price.tip_wei as u128, "{what}");
         assert_eq!(paid, used * eff, "{what}");
-        assert!(paid < GAS as u128 * e.price.max_fee_wei as u128);
+        assert!(paid <= GAS as u128 * price.max_fee_wei as u128);
         assert_eq!(rd.choice(rid, c).await.unwrap(), 2, "{what}: vote recorded");
         assert_eq!(a.call("evm_revert", json!([snap])).await, json!(true));
         snap = a.call("evm_snapshot", json!([])).await;

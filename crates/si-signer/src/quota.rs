@@ -261,6 +261,15 @@ pub enum QuotaError {
         cap: u32,
     },
     UnknownTicket,
+    /// `replace`: not the same action, nonce or content as the ticket, or no nonce bound.
+    ReplaceMismatch,
+    /// `replace`: less than one block since the last signature for this nonce.
+    ReplaceTooSoon,
+    /// `replace`: maxFee and tip must both rise by geth's 10% (`need_*` are the minimums).
+    ReplaceBumpTooSmall {
+        need_max_fee: u64,
+        need_tip: u64,
+    },
     StateBroken(String),
     Write,
 }
@@ -282,6 +291,12 @@ impl std::fmt::Display for QuotaError {
             InflightReport { cap } => write!(f, "inflight_report {cap}/{cap}"),
             InflightVote { cap } => write!(f, "inflight_vote {cap}/{cap}"),
             UnknownTicket => write!(f, "unknown_ticket"),
+            ReplaceMismatch => write!(f, "replace_mismatch"),
+            ReplaceTooSoon => write!(f, "replace_too_soon"),
+            ReplaceBumpTooSmall {
+                need_max_fee,
+                need_tip,
+            } => write!(f, "replace_bump_too_small:{need_max_fee} {need_tip}"),
             StateBroken(r) => write!(f, "quota_state_broken:{r}"),
             Write => write!(f, "quota_state_write"),
         }
@@ -303,6 +318,10 @@ pub struct Intent<'a> {
     pub base_fee_wei: u64,
     /// EIP-1559 (type 2) transaction.
     pub type2: bool,
+    /// Transaction nonce, required for a later `replace`.
+    pub nonce: Option<u64>,
+    /// Hash of everything but the price (to, data, gas limit, chain id), bound for `replace`.
+    pub content: [u8; 32],
 }
 
 impl<'a> Intent<'a> {
@@ -314,6 +333,8 @@ impl<'a> Intent<'a> {
             priority_fee_wei: 0,
             base_fee_wei: 0,
             type2: true,
+            nonce: None,
+            content: [0; 32],
         }
     }
     pub fn tx(action: &'a str, gas_limit: u64, max_fee_wei: u64) -> Self {
@@ -324,6 +345,8 @@ impl<'a> Intent<'a> {
             priority_fee_wei: 0,
             base_fee_wei: 0,
             type2: true,
+            nonce: None,
+            content: [0; 32],
         }
     }
     pub fn fees(mut self, priority_fee_wei: u64, base_fee_wei: u64) -> Self {
@@ -333,6 +356,12 @@ impl<'a> Intent<'a> {
     }
     pub fn legacy(mut self) -> Self {
         self.type2 = false;
+        self
+    }
+    /// Bind the nonce and content hash, so the transaction can later be replaced (price only).
+    pub fn bind(mut self, nonce: u64, content: [u8; 32]) -> Self {
+        self.nonce = Some(nonce);
+        self.content = content;
         self
     }
 }
@@ -351,6 +380,17 @@ pub struct Grant {
 struct Inflight {
     action: String,
     reserved_wei: u64,
+    /// Nonce and content hash (to, data, gas limit, chain) bound at reserve, for `replace`.
+    #[serde(default)]
+    nonce: Option<u64>,
+    #[serde(default)]
+    content: [u8; 32],
+    #[serde(default)]
+    max_fee_wei: u64,
+    #[serde(default)]
+    tip_wei: u64,
+    #[serde(default)]
+    signed_at: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -595,6 +635,11 @@ impl Quota {
                 Inflight {
                     action: intent.action.to_string(),
                     reserved_wei: cost,
+                    nonce: intent.nonce,
+                    content: intent.content,
+                    max_fee_wei: intent.max_fee_wei,
+                    tip_wei: vote_tip.unwrap_or(intent.priority_fee_wei),
+                    signed_at: now,
                 },
             );
             ticket = Some(id);
@@ -663,6 +708,104 @@ impl Quota {
             }
         }
         Ok((tip, w))
+    }
+
+    /// Re-sign an in-flight transaction at a higher price (same nonce, same content). The
+    /// ticket keeps its in-flight slot; nothing but the price may change. Both maxFee and the
+    /// signed tip must rise by geth's PriceBump (10%), at least one block after the last
+    /// signature for this nonce. Votes keep their rules (type 2, tip lowered to the cap); other
+    /// calls keep the fixed maxFee cap. The reservation is re-priced; capped classes are
+    /// re-checked against their caps.
+    pub fn replace(&mut self, ticket: u64, intent: &Intent, now: u64) -> Result<Grant, QuotaError> {
+        if let Some(r) = &self.broken {
+            return Err(QuotaError::StateBroken(r.clone()));
+        }
+        let mut next = self.state.clone();
+        roll(&mut next, now);
+        let Some(old) = next.inflight.get(&ticket).cloned() else {
+            return Err(QuotaError::UnknownTicket);
+        };
+        if old.nonce.is_none()
+            || intent.nonce != old.nonce
+            || intent.content != old.content
+            || intent.action != old.action
+        {
+            return Err(QuotaError::ReplaceMismatch);
+        }
+        if now < old.signed_at + BLOCK_SECS {
+            return Err(QuotaError::ReplaceTooSoon);
+        }
+        let class = class_of(&old.action).ok_or(QuotaError::UnknownSelector)?;
+        let ceiling = self
+            .cfg
+            .gas_ceiling
+            .get(intent.action)
+            .copied()
+            .ok_or_else(|| QuotaError::GasCeilingUnset(intent.action.to_string()))?;
+        if intent.gas_limit == 0 || intent.gas_limit > ceiling {
+            return Err(QuotaError::GasAboveCeiling {
+                action: intent.action.to_string(),
+                ceiling,
+            });
+        }
+        let (tip, warnings) = if class == SpendClass::Ballot {
+            self.check_vote_fee(intent, now)?
+        } else {
+            if intent.max_fee_wei == 0 || intent.max_fee_wei > self.cfg.max_fee_wei {
+                return Err(QuotaError::MaxFeeTooHigh {
+                    cap: self.cfg.max_fee_wei,
+                });
+            }
+            (intent.priority_fee_wei.min(intent.max_fee_wei), Vec::new())
+        };
+        let need_max_fee = (old.max_fee_wei as u128 * 110 / 100).min(u64::MAX as u128) as u64;
+        let need_tip = (old.tip_wei as u128 * 110 / 100).min(u64::MAX as u128) as u64;
+        if intent.max_fee_wei < need_max_fee || tip < need_tip {
+            return Err(QuotaError::ReplaceBumpTooSmall {
+                need_max_fee,
+                need_tip,
+            });
+        }
+        let cost = intent.gas_limit.saturating_mul(intent.max_fee_wei);
+        if matches!(class, SpendClass::Upkeep | SpendClass::Anchor) {
+            let mut probe = next.clone();
+            probe.inflight.remove(&ticket);
+            let (vote, anchor) = committed(&probe);
+            let (cv, ca) = if class == SpendClass::Upkeep {
+                (cost, 0)
+            } else {
+                (0, cost)
+            };
+            for (name, used, add, cap) in [
+                (W_SPEND_UPKEEP, vote, cv, self.cfg.spend_upkeep_wei),
+                (W_SPEND_ANCHOR, anchor, ca, self.cfg.spend_anchor_net_wei),
+                (
+                    W_SPEND_TOTAL,
+                    vote + anchor,
+                    cv + ca,
+                    self.cfg.spend_total_wei,
+                ),
+            ] {
+                if add > 0 && used.saturating_add(add) > cap {
+                    return Err(QuotaError::Exceeded {
+                        bucket: name.into(),
+                        used,
+                        cap,
+                    });
+                }
+            }
+        }
+        let e = next.inflight.get_mut(&ticket).expect("checked above");
+        e.reserved_wei = cost;
+        e.max_fee_wei = intent.max_fee_wei;
+        e.tip_wei = tip;
+        e.signed_at = now;
+        self.commit(next)?;
+        Ok(Grant {
+            ticket: Some(ticket),
+            warnings,
+            priority_fee_wei: (class == SpendClass::Ballot).then_some(tip),
+        })
     }
 
     /// A receipt arrived: replace the reservation with the real cost (gas used x price paid).

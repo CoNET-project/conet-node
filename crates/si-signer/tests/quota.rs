@@ -372,38 +372,177 @@ fn quota_vote_tip_lowered_to_cap_and_signed() {
     assert!(!g.warnings.contains(&W_VOTE_TIP_CLAMPED.to_string()));
 }
 
+const CONTENT: [u8; 32] = [7; 32];
+
 #[test]
 fn quota_vote_same_nonce_replacements_signed() {
     let d = tempfile::tempdir().unwrap();
     let mut q = ledger(&d, defaults());
     let cap = defaults().vote_fee.priority_cap_wei;
-    // A stuck vote is replaced: cancel the old ticket, reserve the bumped price. Every bump is
-    // signed, however high maxFee goes; the tip never goes over the cap.
-    let mut max_fee = 4 * GWEI;
-    let mut tip = 60_000_000u64;
-    let mut ticket = q
+    let v = |max: u64, tip: u64| {
+        Intent::tx(A_VOTE_AGREE, DECIDING_VOTE_GAS_FLOOR, max)
+            .fees(tip, GWEI)
+            .bind(42, CONTENT)
+    };
+    let (mut max_fee, mut tip) = (4 * GWEI, 1_000_000u64);
+    let ticket = q.reserve(&v(max_fee, tip), T0).unwrap().ticket.unwrap();
+    // Each replacement: same ticket, same nonce and content, +10% on both, a block apart.
+    // maxFee may go as high as needed; the tip stays under the cap.
+    let mut now = T0;
+    for _ in 0..25 {
+        now += BLOCK_SECS;
+        max_fee *= 2; // follows a fast-rising base fee
+        tip = (tip as u128 * 110).div_ceil(100) as u64;
+        let g = q.replace(ticket, &v(max_fee, tip), now).unwrap();
+        assert_eq!(g.ticket, Some(ticket));
+        assert_eq!(g.priority_fee_wei, Some(tip.min(cap)));
+    }
+    assert_eq!(q.inflight(), 1);
+}
+
+#[test]
+fn quota_replace_binds_nonce_and_content() {
+    let d = tempfile::tempdir().unwrap();
+    let mut q = ledger(&d, defaults());
+    let base = |nonce, content| {
+        Intent::tx(A_VOTE_AGREE, 80_000, GWEI)
+            .fees(1_000_000, 0)
+            .bind(nonce, content)
+    };
+    let t = q.reserve(&base(42, CONTENT), T0).unwrap().ticket.unwrap();
+    let bumped = |nonce, content| {
+        Intent::tx(A_VOTE_AGREE, 80_000, 2 * GWEI)
+            .fees(2_000_000, 0)
+            .bind(nonce, content)
+    };
+    let later = T0 + BLOCK_SECS;
+    // Another nonce, other content (to, data, gas, chain), another action: refused.
+    assert_eq!(
+        q.replace(t, &bumped(43, CONTENT), later).unwrap_err(),
+        QuotaError::ReplaceMismatch
+    );
+    assert_eq!(
+        q.replace(t, &bumped(42, [8; 32]), later).unwrap_err(),
+        QuotaError::ReplaceMismatch
+    );
+    let other = Intent::tx(A_VOTE_DISAGREE, 80_000, 2 * GWEI)
+        .fees(2_000_000, 0)
+        .bind(42, CONTENT);
+    assert_eq!(
+        q.replace(t, &other, later).unwrap_err(),
+        QuotaError::ReplaceMismatch
+    );
+    // A ticket reserved without a nonce cannot be replaced; an unknown ticket neither.
+    let unbound = q
+        .reserve(&Intent::tx(A_VOTE_AGREE, 80_000, GWEI), T0)
+        .unwrap()
+        .ticket
+        .unwrap();
+    assert_eq!(
+        q.replace(unbound, &bumped(42, CONTENT), later).unwrap_err(),
+        QuotaError::ReplaceMismatch
+    );
+    assert_eq!(
+        q.replace(999, &bumped(42, CONTENT), later).unwrap_err(),
+        QuotaError::UnknownTicket
+    );
+    // Within one block of the last signature: refused. After: accepted.
+    assert_eq!(
+        q.replace(t, &bumped(42, CONTENT), T0 + BLOCK_SECS - 1)
+            .unwrap_err(),
+        QuotaError::ReplaceTooSoon
+    );
+    assert!(q.replace(t, &bumped(42, CONTENT), later).is_ok());
+}
+
+#[test]
+fn quota_replace_keeps_slot_and_needs_geth_bump() {
+    let d = tempfile::tempdir().unwrap();
+    let mut q = ledger(&d, defaults());
+    let cap = defaults().vote_fee.priority_cap_wei;
+    let v = |nonce, max, tip| {
+        Intent::tx(A_VOTE_AGREE, 80_000, max)
+            .fees(tip, 0)
+            .bind(nonce, CONTENT)
+    };
+    // Fill the vote lane (4).
+    let tickets: Vec<u64> = (0..4)
+        .map(|n| {
+            q.reserve(&v(n, GWEI, 1_000_000), T0)
+                .unwrap()
+                .ticket
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        q.reserve(&v(9, GWEI, 1_000_000), T0).unwrap_err(),
+        QuotaError::InflightVote { cap: 4 }
+    );
+    let later = T0 + BLOCK_SECS;
+    // Replacing does not need a new slot.
+    assert!(q
+        .replace(tickets[0], &v(0, 2 * GWEI, 2_000_000), later)
+        .is_ok());
+    // Less than +10% on maxFee or on the tip: refused, with the minimums.
+    assert_eq!(
+        q.replace(tickets[1], &v(1, GWEI * 109 / 100, 2_000_000), later)
+            .unwrap_err(),
+        QuotaError::ReplaceBumpTooSmall {
+            need_max_fee: GWEI * 110 / 100,
+            need_tip: 1_100_000
+        }
+    );
+    assert!(matches!(
+        q.replace(tickets[1], &v(1, 2 * GWEI, 1_050_000), later),
+        Err(QuotaError::ReplaceBumpTooSmall { .. })
+    ));
+    // A tip already at the cap cannot rise 10%: the lowered tip fails the bump (no tip room).
+    let at_cap = q.reserve(
+        &Intent::tx(A_VOTE_AGREE, 80_000, GWEI)
+            .fees(cap, 0)
+            .bind(7, CONTENT),
+        T0,
+    );
+    assert!(matches!(at_cap, Err(QuotaError::InflightVote { .. })));
+    q.cancel(tickets[3], T0).unwrap();
+    let t = q
         .reserve(
-            &Intent::tx(A_VOTE_AGREE, DECIDING_VOTE_GAS_FLOOR, max_fee).fees(tip, GWEI),
+            &Intent::tx(A_VOTE_AGREE, 80_000, GWEI)
+                .fees(cap, 0)
+                .bind(7, CONTENT),
             T0,
         )
         .unwrap()
         .ticket
         .unwrap();
-    for step in 1..=8u64 {
-        q.cancel(ticket, T0 + 30 * step).unwrap();
-        max_fee = max_fee * 112 / 100 * 10; // far faster than any cap would allow
-        tip = tip * 112 / 100;
-        let g = q
-            .reserve(
-                &Intent::tx(A_VOTE_AGREE, DECIDING_VOTE_GAS_FLOOR, max_fee).fees(tip, GWEI),
-                T0 + 30 * step,
-            )
-            .unwrap();
-        assert!(g.priority_fee_wei.unwrap() <= cap);
-        assert_eq!(g.priority_fee_wei.unwrap(), tip.min(cap));
-        ticket = g.ticket.unwrap();
-    }
-    assert_eq!(q.inflight(), 1);
+    assert!(matches!(
+        q.replace(
+            t,
+            &Intent::tx(A_VOTE_AGREE, 80_000, 2 * GWEI)
+                .fees(2 * cap, 0)
+                .bind(7, CONTENT),
+            later
+        ),
+        Err(QuotaError::ReplaceBumpTooSmall { .. })
+    ));
+}
+
+#[test]
+fn quota_replace_other_calls_keep_caps() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = defaults();
+    c.spend_upkeep_wei = 2 * 80_000 * GWEI_TENTH; // room for twice one call's reservation
+    let mut q = ledger(&d, c);
+    let f = |max| Intent::tx(A_FINALIZE, 80_000, max).bind(5, CONTENT);
+    let t = q.reserve(&f(GWEI_TENTH / 2), T0).unwrap().ticket.unwrap();
+    let later = T0 + BLOCK_SECS;
+    // Above the fixed maxFee cap: refused, as for a first send.
+    assert!(matches!(
+        q.replace(t, &f(GWEI_TENTH + 1), later),
+        Err(QuotaError::MaxFeeTooHigh { .. })
+    ));
+    // Within the cap and the upkeep spend: accepted, re-priced in place.
+    assert!(q.replace(t, &f(GWEI_TENTH), later).is_ok());
 }
 
 #[test]

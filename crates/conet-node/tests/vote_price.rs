@@ -9,22 +9,45 @@ const GAS: u64 = 6_000_000;
 const DAY: u64 = 86_400;
 
 #[test]
-fn max_fee_is_what_the_wallet_can_prepay() {
+fn max_fee_is_4x_base_within_the_votes_share() {
     let c = PriceCfg::default();
-    // Today's CoNET: base fee 7 wei, tip 1e6 wei; 0.3 CNET free.
+    // Today's CoNET: base fee 7 wei, tip 1e6 wei: 4x base + tip, far inside the share.
     let e = estimate(&c, &[7, 7], 1_000_000, GAS, 3 * CNET / 10).unwrap();
-    assert_eq!(e.price.max_fee_wei as u128, 3 * CNET / 10 / GAS as u128); // 50 gwei
+    assert_eq!(e.price.max_fee_wei, 4 * 7 + 1_000_000);
     assert_eq!(e.price.tip_wei, 1_000_000);
-    assert!(!e.sources_disagree);
-    // A second concurrent vote only gets what the first did not reserve.
-    let left = 3 * CNET / 10 - e.price.max_fee_wei as u128 * GAS as u128;
-    assert!(estimate(&c, &[7], 1_000_000, GAS, left).is_err());
-    let e2 = estimate(&c, &[7], 1_000_000, GAS, CNET).unwrap();
-    assert!(e2.price.max_fee_wei > e.price.max_fee_wei);
-    // Sources that disagree: checked against the higher one, flagged.
+    assert!(!e.sources_disagree && !e.beyond_share);
+    // Sources that disagree: priced on the higher one, flagged.
     let e = estimate(&c, &[GWEI, 3 * GWEI], 1_000_000, GAS, CNET).unwrap();
     assert_eq!(e.base_fee_wei, 3 * GWEI);
+    assert_eq!(e.price.max_fee_wei, 12 * GWEI + 1_000_000);
     assert!(e.sources_disagree);
+}
+
+#[test]
+fn leaves_room_for_the_wallets_other_transactions() {
+    let c = PriceCfg::default();
+    // 0.3 CNET, base fee 1 gwei: a vote reserves 6M x 4 gwei = 0.024 CNET, so markOnline,
+    // reportOffline and further votes still fit (geth checks all pending txs together).
+    let mut free = 3 * CNET / 10;
+    let mut sent = 0;
+    while let Ok(e) = estimate(&c, &[GWEI], 1_000_000, GAS, free) {
+        free -= e.price.max_fee_wei as u128 * GAS as u128;
+        sent += 1;
+        if sent == 10 {
+            break;
+        }
+    }
+    assert!(sent >= 4, "{sent}");
+    // Base fee 10 gwei: the 4x target (40 gwei) is above the share (12.5 gwei); the vote
+    // takes its share, which still covers base + tip, and leaves 3/4 for the others.
+    let e = estimate(&c, &[10 * GWEI], 1_000_000, GAS, 3 * CNET / 10).unwrap();
+    assert_eq!(e.price.max_fee_wei as u128, 3 * CNET / 10 / 4 / GAS as u128);
+    assert!(!e.beyond_share);
+    // Base fee 20 gwei: even base + tip is above the share; the vote takes what it needs to be
+    // minable now (flagged), never more.
+    let e = estimate(&c, &[20 * GWEI], 1_000_000, GAS, 3 * CNET / 10).unwrap();
+    assert_eq!(e.price.max_fee_wei, 20 * GWEI + 1_000_000);
+    assert!(e.beyond_share);
 }
 
 #[test]
@@ -33,11 +56,39 @@ fn high_base_fee_vote_still_goes_out() {
     // 1,000 gwei base fee: 10,000x the old 0.1 gwei cap. Sent, as long as the wallet can pay.
     let e = estimate(&c, &[1_000 * GWEI], 1_000_000, GAS, 10 * CNET).unwrap();
     assert!(e.price.max_fee_wei >= 1_000 * GWEI);
-    // The same price survives a further rise to 1,600 gwei with no replacement.
-    assert_eq!(
-        on_pending(&c, e.price, 0, 30, 1_600 * GWEI, 10 * CNET, GAS, 7 * DAY),
-        Step::Rebroadcast
-    );
+    // A rise past maxFee: replaced at the new base fee (re-capped by the balance).
+    let Step::Replace(next) = on_pending(&c, e.price, 0, 30, 1_600 * GWEI, 10 * CNET, GAS, 7 * DAY)
+    else {
+        panic!("replace expected");
+    };
+    assert!(next.max_fee_wei >= 1_600 * GWEI);
+    assert!(geth_accepts_replacement(e.price, next, 10));
+}
+
+#[test]
+fn a_100x_rise_needs_only_a_few_replacements() {
+    let c = PriceCfg::default();
+    let mut base = GWEI;
+    let mut p = estimate(&c, &[base], 1_000_000, GAS, 100 * CNET)
+        .unwrap()
+        .price;
+    let mut replaced = 0;
+    let mut t = 1_000;
+    // The base fee climbs 12.5% per block until 100x; replace whenever priced out.
+    while base < 100 * GWEI {
+        base = base * 9 / 8;
+        t += 6;
+        match on_pending(&c, p, t - 30, t, base, 100 * CNET, GAS, 7 * DAY) {
+            Step::Replace(n) => {
+                assert!(geth_accepts_replacement(p, n, 10));
+                p = n;
+                replaced += 1;
+            }
+            Step::Rebroadcast => {}
+            other => panic!("{other:?}"),
+        }
+    }
+    assert!(replaced <= 4, "{replaced}");
 }
 
 #[test]
@@ -93,20 +144,21 @@ fn pending_vote_retried_until_case_expiry() {
 fn priced_out_vote_replaced_after_top_up_many_times() {
     let c = PriceCfg::default();
     let gas = GAS as u128;
-    let mut bal = 3 * CNET / 10;
-    let mut p = estimate(&c, &[7], 1_000_000, GAS, bal).unwrap().price;
-    let mut base = p.max_fee_wei; // the base fee climbs to exactly the sent maxFee
-    let mut replaced = 0;
+    let mut base = GWEI;
+    // Free balance just enough for base + tip: the vote goes out at that price.
+    let mut bal = (base as u128 + 1_000_000) * gas;
+    let mut p = estimate(&c, &[base], 1_000_000, GAS, bal).unwrap().price;
     for round in 0..30u64 {
         let now = 100 + round * 60;
-        // Priced out with the same balance: an obstacle (alert, top up), not a refusal.
+        base = p.max_fee_wei; // the base fee climbs to the sent maxFee: priced out
+                              // Same balance: the +10% replacement does not fit -> obstacle (alert, top up).
         let step = on_pending(&c, p, now - 30, now, base, bal, GAS, 7 * DAY);
         assert!(
             matches!(step, Step::Obstacle(Obstacle::Balance { .. })),
-            "{step:?}"
+            "{round}: {step:?}"
         );
-        // Top-up arrives: replace with the same nonce; geth's 10% rule holds; tip <= cap.
-        bal = base as u128 * gas * 3 / 2 + CNET / 10;
+        // Top-up arrives: replaced with the same nonce; geth's rule holds; tip <= cap.
+        bal = base as u128 * gas * 3 / 2;
         let Step::Replace(next) = on_pending(&c, p, now - 30, now, base, bal, GAS, 7 * DAY) else {
             panic!("replace expected in round {round}");
         };
@@ -114,16 +166,14 @@ fn priced_out_vote_replaced_after_top_up_many_times() {
         assert!(next.tip_wei <= c.tip_cap_wei);
         assert!(next.max_fee_wei > base);
         p = next;
-        base = p.max_fee_wei;
-        replaced += 1;
+        bal = p.max_fee_wei as u128 * gas; // spent down to exactly this reservation again
     }
-    assert_eq!(replaced, 30);
 }
 
 #[test]
 fn tip_room_and_cap() {
     let c = PriceCfg::default();
-    // A hint at the cap is lowered so that reserve_bumps (20) replacements fit under the cap.
+    // A hint at the cap is lowered so that reserve_bumps (30) replacements fit under the cap.
     let e = estimate(&c, &[7], c.tip_cap_wei, GAS, CNET).unwrap();
     let mut tip = e.price.tip_wei;
     for _ in 0..c.reserve_bumps {
