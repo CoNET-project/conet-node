@@ -218,3 +218,91 @@ fn failed_renewal_goes_to_recovery_request() {
     assert_eq!(precheck_recovery(after.stake, locked, latest), Ok(()));
     assert_eq!(b["recoveryAfter"], "ok");
 }
+
+/// Two paths (project decision 2026-11-09): the operator's web deposit and the node's own top-up.
+#[test]
+fn web_deposit_first_then_the_node_does_not_top_up() {
+    let cfg = Config::default();
+    let now = END - 3 * DAY;
+    // The web deposit already landed: stake 10 = threshold -> nothing to send.
+    assert_eq!(
+        plan(&synthetic(10 * C, 10 * C, 100 * C, now), None, &cfg),
+        Plan::Covered
+    );
+    // A partial web deposit: only the rest.
+    assert_eq!(
+        plan(&synthetic(8 * C, 10 * C, 100 * C, now), None, &cfg),
+        Plan::Send { value: 2 * C }
+    );
+}
+
+#[test]
+fn concurrent_paths_and_retries_never_over_fund() {
+    let cfg = Config::default();
+    let now = END - 3 * DAY;
+    let v = synthetic(5 * C, 10 * C, 100 * C, now);
+    let rec = InFlight {
+        nonce: 10,
+        value: 5 * C,
+    };
+    // Ours pending; the web deposit of 5 lands first: our pending top-up is replaced by a zero
+    // top-up at the same nonce (consumes the nonce, adds nothing).
+    let web_full = ChainView {
+        stake: 10 * C,
+        ..v.clone()
+    };
+    assert_eq!(
+        plan(&web_full, Some(&rec), &cfg),
+        Plan::Replace {
+            nonce: 10,
+            value: 0
+        }
+    );
+    // The web deposit of 3 lands first: ours is cut to the remaining 2, same nonce.
+    let web_part = ChainView {
+        stake: 8 * C,
+        ..v.clone()
+    };
+    assert_eq!(
+        plan(&web_part, Some(&rec), &cfg),
+        Plan::Replace {
+            nonce: 10,
+            value: 2 * C
+        }
+    );
+    // Retried many times with nothing changed: rebroadcast only.
+    for _ in 0..5 {
+        assert_eq!(plan(&v, Some(&rec), &cfg), Plan::Rebroadcast { nonce: 10 });
+    }
+    // Ours mined first, then the web deposit too: the chain shows 15, the excess is stake of the
+    // node (reported, not lost); the node sends nothing more.
+    let both = ChainView {
+        stake: 15 * C,
+        wallet_nonce: 11,
+        ..v
+    };
+    assert_eq!(plan(&both, Some(&rec), &cfg), Plan::Covered);
+}
+
+#[test]
+fn hot_wallet_short_or_gas_short() {
+    let cfg = Config::default();
+    let now = END - 3 * DAY;
+    // Not even the missing stake.
+    assert!(matches!(
+        plan(&synthetic(5 * C, 10 * C, C, now), None, &cfg),
+        Plan::WalletShort { .. }
+    ));
+    // The stake but not the gas.
+    assert_eq!(
+        plan(
+            &synthetic(5 * C, 10 * C, 5 * C + cfg.gas_reserve - 1, now),
+            None,
+            &cfg
+        ),
+        Plan::WalletShort {
+            missing: 1,
+            need_stake: 5 * C
+        }
+    );
+}

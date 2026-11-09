@@ -74,6 +74,10 @@ pub enum Plan {
     /// Our top-up's nonce is not used yet (pending or dropped): only rebroadcast or fee-bump
     /// THAT transaction (same nonce, same content), never a new one.
     Rebroadcast { nonce: u64 },
+    /// The other path (the operator's web deposit) moved the chain stake while ours was still
+    /// unmined: replace OUR transaction at the same nonce with the remaining gap (0 = a
+    /// zero-value top-up that only consumes the nonce), so the two paths never over-fund.
+    Replace { nonce: u64, value: u128 },
     /// Send `topUp(nodeId)` with exactly this value.
     Send { value: u128 },
     /// Objective obstacle: the wallet lacks `missing` (top-up plus gas reserve).
@@ -96,16 +100,23 @@ pub fn plan(v: &ChainView, inflight: Option<&InFlight>, cfg: &Config) -> Plan {
         return Plan::Ended { renewed: v.in_term };
     }
     let need = v.threshold_at_end.saturating_sub(v.stake);
-    if need == 0 {
-        return Plan::Covered;
-    }
     // Idempotence: a recorded top-up whose nonce is not used yet is the only top-up there can
     // be. Once its nonce is used (mined: ours or a replacement), the chain stake already shows
     // it and `need` is recomputed from the chain, so a restart or a repeated run never adds twice.
     if let Some(f) = inflight {
         if v.wallet_nonce <= f.nonce {
-            return Plan::Rebroadcast { nonce: f.nonce };
+            return if need < f.value {
+                Plan::Replace {
+                    nonce: f.nonce,
+                    value: need,
+                }
+            } else {
+                Plan::Rebroadcast { nonce: f.nonce }
+            };
         }
+    }
+    if need == 0 {
+        return Plan::Covered;
     }
     let left = v.term_end - v.now;
     if left < cfg.critical {
