@@ -293,21 +293,59 @@ pub fn vote_timing(t: &Tally, _agree: bool, now: u64) -> VoteTiming {
     }
 }
 
-/// The threshold is met and the case can be sealed through the unified entry (600 s passed).
-/// Whether sealing stays allowed after 7,200 s for a case that met its threshold in time is up to
-/// the node line; this follows "within the window".
-pub fn seal_ready(t: &Tally, now: u64) -> bool {
-    let met = t.agree >= t.disagree + t.margin || t.disagree >= t.agree + t.margin;
-    met && now >= t.opened_at + MIN_OPEN && voting_open(t, now)
+/// Node-side seal settings. Everything here is a node STRATEGY or a pending project item kept
+/// configurable, not a contract rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SealStrategy {
+    /// Call the unified seal entry for the executor reward. Default off.
+    pub enabled: bool,
+    /// PENDING project item (decision record / whitepaper ch. 11 item 31): may a case whose
+    /// threshold was met inside the window still be sealed after 7,200 s? Default false: stop at
+    /// 7,200 s.
+    pub seal_after_window: bool,
+    /// Strategy choice: do not seal a case this node proposed. Default true.
+    pub skip_own_proposal: bool,
+    /// Strategy choice: after a lost race (someone else sealed first), do not retry. Default true.
+    pub no_retry_after_race_loss: bool,
+    /// Executor reward of an online case (wei); decided 0.005 CNET.
+    pub online_reward: u128,
+    /// PENDING project item 33: report executor reward as a share of the report's pot (bps) and
+    /// how it meets "the successful sealer takes the executor reward". Default 700 (7%), kept
+    /// configurable.
+    pub report_reward_bps: u128,
 }
 
-/// Optional strategy, OFF by default: call the unified seal entry for the executor reward
-/// (online 0.005 CNET, report 7% of its pot). Rewards do not stack per node and case: a node that
-/// already earns `own_reward` in the case (e.g. 0.001 as a winning voter) only gains the
-/// difference. The proposer of an online case never executes it. A losing racer's transaction
-/// reverts and still pays gas, discounted by `race_loss_rate_bps`.
+impl Default for SealStrategy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            seal_after_window: false,
+            skip_own_proposal: true,
+            no_retry_after_race_loss: true,
+            online_reward: EXECUTOR_REWARD,
+            report_reward_bps: 700,
+        }
+    }
+}
+
+/// Threshold met on either side.
+pub fn threshold_met(t: &Tally) -> bool {
+    t.agree >= t.disagree + t.margin || t.disagree >= t.agree + t.margin
+}
+
+/// The case can be sealed through the unified entry: threshold met, 600 s passed, and (unless the
+/// pending `seal_after_window` switch is on) voting has not ended.
+pub fn seal_ready(t: &Tally, now: u64, s: &SealStrategy) -> bool {
+    threshold_met(t)
+        && now >= t.opened_at + MIN_OPEN
+        && (s.seal_after_window || voting_open(t, now))
+}
+
+/// Seal for the executor reward? Rewards do not stack per node and case: a node already earning
+/// `own_reward` in the case only gains the difference. A losing racer's transaction reverts and
+/// still pays gas, discounted by `race_loss_rate_bps`.
 pub fn seal_worth_it(
-    enabled: bool,
+    s: &SealStrategy,
     is_proposer: bool,
     seal_reward: u128,
     own_reward: u128,
@@ -315,12 +353,22 @@ pub fn seal_worth_it(
     gas_price_wei: u128,
     race_loss_rate_bps: u128,
 ) -> bool {
-    if !enabled || is_proposer {
+    if !s.enabled || (is_proposer && s.skip_own_proposal) {
         return false;
     }
     let extra = seal_reward.saturating_sub(own_reward);
     let expected = extra * (10_000 - race_loss_rate_bps.min(10_000)) / 10_000;
     expected > gas.saturating_mul(gas_price_wei)
+}
+
+/// Report executor reward under the configured (pending) share.
+pub fn report_seal_reward(s: &SealStrategy, pot: u128) -> u128 {
+    pot * s.report_reward_bps / 10_000
+}
+
+/// After a seal attempt reverted as a lost race: retry only if the strategy says so.
+pub fn retry_after_race_loss(s: &SealStrategy, revert_name: &str) -> bool {
+    executor_race_lost(revert_name) && !s.no_retry_after_race_loss
 }
 
 /// Deterministic per-node stagger in [0, spread) seconds for one case, so nodes running the seal

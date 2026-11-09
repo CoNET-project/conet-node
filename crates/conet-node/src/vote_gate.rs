@@ -438,8 +438,12 @@ pub fn report_vote_timing(r: &ReportView, now: u64) -> crate::online_gate::VoteT
     }
 }
 
-/// The report's threshold is met and it can be sealed through the unified entry.
-pub fn report_seal_ready(r: &ReportView, now: u64) -> bool {
+/// The report's threshold is met and it can be sealed through the unified entry (after the
+/// observation time; after `expiresAt` only if the pending `seal_after_window` switch is on).
+pub fn report_seal_ready(r: &ReportView, now: u64, s: &crate::online_gate::SealStrategy) -> bool {
     let met = r.agree >= r.disagree + r.margin as u32 || r.disagree >= r.agree + r.margin as u32;
-    r.state == REPORT_OPEN && met && now >= r.decidable_at() && now < r.expires_at
+    r.state == REPORT_OPEN
+        && met
+        && now >= r.decidable_at()
+        && (s.seal_after_window || now < r.expires_at)
 }

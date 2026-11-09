@@ -367,9 +367,15 @@ fn report_window_600_to_7200() {
     // Votes go out at once while open (no holding); none after the end; sealable from 600 s.
     assert_eq!(report_vote_timing(&r, t0 + 100), VoteTiming::Now);
     assert_eq!(report_vote_timing(&r, t0 + 7_200), VoteTiming::Closed);
-    assert!(!report_seal_ready(&r, t0 + 599));
-    assert!(report_seal_ready(&r, t0 + 600));
-    assert!(!report_seal_ready(&r, t0 + 7_200));
+    let st = conet_node::online_gate::SealStrategy::default();
+    assert!(!report_seal_ready(&r, t0 + 599, &st));
+    assert!(report_seal_ready(&r, t0 + 600, &st));
+    assert!(!report_seal_ready(&r, t0 + 7_200, &st));
+    let after = conet_node::online_gate::SealStrategy {
+        seal_after_window: true,
+        ..st
+    };
+    assert!(report_seal_ready(&r, t0 + 7_200, &after));
     // Disagree side the same.
     let d = ReportView {
         agree: 1,
@@ -384,7 +390,7 @@ fn report_window_600_to_7200() {
         ..r.clone()
     };
     assert_eq!(report_vote_timing(&few, t0 + 60), VoteTiming::Now);
-    assert!(!report_seal_ready(&few, t0 + 600));
+    assert!(!report_seal_ready(&few, t0 + 600, &st));
     assert_eq!(can_vote(&voter(1), &r, 0, t0 + 7_200), Err(Skip::Expired));
     // Void at 7,200 s: the contract frees the lock; the gate sees capacity again from voteLocked.
     let held = VoterView {

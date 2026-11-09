@@ -294,47 +294,87 @@ fn vote_at_once_and_optional_seal_strategy() {
     assert_eq!(vote_timing(&yes19, true, t0 + 120), VoteTiming::Now);
     assert_eq!(vote_timing(&yes19, true, t0 + 7_199), VoteTiming::Now);
     assert_eq!(vote_timing(&yes19, true, t0 + 7_200), VoteTiming::Closed);
-    // Threshold met at minute 2: sealable from 600 s, not before, not after the end.
+    // Threshold met at minute 2: sealable from 600 s; after 7,200 s only with the pending switch.
+    let st = SealStrategy::default();
     let yes20 = Tally { agree: 20, ..yes19 };
-    assert!(!seal_ready(&yes20, t0 + 599));
-    assert!(seal_ready(&yes20, t0 + 600));
-    assert!(!seal_ready(&yes20, t0 + 7_200));
-    assert!(!seal_ready(&yes19, t0 + 1_000)); // threshold not met
+    assert!(!seal_ready(&yes20, t0 + 599, &st));
+    assert!(seal_ready(&yes20, t0 + 600, &st));
+    assert!(!seal_ready(&yes20, t0 + 7_200, &st));
+    let after = SealStrategy {
+        seal_after_window: true,
+        ..st
+    };
+    assert!(seal_ready(&yes20, t0 + 7_200, &after));
+    assert!(!seal_ready(&yes19, t0 + 1_000, &st)); // threshold not met
     let no20 = Tally {
         opened_at: t0,
         agree: 1,
         disagree: 21,
         margin: 20,
     };
-    assert!(seal_ready(&no20, t0 + 600));
-    // Seal strategy (off by default): 0.005 online reward, no stacking, proposer excluded.
+    assert!(seal_ready(&no20, t0 + 600, &st));
+    // Seal strategy: default off; proposer skip and no-retry are strategy choices (switchable).
     let gwei = 1_000_000_000u128;
-    assert!(!seal_worth_it(false, false, EXECUTOR_REWARD, 0, 0, 0, 0));
-    assert!(!seal_worth_it(true, true, EXECUTOR_REWARD, 0, 0, 0, 0));
-    // Not a voter: 0.005 x 50% = 0.0025 vs 300k gas x 1 gwei = 0.0003: worth it.
+    assert!(!seal_worth_it(&st, false, st.online_reward, 0, 0, 0, 0));
+    let on = SealStrategy {
+        enabled: true,
+        ..st
+    };
+    assert!(!seal_worth_it(&on, true, on.online_reward, 0, 0, 0, 0));
+    let on_any = SealStrategy {
+        skip_own_proposal: false,
+        ..on
+    };
     assert!(seal_worth_it(
+        &on_any,
         true,
-        false,
-        EXECUTOR_REWARD,
+        on.online_reward,
         0,
         300_000,
         gwei,
         5_000
     ));
-    // Already a winning voter (0.001): extra 0.004 x 50% = 0.002 vs 300k x 10 gwei = 0.003: not.
-    assert!(!seal_worth_it(
-        true,
+    assert!(seal_worth_it(
+        &on,
         false,
-        EXECUTOR_REWARD,
+        on.online_reward,
+        0,
+        300_000,
+        gwei,
+        5_000
+    ));
+    assert!(!seal_worth_it(
+        &on,
+        false,
+        on.online_reward,
         VOTE_STAKE,
         300_000,
         10 * gwei,
         5_000
     ));
-    // Stagger for seal callers; lost races are expected.
+    // Report reward share is configurable (pending item 33).
+    assert_eq!(report_seal_reward(&st, 100 * C), 7 * C);
+    assert_eq!(
+        report_seal_reward(
+            &SealStrategy {
+                report_reward_bps: 500,
+                ..st
+            },
+            100 * C
+        ),
+        5 * C
+    );
+    // Lost races: no retry by default, switchable.
+    assert!(!retry_after_race_loss(&st, "AdmissionState"));
+    assert!(retry_after_race_loss(
+        &SealStrategy {
+            no_retry_after_race_loss: false,
+            ..st
+        },
+        "AdmissionState"
+    ));
     let case = [9u8; 32];
     assert!(stagger(&case, 101, 60) < 60);
-    assert!(executor_race_lost("AdmissionState"));
 }
 
 /// First admission rejected: the same applicant waits 12 hours from the seal; changing the
