@@ -573,3 +573,63 @@ fn relay_only_browser_policy_both_ways() {
         }
     }
 }
+
+#[test]
+fn stake_top_up_restores_only_the_right_to_apply() {
+    use conet_node::recovery::OfflineReason;
+    let t = Threshold {
+        min_approve: 2,
+        veto_on_evidence: true,
+        relay_only_allowed: true,
+    };
+    let direct = EndpointClass::Direct {
+        ip: "203.0.113.9".into(),
+        port: 80,
+    };
+    let app = [0x33; 32];
+    // Stopped for lack of stake: may not even apply until topped up.
+    let mut n = Node::offline_because(OfflineReason::StakeShortfall { topped_up: false });
+    assert_eq!(n.open(app, [1; 32]), Err(Refused::StakeShort));
+    // A DAO threshold cut changes nothing: still offline, still may not apply.
+    n.threshold_lowered();
+    assert_eq!(n.state, State::Offline);
+    assert_eq!(n.open(app, [1; 32]), Err(Refused::StakeShort));
+    // Topped up: the node may apply, but it is still offline, not routable, cannot vote, and
+    // cannot mark itself online.
+    n.stake_topped_up();
+    assert_eq!(n.state, State::Offline);
+    assert_eq!(n.routable(), None);
+    assert!(!n.may_vote());
+    assert_eq!(n.mark_online_direct(), Err(Refused::RecoveryVoteRequired));
+    // Only a passed recovery vote brings it back.
+    let v = n.open(app, [1; 32]).unwrap();
+    n.vote(app, v, 1, Verdict::Approve(direct.clone())).unwrap();
+    assert_eq!(
+        n.resolve(t).unwrap(),
+        Outcome::StayedOffline,
+        "one approval is not enough"
+    );
+    let v = n.open(app, [1; 32]).unwrap();
+    n.vote(app, v, 1, Verdict::Approve(direct.clone())).unwrap();
+    n.vote(app, v, 2, Verdict::Approve(direct)).unwrap();
+    assert_eq!(n.resolve(t).unwrap(), Outcome::Online);
+    assert_eq!(n.reason(), None);
+    // Stopped again for stake: the right to apply is gone again until the next top-up.
+    n.go_offline_because(OfflineReason::StakeShortfall { topped_up: false });
+    assert_eq!(n.open(app, [2; 32]), Err(Refused::StakeShort));
+}
+
+#[test]
+fn other_offline_reasons_may_apply_right_away() {
+    use conet_node::recovery::OfflineReason;
+    for r in [
+        OfflineReason::Reported,
+        OfflineReason::SelfDeclared,
+        OfflineReason::DeclarationExpired,
+        OfflineReason::Other,
+    ] {
+        let mut n = Node::offline_because(r);
+        assert!(n.open([0x44; 32], [1; 32]).is_ok(), "{r:?}");
+        assert_eq!(n.state, State::Offline, "applying does not bring it online");
+    }
+}
