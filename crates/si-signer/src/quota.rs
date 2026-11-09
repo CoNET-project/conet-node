@@ -21,7 +21,11 @@
 //!   reimbursements / total of those two; values pending, H8-13): an in-flight transaction
 //!   reserves gas ceiling x maxFee, a receipt replaces that with the real cost;
 //! - in-flight lanes (other / vote / report): concurrency bounds only, a settled or cancelled
-//!   transaction frees its slot at once, nothing resets by day; maxFee cap (all transactions);
+//!   transaction frees its slot at once, nothing resets by day;
+//! - maxFee: a fixed cap for every transaction except `voteReport`. Votes follow `vote_fee`
+//!   (user 2026-11-08, H812D: votes are not held back by a fixed price cap): mode `uncapped` or
+//!   `basefee_multiple`, plus a priority-fee cap and EIP-1559 (type 2) only in both modes;
+//!   cost and base-fee jumps only warn. Mode and values pending user confirmation;
 //! - a warning once per bucket per day at the warn threshold.
 //!
 //! State is written to disk (temp file, fsync, rename) before an operation is allowed, so a
@@ -76,6 +80,10 @@ struct Action {
     class: Option<SpendClass>,
 }
 
+fn class_of(name: &str) -> Option<SpendClass> {
+    action(name).and_then(|a| a.class)
+}
+
 fn action(name: &str) -> Option<Action> {
     use SpendClass::*;
     let a = |buckets, class| Some(Action { buckets, class });
@@ -117,6 +125,48 @@ pub struct QuotaConfig {
     pub max_inflight_report: u32,
     /// In-flight lane for `voteReport` (suggested, pending). A concurrency bound only.
     pub max_inflight_vote: u32,
+    /// Price rule for `voteReport` instead of `max_fee_wei` (H812D; pending user confirmation).
+    pub vote_fee: VoteFee,
+}
+
+/// How a vote's price is checked (H812D). Votes are never held back by `max_fee_wei`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoteFee {
+    pub mode: VoteFeeMode,
+    /// maxPriorityFeePerGas cap (both modes). Pending user confirmation whether this counts as
+    /// a "price cap"; it does not keep a vote out of a block, it stops one vote from handing
+    /// the balance to a block producer.
+    pub priority_cap_wei: u64,
+    /// Warn (never refuse) when gas limit x maxFee of one vote exceeds this.
+    pub alert_cost_wei: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VoteFeeMode {
+    /// No maxFee cap for votes. What a vote really costs is gas used x min(maxFee, baseFee +
+    /// tip); with the tip capped and type 2 only, that is the chain's real price.
+    Uncapped,
+    /// maxFee <= multiple x baseFee (as reported by conet-node) + tip, and <= `absolute_cap_wei`
+    /// if set. A vote priced out by a rising base fee is re-signed with the new base fee; the
+    /// ledger does not limit how often.
+    BasefeeMultiple {
+        multiple_percent: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        absolute_cap_wei: Option<u64>,
+    },
+}
+
+impl Default for VoteFee {
+    /// Recommended (Rust line §34): uncapped, tip capped, type 2 only. PENDING USER CONFIRMATION.
+    fn default() -> Self {
+        Self {
+            mode: VoteFeeMode::Uncapped,
+            priority_cap_wei: 100_000_000, // 0.1 gwei, ~100x today's tip (pending)
+            alert_cost_wei: 10_000_000_000_000_000, // 0.01 CNET (pending)
+        }
+    }
 }
 
 impl Default for QuotaConfig {
@@ -159,6 +209,7 @@ impl Default for QuotaConfig {
             warn_percent: 80,
             max_inflight_report: 4,
             max_inflight_vote: 4,
+            vote_fee: VoteFee::default(),
         }
     }
 }
@@ -186,6 +237,17 @@ impl QuotaConfig {
         if self.max_fee_wei == 0 || self.max_fee_wei > MAX_FEE_HARD_CAP_WEI {
             return Err("quota config: max_fee_wei must be 1..=1 gwei".into());
         }
+        if let VoteFeeMode::BasefeeMultiple {
+            multiple_percent,
+            absolute_cap_wei,
+        } = &self.vote_fee.mode
+        {
+            if *multiple_percent < 100 || absolute_cap_wei == &Some(0) {
+                return Err(
+                    "quota config: vote_fee multiple_percent >= 100, absolute cap > 0".into(),
+                );
+            }
+        }
         if self.max_inflight_report == 0 || self.max_inflight_vote == 0 {
             return Err("quota config: max_inflight_report, max_inflight_vote >= 1".into());
         }
@@ -202,12 +264,39 @@ pub enum QuotaError {
     UnknownSelector,
     NotConfigured(String),
     GasCeilingUnset(String),
-    GasAboveCeiling { action: String, ceiling: u64 },
-    MaxFeeTooHigh { cap: u64 },
-    Exceeded { bucket: String, used: u64, cap: u64 },
-    Inflight { cap: u32 },
-    InflightReport { cap: u32 },
-    InflightVote { cap: u32 },
+    GasAboveCeiling {
+        action: String,
+        ceiling: u64,
+    },
+    MaxFeeTooHigh {
+        cap: u64,
+    },
+    /// Votes: only EIP-1559 (type 2) transactions.
+    VoteNotType2,
+    /// Votes: maxPriorityFee above the cap (or above maxFee).
+    VotePriorityTooHigh {
+        cap: u64,
+    },
+    /// Votes, `basefee_multiple`: no base fee given.
+    VoteBaseFeeMissing,
+    /// Votes, `basefee_multiple`: maxFee above the dynamic or absolute cap; re-sign later.
+    VoteFeeAboveCap {
+        cap: u64,
+    },
+    Exceeded {
+        bucket: String,
+        used: u64,
+        cap: u64,
+    },
+    Inflight {
+        cap: u32,
+    },
+    InflightReport {
+        cap: u32,
+    },
+    InflightVote {
+        cap: u32,
+    },
     UnknownTicket,
     StateBroken(String),
     Write,
@@ -224,6 +313,10 @@ impl std::fmt::Display for QuotaError {
                 write!(f, "gas_above_ceiling:{action} {ceiling}")
             }
             MaxFeeTooHigh { cap } => write!(f, "max_fee_too_high:{cap}"),
+            VoteNotType2 => write!(f, "vote_not_type2"),
+            VotePriorityTooHigh { cap } => write!(f, "vote_priority_too_high:{cap}"),
+            VoteBaseFeeMissing => write!(f, "vote_base_fee_missing"),
+            VoteFeeAboveCap { cap } => write!(f, "vote_fee_above_cap:{cap}"),
             Exceeded { bucket, used, cap } => write!(f, "quota_exceeded:{bucket} {used}/{cap}"),
             Inflight { cap } => write!(f, "quota_exceeded:inflight {cap}/{cap}"),
             InflightReport { cap } => write!(f, "inflight_report {cap}/{cap}"),
@@ -243,6 +336,13 @@ pub struct Intent<'a> {
     pub action: &'a str,
     pub gas_limit: u64,
     pub max_fee_wei: u64,
+    /// maxPriorityFeePerGas (checked for votes).
+    pub priority_fee_wei: u64,
+    /// Current base fee as reported by conet-node (0 = not given). The signer cannot verify
+    /// it; it only feeds `basefee_multiple` and a warning.
+    pub base_fee_wei: u64,
+    /// EIP-1559 (type 2) transaction.
+    pub type2: bool,
 }
 
 impl<'a> Intent<'a> {
@@ -251,6 +351,9 @@ impl<'a> Intent<'a> {
             action,
             gas_limit: 0,
             max_fee_wei: 0,
+            priority_fee_wei: 0,
+            base_fee_wei: 0,
+            type2: true,
         }
     }
     pub fn tx(action: &'a str, gas_limit: u64, max_fee_wei: u64) -> Self {
@@ -258,7 +361,19 @@ impl<'a> Intent<'a> {
             action,
             gas_limit,
             max_fee_wei,
+            priority_fee_wei: 0,
+            base_fee_wei: 0,
+            type2: true,
         }
+    }
+    pub fn fees(mut self, priority_fee_wei: u64, base_fee_wei: u64) -> Self {
+        self.priority_fee_wei = priority_fee_wei;
+        self.base_fee_wei = base_fee_wei;
+        self
+    }
+    pub fn legacy(mut self) -> Self {
+        self.type2 = false;
+        self
     }
 }
 
@@ -301,11 +416,17 @@ pub struct Quota {
     path: PathBuf,
     state: State,
     broken: Option<String>,
+    /// Last base fee a vote reported, for the jump warning (memory only).
+    last_base_fee: Option<(u64, u64)>,
 }
 
 const W_SPEND_UPKEEP: &str = "spend.upkeep";
 const W_SPEND_ANCHOR: &str = "spend.anchor";
 const W_SPEND_TOTAL: &str = "spend.total";
+/// Warning: one vote's gas limit x maxFee above `vote_fee.alert_cost_wei`.
+pub const W_VOTE_COST: &str = "vote.cost";
+/// Warning: the reported base fee rose faster than EIP-1559 allows since the last vote.
+pub const W_VOTE_BASE_FEE_JUMP: &str = "vote.base_fee_jump";
 
 impl Quota {
     /// Open the ledger. A missing file starts a fresh ledger; a file that does not parse or has
@@ -333,6 +454,7 @@ impl Quota {
             path,
             state,
             broken,
+            last_base_fee: None,
         })
     }
 
@@ -400,6 +522,7 @@ impl Quota {
         // Transactions: gas ceiling, fee cap, in flight, spend.
         let mut ticket = None;
         let mut spend_classes = Vec::new();
+        let mut fee_warnings = Vec::new();
         if let Some(class) = act.class {
             let Some(ceiling) = self.cfg.gas_ceiling.get(intent.action).copied() else {
                 return Err(QuotaError::GasCeilingUnset(intent.action.to_string()));
@@ -410,7 +533,9 @@ impl Quota {
                     ceiling,
                 });
             }
-            if intent.max_fee_wei == 0 || intent.max_fee_wei > self.cfg.max_fee_wei {
+            if class == SpendClass::Ballot {
+                fee_warnings = self.check_vote_fee(intent, now)?;
+            } else if intent.max_fee_wei == 0 || intent.max_fee_wei > self.cfg.max_fee_wei {
                 return Err(QuotaError::MaxFeeTooHigh {
                     cap: self.cfg.max_fee_wei,
                 });
@@ -451,15 +576,20 @@ impl Quota {
             if n >= cap as u64 {
                 return Err(err);
             }
-            let cost =
-                intent
-                    .gas_limit
-                    .checked_mul(intent.max_fee_wei)
-                    .ok_or(QuotaError::Exceeded {
+            // Uncapped classes (votes, reports) only record, so an extreme price saturates
+            // instead of refusing; capped classes refuse an overflow.
+            let cost = match class {
+                SpendClass::Ballot | SpendClass::Report => {
+                    intent.gas_limit.saturating_mul(intent.max_fee_wei)
+                }
+                _ => intent.gas_limit.checked_mul(intent.max_fee_wei).ok_or(
+                    QuotaError::Exceeded {
                         bucket: W_SPEND_TOTAL.into(),
                         used: u64::MAX,
                         cap: self.cfg.spend_total_wei,
-                    })?;
+                    },
+                )?,
+            };
             let (vote, anchor) = committed(&next);
             let (cv, ca) = match class {
                 SpendClass::Upkeep => (cost, 0),
@@ -521,7 +651,61 @@ impl Quota {
         }
 
         self.commit(next)?;
+        warnings.extend(fee_warnings);
+        if intent.base_fee_wei > 0 && class_of(intent.action) == Some(SpendClass::Ballot) {
+            self.last_base_fee = Some((intent.base_fee_wei, now));
+        }
         Ok(Grant { ticket, warnings })
+    }
+
+    /// Price checks for a vote (H812D). Refuses only what the signer can check offline: type 2,
+    /// the tip cap and, in `basefee_multiple`, the cap computed from the reported base fee.
+    /// Cost and base-fee jumps only warn.
+    fn check_vote_fee(&self, i: &Intent, now: u64) -> Result<Vec<String>, QuotaError> {
+        let vf = &self.cfg.vote_fee;
+        if !i.type2 {
+            return Err(QuotaError::VoteNotType2);
+        }
+        if i.max_fee_wei == 0
+            || i.priority_fee_wei > vf.priority_cap_wei
+            || i.priority_fee_wei > i.max_fee_wei
+        {
+            return Err(QuotaError::VotePriorityTooHigh {
+                cap: vf.priority_cap_wei,
+            });
+        }
+        if let VoteFeeMode::BasefeeMultiple {
+            multiple_percent,
+            absolute_cap_wei,
+        } = &vf.mode
+        {
+            if i.base_fee_wei == 0 {
+                return Err(QuotaError::VoteBaseFeeMissing);
+            }
+            let dynamic = (i.base_fee_wei as u128 * *multiple_percent as u128 / 100)
+                .saturating_add(i.priority_fee_wei as u128)
+                .min(u64::MAX as u128) as u64;
+            let cap = absolute_cap_wei.map_or(dynamic, |a| a.min(dynamic));
+            if i.max_fee_wei > cap {
+                return Err(QuotaError::VoteFeeAboveCap { cap });
+            }
+        }
+        let mut w = Vec::new();
+        if (i.gas_limit as u128) * (i.max_fee_wei as u128) > vf.alert_cost_wei as u128 {
+            w.push(W_VOTE_COST.to_string());
+        }
+        if let Some((last, at)) = self.last_base_fee {
+            // EIP-1559: at most +12.5% per block; 2-second blocks. Warn only: the base fee comes
+            // from the same conet-node, so this cannot be a reason to refuse a vote.
+            if i.base_fee_wei > 0 && last > 0 {
+                let blocks = (now.saturating_sub(at) / 2).clamp(1, 400) as i32;
+                let allowed = last as f64 * 1.125f64.powi(blocks);
+                if i.base_fee_wei as f64 > allowed {
+                    w.push(W_VOTE_BASE_FEE_JUMP.to_string());
+                }
+            }
+        }
+        Ok(w)
     }
 
     /// A receipt arrived: replace the reservation with the real cost (gas used x price paid).

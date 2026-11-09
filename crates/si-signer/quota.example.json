@@ -1,5 +1,5 @@
 {
-  "_note": "conet-signer --quota-config example. Values are N6 proposals (H8-2, H8-7) PENDING USER APPROVAL unless noted. voteReport (agree, disagree, deciding vote) has no daily count and no spend cap (operator and user, 2026-11-08); none can be configured. reportOffline has no daily count (H8-12); none can be configured. max_inflight_vote and max_inflight_report are concurrency lanes only (suggested, pending). spend_upkeep_wei covers markOnline and finalizeReport only (value pending, H8-13). reportOffline gas ceiling 384731 = local measurement x 1.5 (re-measure on a CoNET fork before deployment); voteReport/finalizeReport 6000000 is the floor; markOnline, setOnline and extendOnline gas ceilings wait for measured gas x 1.5.",
+  "_note": "conet-signer --quota-config example. Values are N6 proposals (H8-2, H8-7) PENDING USER APPROVAL unless noted. voteReport (agree, disagree, deciding vote) has no daily count and no spend cap (operator and user, 2026-11-08); none can be configured. reportOffline has no daily count (H8-12); none can be configured. max_inflight_vote and max_inflight_report are concurrency lanes only (suggested, pending). spend_upkeep_wei covers markOnline and finalizeReport only (value pending, H8-13). reportOffline gas ceiling 384731 = local measurement x 1.5 (re-measure on a CoNET fork before deployment); voteReport/finalizeReport 6000000 is the floor; markOnline, setOnline and extendOnline gas ceilings wait for measured gas x 1.5. vote_fee (H812D, pending user confirmation): votes ignore max_fee_wei; mode uncapped (recommended) or {\"kind\":\"basefee_multiple\",\"multiple_percent\":300,\"absolute_cap_wei\":...}; type 2 only and priority_cap_wei apply in both modes; alert_cost_wei only warns.",
   "daily": {
     "markOnline": 20,
     "finalizeReport": 50,
@@ -19,5 +19,12 @@
   "max_inflight": 4,
   "max_inflight_vote": 4,
   "max_inflight_report": 4,
-  "warn_percent": 80
+  "warn_percent": 80,
+  "vote_fee": {
+    "mode": {
+      "kind": "uncapped"
+    },
+    "priority_cap_wei": 100000000,
+    "alert_cost_wei": 10000000000000000
+  }
 }

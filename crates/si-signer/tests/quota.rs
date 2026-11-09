@@ -130,7 +130,7 @@ fn quota_vote_outside_spend_caps() {
         q.settle(g.ticket.unwrap(), 3_857_848, gwei, T0).unwrap();
     }
     assert_eq!(q.spent(SpendClass::Ballot, T0), 60 * 3_857_848 * gwei);
-    // A per-transaction bound still applies: above the gas ceiling or the maxFee cap.
+    // The gas ceiling still applies per transaction; the price follows vote_fee (H812D).
     assert!(matches!(
         q.reserve(
             &Intent::tx(A_VOTE_AGREE, DECIDING_VOTE_GAS_FLOOR + 1, gwei),
@@ -138,10 +138,9 @@ fn quota_vote_outside_spend_caps() {
         ),
         Err(QuotaError::GasAboveCeiling { .. })
     ));
-    assert!(matches!(
-        q.reserve(&Intent::tx(A_VOTE_AGREE, 80_000, gwei + 1), T0),
-        Err(QuotaError::MaxFeeTooHigh { .. })
-    ));
+    assert!(q
+        .reserve(&Intent::tx(A_VOTE_AGREE, 80_000, gwei + 1), T0)
+        .is_ok());
 }
 
 #[test]
@@ -260,7 +259,8 @@ fn quota_report_offline_no_daily_limit() {
     );
     let mut c = defaults();
     c.gas_ceiling.remove(A_REPORT);
-    let mut q = ledger(&tempfile::tempdir().unwrap(), c);
+    let d3 = tempfile::tempdir().unwrap();
+    let mut q = ledger(&d3, c);
     assert_eq!(
         q.reserve(&report(), T0).unwrap_err(),
         QuotaError::GasCeilingUnset(A_REPORT.into())
@@ -302,15 +302,163 @@ fn quota_vote_gas_ceiling_floor_6m() {
             QuotaError::GasCeilingUnset(a.into())
         );
     }
-    // maxFee above the configured cap is refused; a cap above 1 gwei does not start.
+    // maxFee above the configured cap is refused for non-vote calls; a cap above 1 gwei does
+    // not start. (Votes follow vote_fee, see quota_vote_fee_* tests.)
     assert_eq!(
-        q.reserve(&Intent::tx(A_VOTE_AGREE, 80_000, GWEI_TENTH + 1), T0)
+        q.reserve(&Intent::tx(A_FINALIZE, 80_000, GWEI_TENTH + 1), T0)
             .unwrap_err(),
         QuotaError::MaxFeeTooHigh { cap: GWEI_TENTH }
     );
     let mut c = defaults();
     c.max_fee_wei = MAX_FEE_HARD_CAP_WEI + 1;
     assert!(Quota::open(c, d.path().join("y.json")).is_err());
+}
+
+const GWEI: u64 = 1_000_000_000;
+
+#[test]
+fn quota_vote_fee_uncapped_above_old_cap() {
+    let d = tempfile::tempdir().unwrap();
+    let mut q = ledger(&d, defaults()); // vote_fee: uncapped (recommended, pending)
+                                        // 1,000 gwei: 10,000x the old 0.1 gwei cap and 1,000x the 1 gwei hard cap. Signed.
+    let v = Intent::tx(A_VOTE_AGREE, DECIDING_VOTE_GAS_FLOOR, 1_000 * GWEI).fees(GWEI / 100, 0);
+    let g = q.reserve(&v, T0).unwrap();
+    // 6M x 1,000 gwei = 6 CNET > 0.01 CNET: a warning, not a refusal.
+    assert_eq!(g.warnings, vec![W_VOTE_COST.to_string()]);
+    q.cancel(g.ticket.unwrap(), T0).unwrap();
+    // Even a price that overflows the cost arithmetic is signed (recorded, saturated).
+    let g = q
+        .reserve(
+            &Intent::tx(A_VOTE_DISAGREE, DECIDING_VOTE_GAS_FLOOR, u64::MAX),
+            T0,
+        )
+        .unwrap();
+    q.cancel(g.ticket.unwrap(), T0).unwrap();
+    // What stays checked offline: type 2 only, and the tip cap.
+    assert_eq!(
+        q.reserve(&v.clone().legacy(), T0).unwrap_err(),
+        QuotaError::VoteNotType2
+    );
+    let cap = defaults().vote_fee.priority_cap_wei;
+    assert_eq!(
+        q.reserve(&v.clone().fees(cap + 1, 0), T0).unwrap_err(),
+        QuotaError::VotePriorityTooHigh { cap }
+    );
+    let tip_over_max = Intent::tx(A_VOTE_AGREE, 80_000, 10).fees(11, 0);
+    assert!(matches!(
+        q.reserve(&tip_over_max, T0),
+        Err(QuotaError::VotePriorityTooHigh { .. })
+    ));
+    assert!(q.reserve(&v.clone().fees(cap, 0), T0).is_ok());
+}
+
+#[test]
+fn quota_vote_fee_basefee_multiple() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = defaults();
+    c.vote_fee.mode = VoteFeeMode::BasefeeMultiple {
+        multiple_percent: 300,
+        absolute_cap_wei: None,
+    };
+    c.max_inflight_vote = 100;
+    let mut q = ledger(&d, c.clone());
+    let tip = GWEI / 100;
+    // Base fee 10 gwei (100x the old cap): maxFee up to 3 x 10 gwei + tip is signed.
+    let at = |max, base| Intent::tx(A_VOTE_AGREE, DECIDING_VOTE_GAS_FLOOR, max).fees(tip, base);
+    let g = q.reserve(&at(30 * GWEI + tip, 10 * GWEI), T0).unwrap();
+    assert_eq!(
+        q.reserve(&at(30 * GWEI + tip + 1, 10 * GWEI), T0)
+            .unwrap_err(),
+        QuotaError::VoteFeeAboveCap {
+            cap: 30 * GWEI + tip
+        }
+    );
+    assert_eq!(
+        q.reserve(&at(GWEI, 0), T0).unwrap_err(),
+        QuotaError::VoteBaseFeeMissing
+    );
+    // The base fee keeps rising: the stuck vote is cancelled and re-signed with the new base
+    // fee, as often as needed (no count on re-signing).
+    let mut ticket = g.ticket.unwrap();
+    let mut base = 10 * GWEI;
+    for step in 1..=20u64 {
+        q.cancel(ticket, T0 + step).unwrap();
+        base = base * 9 / 8;
+        ticket = q
+            .reserve(&at(3 * base + tip, base), T0 + step)
+            .unwrap()
+            .ticket
+            .unwrap();
+    }
+    q.settle(ticket, 3_857_848, base + tip, T0 + 21).unwrap();
+    // With an absolute cap, the lower of the two applies.
+    c.vote_fee.mode = VoteFeeMode::BasefeeMultiple {
+        multiple_percent: 300,
+        absolute_cap_wei: Some(50 * GWEI),
+    };
+    let d2 = tempfile::tempdir().unwrap();
+    let mut q = ledger(&d2, c.clone());
+    q.reserve(&at(45 * GWEI, 20 * GWEI), T0).unwrap();
+    assert_eq!(
+        q.reserve(&at(55 * GWEI, 20 * GWEI), T0).unwrap_err(),
+        QuotaError::VoteFeeAboveCap { cap: 50 * GWEI }
+    );
+    // Type 2 and the tip cap apply in this mode too.
+    assert_eq!(
+        q.reserve(&at(GWEI, 20 * GWEI).legacy(), T0).unwrap_err(),
+        QuotaError::VoteNotType2
+    );
+    // A multiple below 1x or a zero absolute cap does not start.
+    for mode in [
+        VoteFeeMode::BasefeeMultiple {
+            multiple_percent: 99,
+            absolute_cap_wei: None,
+        },
+        VoteFeeMode::BasefeeMultiple {
+            multiple_percent: 200,
+            absolute_cap_wei: Some(0),
+        },
+    ] {
+        c.vote_fee.mode = mode;
+        assert!(Quota::open(c.clone(), d.path().join("x.json")).is_err());
+    }
+}
+
+#[test]
+fn quota_vote_base_fee_jump_warns_only() {
+    let d = tempfile::tempdir().unwrap();
+    let mut q = ledger(&d, defaults());
+    let at = |base| Intent::tx(A_VOTE_AGREE, 80_000, 1_000 * GWEI).fees(0, base);
+    let g = q.reserve(&at(GWEI), T0).unwrap();
+    assert!(!g.warnings.iter().any(|w| w == W_VOTE_BASE_FEE_JUMP));
+    q.cancel(g.ticket.unwrap(), T0).unwrap();
+    // 2 seconds later (one block, at most +12.5%): 100x is impossible -> warning, still signed.
+    let g = q.reserve(&at(100 * GWEI), T0 + 2).unwrap();
+    assert!(g.warnings.iter().any(|w| w == W_VOTE_BASE_FEE_JUMP));
+    q.cancel(g.ticket.unwrap(), T0 + 2).unwrap();
+    // A plausible rise (12% over one block) does not warn.
+    let g = q.reserve(&at(112 * GWEI), T0 + 4).unwrap();
+    assert!(!g.warnings.iter().any(|w| w == W_VOTE_BASE_FEE_JUMP));
+}
+
+#[test]
+fn quota_other_ops_keep_fixed_max_fee() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = with_report_gas();
+    c.gas_ceiling.insert(A_MARK_ONLINE.into(), 100_000);
+    let cap = c.max_fee_wei;
+    let mut q = ledger(&d, c);
+    // Votes are uncapped, but every other call keeps the fixed maxFee cap (H812D scope).
+    for a in [A_REPORT, A_FINALIZE, A_MARK_ONLINE] {
+        assert_eq!(
+            q.reserve(&Intent::tx(a, 80_000, cap + 1), T0).unwrap_err(),
+            QuotaError::MaxFeeTooHigh { cap },
+            "{a}"
+        );
+    }
+    assert!(q
+        .reserve(&Intent::tx(A_VOTE_AGREE, 80_000, cap + 1), T0)
+        .is_ok());
 }
 
 #[test]
