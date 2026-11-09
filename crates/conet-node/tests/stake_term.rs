@@ -188,3 +188,15 @@ fn slashed_below_term_floor_tops_up_to_the_latest_full_threshold() {
     assert!(n.open([1; 32], [2; 32]).is_ok());
     assert_eq!(n.state, conet_node::recovery::State::Offline); // topping up alone never goes online
 }
+
+/// Same case, same ratio, different amounts: a node approved at 5 risks 1, one at 10 risks 2.
+#[test]
+fn fine_follows_each_nodes_term_threshold() {
+    assert_eq!(fine_for(5 * C, 2_000), C);
+    assert_eq!(fine_for(10 * C, 2_000), 2 * C);
+    // Capacity: stake 10, term 5 -> own fine 1 -> 10 cases; term 10 -> fine 2 -> 5 cases.
+    let cases = vec![2_000u128; 12];
+    assert_eq!(cases_that_fit(10 * C, 0, 5 * C, &cases), 10);
+    assert_eq!(cases_that_fit(10 * C, 0, 10 * C, &cases), 5);
+    assert_eq!(cases_that_fit(10 * C, 3 * C, 10 * C, &cases), 3);
+}

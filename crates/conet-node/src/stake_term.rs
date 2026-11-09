@@ -230,3 +230,27 @@ pub fn reason_for_stop(_why: Stop, stake: u128, latest_threshold: u128) -> Offli
         topped_up: stake >= latest_threshold,
     }
 }
+
+/// Fine per node (project decision 2026-11-08): one ratio per case, the amount follows each
+/// node's own term threshold. Today's ratio is threshold - 80% = 20% (2,000 bps); the case fixes
+/// its ratio when it opens (field pending the node line).
+pub fn fine_for(term_threshold: u128, ratio_bps: u128) -> u128 {
+    term_threshold * ratio_bps / 10_000
+}
+
+/// Prototype of `vote_gate::pick` under per-node fines: the voter locks its OWN fine per case
+/// (same for every case of the same ratio), so capacity = unlocked stake / own fine. Returns how
+/// many of `cases` (ratios in bps, already ordered by urgency) fit.
+pub fn cases_that_fit(stake: u128, locked: u128, term_threshold: u128, cases: &[u128]) -> usize {
+    let mut left = stake.saturating_sub(locked);
+    let mut n = 0;
+    for &ratio in cases {
+        let f = fine_for(term_threshold, ratio);
+        if f > left {
+            break;
+        }
+        left -= f;
+        n += 1;
+    }
+    n
+}
