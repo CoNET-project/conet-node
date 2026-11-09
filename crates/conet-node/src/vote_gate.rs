@@ -405,3 +405,56 @@ impl VoteReader {
         n.try_into().map_err(ce)
     }
 }
+
+// ---- voting window for reports (project correction 2026-11-09: the 600 s / 7,200 s standard
+// applies to every proposal, offline reports included; margin 20, shares and executor rules
+// unchanged) ----
+
+/// Would this vote (`agree`) decide the report at `now`: its side reaches the margin, the
+/// observation time (`minOpen`, 600 s) has passed and voting has not ended (`expiresAt`, opening +
+/// 7,200 s). Both times come from the chain's report record, so the gate follows the contract.
+pub fn would_decide_report(r: &ReportView, agree: bool, now: u64) -> bool {
+    let (mine, other) = if agree {
+        (r.agree + 1, r.disagree)
+    } else {
+        (r.disagree + 1, r.agree)
+    };
+    r.state == REPORT_OPEN
+        && mine >= other + r.margin as u32
+        && now >= r.decidable_at()
+        && now < r.expires_at
+}
+
+/// When to send a report vote (same candidate as online votes, `online_gate::vote_timing`): a
+/// vote that would reach the margin before the observation time is held until then (+ stagger,
+/// kept inside the window) so it decides; other votes go at once; none after the end. A report
+/// that ends without a verdict is void: no reward, no fine, its locks are freed by the contract
+/// (the gate reads `voteLocked` again, so freed capacity shows up by itself).
+pub fn report_vote_timing(
+    r: &ReportView,
+    agree: bool,
+    now: u64,
+    stagger: u64,
+) -> crate::online_gate::VoteTiming {
+    use crate::online_gate::VoteTiming;
+    if r.state != REPORT_OPEN || now >= r.expires_at {
+        return VoteTiming::Closed;
+    }
+    if would_decide_report(r, agree, now) {
+        return VoteTiming::Now;
+    }
+    let (mine, other) = if agree {
+        (r.agree + 1, r.disagree)
+    } else {
+        (r.disagree + 1, r.agree)
+    };
+    if mine >= other + r.margin as u32 {
+        let room = r
+            .expires_at
+            .saturating_sub(r.decidable_at())
+            .saturating_sub(1);
+        VoteTiming::HoldUntil(r.decidable_at() + stagger.min(room))
+    } else {
+        VoteTiming::Now
+    }
+}

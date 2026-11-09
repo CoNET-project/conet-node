@@ -345,3 +345,56 @@ fn eligibility_is_the_chain_word_not_a_local_cooldown() {
     };
     assert_eq!(can_vote(&cooling, &long, 0, reg_time + week), Ok(()));
 }
+
+/// Reports follow the same window as every proposal (project correction 2026-11-09): nothing
+/// decides before 600 s, voting ends at 7,200 s; times read from the chain's report record.
+#[test]
+fn report_window_600_to_7200() {
+    use conet_node::online_gate::VoteTiming;
+    let t0 = NOW;
+    let r = ReportView {
+        opened_at: t0,
+        min_open: 600,
+        expires_at: t0 + 7_200,
+        agree: 20, // reporter + 19
+        disagree: 0,
+        ..report(1, 50)
+    };
+    assert!(!would_decide_report(&r, true, t0 + 599));
+    assert!(would_decide_report(&r, true, t0 + 600));
+    assert!(would_decide_report(&r, true, t0 + 7_199));
+    assert!(!would_decide_report(&r, true, t0 + 7_200));
+    // Hold the margin-reaching vote until 600 s; never after 7,200 s.
+    assert_eq!(
+        report_vote_timing(&r, true, t0 + 100, 5),
+        VoteTiming::HoldUntil(t0 + 605)
+    );
+    assert_eq!(report_vote_timing(&r, true, t0 + 600, 5), VoteTiming::Now);
+    assert_eq!(
+        report_vote_timing(&r, true, t0 + 7_200, 5),
+        VoteTiming::Closed
+    );
+    // Disagree side the same.
+    let d = ReportView {
+        agree: 1,
+        disagree: 20,
+        ..r.clone()
+    };
+    assert!(!would_decide_report(&d, false, t0 + 599));
+    assert!(would_decide_report(&d, false, t0 + 600));
+    // Not at the margin: vote at once; the case is also not open after expiry for can_vote.
+    let few = ReportView {
+        agree: 3,
+        ..r.clone()
+    };
+    assert_eq!(report_vote_timing(&few, true, t0 + 60, 0), VoteTiming::Now);
+    assert_eq!(can_vote(&voter(1), &r, 0, t0 + 7_200), Err(Skip::Expired));
+    // Void at 7,200 s: the contract frees the lock; the gate sees capacity again from voteLocked.
+    let held = VoterView {
+        locked: 5 * CNET,
+        ..voter(1)
+    };
+    assert_eq!(held.capacity(NEW_REPORT_RATIO_BPS), 0);
+    let freed = VoterView { locked: 0, ..held };
+    assert_eq!(freed.capacity(NEW_REPORT_RATIO_BPS), 5);
+}
