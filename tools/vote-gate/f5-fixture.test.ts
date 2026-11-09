@@ -70,7 +70,7 @@ describe("F5 vote gate fixture (stake-term, per-voter fine)", function () {
     // The proposal is the proposer's agree vote; vote until the margin is reached (a vote after the
     // deciding one reverts: the case is closed).
     for (let i = 1; i <= 20; i++) { try { await reg.connect(N[i].wallet).voteAdmission(appId, true); } catch { break; } }
-    await time.increase(300);
+    await time.increase(600); // every proposal: sealable from 600 s
     await reg.finalizeAdmission(appId);
     const X = { id: await reg.nodeIdOfNodeWallet(w.address), wallet: w };
     await time.increase(7 * DAY + 60);

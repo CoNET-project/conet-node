@@ -31,9 +31,6 @@ pub struct TermView {
     /// Locked effective stake ("余额"; excess-stake details pending the node line).
     pub stake: u128,
     pub renewal: Renewal,
-    /// PENDING the node line's read ("可提未提本金"): principal unlocked after a non-renewal and
-    /// not yet withdrawn (counted in dueUnpaid). None until the read exists.
-    pub withdrawable_principal: Option<u128>,
 }
 
 /// Outcome of the automatic renewal as the chain shows it.

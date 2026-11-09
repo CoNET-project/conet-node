@@ -24,7 +24,7 @@ for x in abi("NodeRegistryV2"):
     if x.get("type") == "function" and x["name"] == "getNodeRaw":
         continue
     seen.add(key(x)); out.append(x)
-for lib in ["NodeAdminLib", "RegistrationLib", "OfflineReportLib", "AdmissionLib", "OnlineVoteLib"]:
+for lib in ["NodeAdminLib", "RegistrationLib", "OfflineReportLib", "AdmissionLib", "OnlineVoteLib", "RecoveryLib"]:
     if os.path.exists(f"{A}/{lib}.sol/{lib}.json"):
         for x in abi(lib):
             if x.get("type") in ("event", "error") and key(x) not in seen:

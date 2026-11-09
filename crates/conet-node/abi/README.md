@@ -2,14 +2,16 @@
 
 Compiled from the node line's NodeRegistryV2 sources (not yet committed upstream), in a scratch
 copy so the node line's tree is not touched, with its `hardhat.node-registry.config.ts` (solc
-0.8.35, cancun). Refreshed 2026-11-09 to the node line's tree with the stake term, per-voter fines, online fee,
-12-hour offline cooldown and online-vote settlement. Source fingerprint (sha256 of all `.sol`
-files concatenated in sorted path order, first 16 hex): `a18191abf5c80d05` (before:
-`12123775fbd4e434`, `bee380fd2c26bd66…` computed per-file). Refresh: `tools/abi-refresh.py
+0.8.35, cancun). Refreshed 2026-11-09 to the node line's v0.4.2 snapshot (unified seal entries,
+600 s / 7,200 s window, dueBreakdown, offlineSince). Source fingerprint with the node line's
+algorithm (`shasum -a 256 *.sol | sort -k2 | shasum -a 256`, first 16 hex): `a1a13d465f4380fc`.
+Earlier pins used another algorithm (sha256 of all `.sol` concatenated in sorted path order:
+`a18191abf5c80d05`, `12123775fbd4e434`). Refresh: `tools/abi-refresh.py
 <copy>/artifacts/node-registry/src/b-unit/node-registry-v2`.
 
 `NodeRegistryV2.json` = the core ABI (minus `getNodeRaw`) + events and errors of the linked
-libraries (`NodeAdminLib`, `RegistrationLib`, `OfflineReportLib`, `AdmissionLib`) + the functions,
+libraries (`NodeAdminLib`, `RegistrationLib`, `OfflineReportLib`, `AdmissionLib`, `OnlineVoteLib`,
+`RecoveryLib`) + the functions,
 events and errors of `NodeRegistryV2Ext`, which the core reaches through its fallback (so calls
 go to the registry address).
 
@@ -21,7 +23,7 @@ run `jq .abi out/<Name>.sol/<Name>.json`.
 (`NodeAdminLib`, `RegistrationLib`, `OfflineReportLib`); solc leaves those out of the contract's
 own ABI, but log readers need them.
 
-`getNodeRaw` is left out: its `Node` struct (40 members, 42 words since the stake-term fields) is past alloy's 24-element
+`getNodeRaw` is left out: its `Node` struct (41 members, 43 words in v0.4.2) is past alloy's 24-element
 tuple limit. `vote_gate.rs` reads the per-case lock (`voteLocked`) and the vote cooldown
 (`voteEligibleAt`) from it by word position, because no other view exposes them; the layout is
 checked by length and by the wallet word, and pinned to the fingerprint above. The lock math is

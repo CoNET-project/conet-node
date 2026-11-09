@@ -57,7 +57,9 @@ describe("AUTO-TOPUP fixture", function () {
     // Recovery precheck cases (12-hour cooldown from the chain offline moment, 0.01 online fee paid
     // with the request): each records the state and the contract's answer to requestRecovery.
     const FEE = E("0.01");
-    const req = (value: bigint) => reg.connect(B.wallet).requestRecovery.staticCall(B.id, { tcpPort: B.tcpPort, udpPort: B.udpPort, endpointHash: ethers.ZeroHash, mode: 0, servicesNow: 0, ttl: 0 }, B.ip, { value });
+    // v0.4.2: the request names another node as proposer (it reviews and opens the vote).
+    const proposerNodeId = A.id; // renewed via its top-up; the other reserved nodes failed renewal at the raise
+    const req = (value: bigint) => reg.connect(B.wallet).requestRecovery.staticCall(B.id, { proposerNodeId, tcpPort: B.tcpPort, udpPort: B.udpPort, endpointHash: ethers.ZeroHash, mode: 0, servicesNow: 0, ttl: 0 }, B.ip, { value });
     const ask = async (label: string, value: bigint) => {
       let answer = "ok"; try { await req(value); } catch (e) { answer = errName(e); }
       const raw = await reg.getNodeRaw(B.id);

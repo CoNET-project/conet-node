@@ -1659,17 +1659,12 @@
      },
      {
       "internalType": "uint8",
-      "name": "ovVoterScope",
+      "name": "ovVoidPays",
       "type": "uint8"
      },
      {
       "internalType": "uint8",
-      "name": "ovRejectedRoles",
-      "type": "uint8"
-     },
-     {
-      "internalType": "uint8",
-      "name": "ovNoStack",
+      "name": "rtGapBasis",
       "type": "uint8"
      },
      {
@@ -3252,31 +3247,6 @@
     "type": "uint256"
    },
    {
-    "indexed": false,
-    "internalType": "uint256",
-    "name": "stake",
-    "type": "uint256"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint256",
-    "name": "threshold",
-    "type": "uint256"
-   }
-  ],
-  "name": "NodeResumed",
-  "type": "event"
- },
- {
-  "anonymous": false,
-  "inputs": [
-   {
-    "indexed": true,
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   },
-   {
     "indexed": true,
     "internalType": "address",
     "name": "nodeWallet",
@@ -3551,6 +3521,31 @@
    }
   ],
   "name": "StakeAdded",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stake",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "threshold",
+    "type": "uint256"
+   }
+  ],
+  "name": "SuspensionCleared",
   "type": "event"
  },
  {
@@ -4556,6 +4551,37 @@
     "internalType": "uint256",
     "name": "nodeId",
     "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "toStake",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stakeAfter",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "paidOut",
+    "type": "uint256"
+   }
+  ],
+  "name": "RewardToStake",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
    }
   ],
   "name": "TcpNodeDeclaredOffline",
@@ -4577,19 +4603,14 @@
   "type": "error"
  },
  {
-  "inputs": [],
-  "name": "RecoveryNotNeeded",
-  "type": "error"
- },
- {
   "inputs": [
    {
     "internalType": "uint64",
-    "name": "notBefore",
+    "name": "until",
     "type": "uint64"
    }
   ],
-  "name": "RecoveryTooSoon",
+  "name": "RejectedWait",
   "type": "error"
  },
  {
@@ -4798,37 +4819,6 @@
     "type": "uint256"
    },
    {
-    "indexed": false,
-    "internalType": "string",
-    "name": "ip",
-    "type": "string"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint16",
-    "name": "tcpPort",
-    "type": "uint16"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint16",
-    "name": "udpPort",
-    "type": "uint16"
-   }
-  ],
-  "name": "NodeEndpointUpdated",
-  "type": "event"
- },
- {
-  "anonymous": false,
-  "inputs": [
-   {
-    "indexed": true,
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   },
-   {
     "indexed": true,
     "internalType": "address",
     "name": "signer",
@@ -4892,135 +4882,6 @@
   "inputs": [
    {
     "indexed": true,
-    "internalType": "bytes32",
-    "name": "recId",
-    "type": "bytes32"
-   },
-   {
-    "indexed": true,
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint32",
-    "name": "version",
-    "type": "uint32"
-   },
-   {
-    "indexed": false,
-    "internalType": "bytes32",
-    "name": "ipHash",
-    "type": "bytes32"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint16",
-    "name": "tcpPort",
-    "type": "uint16"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint16",
-    "name": "udpPort",
-    "type": "uint16"
-   },
-   {
-    "indexed": false,
-    "internalType": "bytes32",
-    "name": "endpointHash",
-    "type": "bytes32"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint64",
-    "name": "expiresAt",
-    "type": "uint64"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint16",
-    "name": "margin",
-    "type": "uint16"
-   }
-  ],
-  "name": "RecoveryRequested",
-  "type": "event"
- },
- {
-  "anonymous": false,
-  "inputs": [
-   {
-    "indexed": true,
-    "internalType": "bytes32",
-    "name": "recId",
-    "type": "bytes32"
-   },
-   {
-    "indexed": true,
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint8",
-    "name": "state",
-    "type": "uint8"
-   }
-  ],
-  "name": "RecoveryResolved",
-  "type": "event"
- },
- {
-  "anonymous": false,
-  "inputs": [
-   {
-    "indexed": true,
-    "internalType": "bytes32",
-    "name": "recId",
-    "type": "bytes32"
-   },
-   {
-    "indexed": true,
-    "internalType": "uint256",
-    "name": "voterNodeId",
-    "type": "uint256"
-   },
-   {
-    "indexed": false,
-    "internalType": "bool",
-    "name": "agree",
-    "type": "bool"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint32",
-    "name": "agreeCount",
-    "type": "uint32"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint32",
-    "name": "disagreeCount",
-    "type": "uint32"
-   },
-   {
-    "indexed": false,
-    "internalType": "address",
-    "name": "signer",
-    "type": "address"
-   }
-  ],
-  "name": "RecoveryVoted",
-  "type": "event"
- },
- {
-  "anonymous": false,
-  "inputs": [
-   {
-    "indexed": true,
     "internalType": "uint256",
     "name": "nodeId",
     "type": "uint256"
@@ -5063,73 +4924,11 @@
    {
     "indexed": false,
     "internalType": "uint256",
-    "name": "released",
-    "type": "uint256"
-   }
-  ],
-  "name": "OnlineCaseClosed",
-  "type": "event"
- },
- {
-  "anonymous": false,
-  "inputs": [
-   {
-    "indexed": true,
-    "internalType": "bytes32",
-    "name": "id",
-    "type": "bytes32"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint256",
     "name": "proposerId",
-    "type": "uint256"
-   },
-   {
-    "indexed": false,
-    "internalType": "bool",
-    "name": "funded",
-    "type": "bool"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint256",
-    "name": "reserved",
-    "type": "uint256"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint256",
-    "name": "poolAfter",
     "type": "uint256"
    }
   ],
   "name": "OnlineCaseOpened",
-  "type": "event"
- },
- {
-  "anonymous": false,
-  "inputs": [
-   {
-    "indexed": true,
-    "internalType": "bytes32",
-    "name": "id",
-    "type": "bytes32"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint256",
-    "name": "needed",
-    "type": "uint256"
-   },
-   {
-    "indexed": false,
-    "internalType": "uint256",
-    "name": "pool",
-    "type": "uint256"
-   }
-  ],
-  "name": "OnlineCaseUnfunded",
   "type": "event"
  },
  {
@@ -5267,6 +5066,243 @@
    }
   ],
   "name": "OnlineVoteSettled",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "deficitTotal",
+    "type": "uint256"
+   }
+  ],
+  "name": "RewardUnbacked",
+  "type": "event"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint64",
+    "name": "until",
+    "type": "uint64"
+   }
+  ],
+  "name": "CaseProtected",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "RecoveryNotNeeded",
+  "type": "error"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint64",
+    "name": "notBefore",
+    "type": "uint64"
+   }
+  ],
+  "name": "RecoveryTooSoon",
+  "type": "error"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "tcpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "udpPort",
+    "type": "uint16"
+   }
+  ],
+  "name": "NodeEndpointUpdated",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "proposerId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "expiresAt",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "margin",
+    "type": "uint16"
+   }
+  ],
+  "name": "RecoveryProposed",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "version",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "ipHash",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "tcpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "udpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "endpointHash",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "expiresAt",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "margin",
+    "type": "uint16"
+   }
+  ],
+  "name": "RecoveryRequested",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "state",
+    "type": "uint8"
+   }
+  ],
+  "name": "RecoveryResolved",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "voterNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "agree",
+    "type": "bool"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "agreeCount",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "disagreeCount",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "signer",
+    "type": "address"
+   }
+  ],
+  "name": "RecoveryVoted",
   "type": "event"
  },
  {
@@ -5440,6 +5476,24 @@
   "type": "function"
  },
  {
+  "inputs": [],
+  "name": "dueBreakdown",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "matureUnwithdrawn",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "owed",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
   "inputs": [
    {
     "internalType": "bytes32",
@@ -5470,6 +5524,34 @@
   "name": "fundVoteRewardPool",
   "outputs": [],
   "stateMutability": "payable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "fundsOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "balance",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "stakeLiability",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "dueUnpaid",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "rewardDeficit",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
   "type": "function"
  },
  {
@@ -5694,6 +5776,11 @@
       "internalType": "uint64",
       "name": "ttl",
       "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "proposerId",
+      "type": "uint64"
      }
     ],
     "internalType": "struct Recovery",
@@ -5771,6 +5858,19 @@
   "type": "function"
  },
  {
+  "inputs": [],
+  "name": "matureUnwithdrawnPrincipal",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "sum",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
   "inputs": [
    {
     "internalType": "address",
@@ -5824,7 +5924,7 @@
    },
    {
     "internalType": "uint256",
-    "name": "reserved",
+    "name": "rewardDeficit",
     "type": "uint256"
    },
    {
@@ -5854,11 +5954,6 @@
    {
     "components": [
      {
-      "internalType": "uint128",
-      "name": "reserved",
-      "type": "uint128"
-     },
-     {
       "internalType": "uint64",
       "name": "proposerId",
       "type": "uint64"
@@ -5867,6 +5962,11 @@
       "internalType": "uint64",
       "name": "executorId",
       "type": "uint64"
+     },
+     {
+      "internalType": "address",
+      "name": "executor",
+      "type": "address"
      },
      {
       "internalType": "address",
@@ -5884,11 +5984,6 @@
       "type": "uint8"
      },
      {
-      "internalType": "bool",
-      "name": "funded",
-      "type": "bool"
-     },
-     {
       "internalType": "uint32",
       "name": "cursor",
       "type": "uint32"
@@ -5897,6 +5992,11 @@
       "internalType": "uint32",
       "name": "paidVoters",
       "type": "uint32"
+     },
+     {
+      "internalType": "bool",
+      "name": "exDeferred",
+      "type": "bool"
      }
     ],
     "internalType": "struct OnlineCase",
@@ -5991,6 +6091,19 @@
  {
   "inputs": [
    {
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   }
+  ],
+  "name": "proposeRecovery",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
     "internalType": "uint256",
     "name": "nodeId",
     "type": "uint256"
@@ -6004,9 +6117,9 @@
     "type": "uint64"
    },
    {
-    "internalType": "uint8",
-    "name": "rejects",
-    "type": "uint8"
+    "internalType": "uint64",
+    "name": "retryAt",
+    "type": "uint64"
    }
   ],
   "stateMutability": "view",
@@ -6076,6 +6189,11 @@
    },
    {
     "components": [
+     {
+      "internalType": "uint64",
+      "name": "proposerNodeId",
+      "type": "uint64"
+     },
      {
       "internalType": "uint16",
       "name": "tcpPort",
@@ -6204,6 +6322,34 @@
   "name": "settleTerms",
   "outputs": [],
   "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "solvency",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "balance",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "liabilities",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "unbacked",
+    "type": "uint256"
+   },
+   {
+    "internalType": "int256",
+    "name": "forcedIn",
+    "type": "int256"
+   }
+  ],
+  "stateMutability": "view",
   "type": "function"
  },
  {

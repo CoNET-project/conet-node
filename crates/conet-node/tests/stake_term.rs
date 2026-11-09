@@ -13,7 +13,6 @@ fn term(stake: u128, cur: u128, renewal: Renewal) -> TermView {
         current_threshold: cur,
         stake,
         renewal,
-        withdrawable_principal: None,
     }
 }
 
@@ -160,7 +159,6 @@ fn slashed_below_term_floor_tops_up_to_the_latest_full_threshold() {
         current_threshold: 10 * C,
         stake,
         renewal: Renewal::Pending,
-        withdrawable_principal: None,
     };
     let now = END - 30 * DAY;
     // Serving at 4.5: floor 4, renewal needs 10.
@@ -218,7 +216,6 @@ fn floor_80_percent_boundary_matches_the_contract() {
         current_threshold: b,
         stake,
         renewal: Renewal::Pending,
-        withdrawable_principal: None,
     };
     assert_eq!(suspend_floor(5 * C), 4 * C);
     assert!(serves_inside_term(&base(5 * C, 4 * C), END - 1));
@@ -239,7 +236,6 @@ fn short_balance_does_not_renew_and_names_the_path() {
         current_threshold: at_end,
         stake,
         renewal: Renewal::Pending,
-        withdrawable_principal: None,
     };
     // Normal: enough -> renews (the contract keeps the same term length by itself).
     assert_eq!(renewal_precheck(&v(5 * C, 5 * C, 5 * C)), Ok(()));

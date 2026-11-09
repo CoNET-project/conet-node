@@ -240,9 +240,12 @@ pub fn pick(v: &VoterView, reports: &[ReportView], my_choices: &[u8], now: u64) 
 // ---- chain reads ----
 
 /// Words in `getNodeRaw`'s `Node` struct (all static members; `uint32[3] anchors` takes three).
-/// Pinned to the node line's contract source set `a18191abf5c80d05` (abi/README.md): 40 members
-/// with the stake-term fields (termEnd, termBase, termLength, stakeStop) appended.
-pub const NODE_RAW_WORDS: usize = 42;
+/// Pinned to the node line's contract source set `a1a13d46` (v0.4.2; abi/README.md): 41 members,
+/// the stake-term fields and `offlineSince` appended at the end (earlier word positions unchanged).
+pub const NODE_RAW_WORDS: usize = 43;
+/// `offlineSince`: chain moment the node's current offline state took effect (recovery cooldown
+/// start), v0.4.2.
+pub const W_OFFLINE_SINCE: usize = 42;
 const W_SERVICES: usize = 5;
 const W_NODE_WALLET: usize = 10;
 const W_STAKE: usize = 14;
@@ -304,6 +307,21 @@ pub struct LockCapacity {
     pub free_stake: u128,
     pub fine_per_vote: u128,
     pub slots_left: u128,
+}
+
+/// Contract-wide due-but-unpaid amounts (node line v0.4.2, `dueBreakdown()`): principal of exiting
+/// nodes whose unbonding is over and nobody withdrew (minus open-case locks), and payouts waiting in
+/// `owed`. Their sum is dueUnpaid. Replaces the per-node placeholder kept until the read existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DueBreakdown {
+    pub mature_unwithdrawn: u128,
+    pub owed: u128,
+}
+
+impl DueBreakdown {
+    pub fn due_unpaid(&self) -> u128 {
+        self.mature_unwithdrawn.saturating_add(self.owed)
+    }
 }
 
 /// Reads for the gate. Calls never set `from` and never send.
@@ -398,6 +416,15 @@ impl VoteReader {
             })
             .await?;
         Ok(v.choice)
+    }
+
+    /// `dueBreakdown()`.
+    pub async fn due_breakdown(&self) -> Result<DueBreakdown, ChainError> {
+        let r = self.call(NodeRegistryV2::dueBreakdownCall {}).await?;
+        Ok(DueBreakdown {
+            mature_unwithdrawn: r.matureUnwithdrawn.try_into().map_err(ce)?,
+            owed: r.owed.try_into().map_err(ce)?,
+        })
     }
 
     pub async fn report_count(&self) -> Result<u64, ChainError> {

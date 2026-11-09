@@ -43,7 +43,8 @@ pub fn table_event_topics() -> Vec<B256> {
         R::NodeWalletRevoked::SIGNATURE_HASH,
         R::ServicesUpdated::SIGNATURE_HASH,
         R::NodeSuspended::SIGNATURE_HASH,
-        R::NodeResumed::SIGNATURE_HASH,
+        // NodeResumed no longer exists (a top-up never resumes a node; recovery is by vote).
+        R::TermRenewalFailed::SIGNATURE_HASH,
         R::NodeMarkedOffline::SIGNATURE_HASH,
         R::NodeBackOnline::SIGNATURE_HASH,
         R::NodeSelfOnline::SIGNATURE_HASH,
