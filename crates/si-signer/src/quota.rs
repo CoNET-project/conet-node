@@ -6,14 +6,15 @@
 //! `SignTx` role yet, and adding one needs user approval (H8-1, H8-2, H8-7).
 //!
 //! What it enforces, all as parameters (defaults = N6 proposals, PENDING USER APPROVAL):
-//! - daily counts per bucket (UTC day), agree and disagree votes counted apart, manual
-//!   `reportOffline` also counted toward agree votes;
+//! - daily counts per bucket (UTC day), agree and disagree votes counted apart;
+//! - `reportOffline` has NO daily count of any kind (operator decision H8-12, 2026-11-08):
+//!   it is not counted toward votes, has its own uncapped spend class and its own in-flight
+//!   lane, so no vote or anchor limit can hold a report back;
 //! - per-action gas ceiling; `voteReport` and `finalizeReport` may not go below 6,000,000
 //!   (a deciding vote settles the first batch in the same transaction);
 //! - daily spend per class (vote / anchor net of reimbursements / total): an in-flight
 //!   transaction reserves gas ceiling x maxFee, a receipt replaces that with the real cost;
 //! - at most N transactions in flight; maxFee cap;
-//! - one manual report per target per window;
 //! - a warning once per bucket per day at the warn threshold.
 //!
 //! State is written to disk (temp file, fsync, rename) before an operation is allowed, so a
@@ -37,23 +38,24 @@ pub const A_MARK_ONLINE: &str = "markOnline";
 pub const A_FINALIZE: &str = "finalizeReport";
 pub const A_SET_ONLINE: &str = "setOnline";
 pub const A_EXTEND_ONLINE: &str = "extendOnline";
-pub const A_MANUAL_REPORT: &str = "reportOffline.manual";
+pub const A_REPORT: &str = "reportOffline";
 pub const A_ANCHOR_RECEIPT: &str = "anchorReceipt";
 
-/// Count buckets. setOnline and extendOnline share one; a manual report uses two.
+/// Count buckets. setOnline and extendOnline share one. `reportOffline` has none.
 pub const B_VOTE_AGREE: &str = "voteReport.agree";
 pub const B_VOTE_DISAGREE: &str = "voteReport.disagree";
 pub const B_MARK_ONLINE: &str = "markOnline";
 pub const B_FINALIZE: &str = "finalizeReport";
 pub const B_ANCHOR_TX: &str = "setOnline+extendOnline";
-pub const B_MANUAL_REPORT: &str = "reportOffline.manual";
 pub const B_ANCHOR_RECEIPT: &str = "anchorReceipt";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpendClass {
-    /// Not reimbursed: voteReport, markOnline, finalizeReport, manual reportOffline.
+    /// Not reimbursed: voteReport, markOnline, finalizeReport.
     Vote,
+    /// `reportOffline`: recorded for monitoring, never capped (H8-12).
+    Report,
     /// Anchor submissions, reimbursed by the subsidy pool; counted net.
     Anchor,
 }
@@ -73,8 +75,8 @@ fn action(name: &str) -> Option<Action> {
         A_MARK_ONLINE => a(&[B_MARK_ONLINE], Some(Vote)),
         A_FINALIZE => a(&[B_FINALIZE], Some(Vote)),
         A_SET_ONLINE | A_EXTEND_ONLINE => a(&[B_ANCHOR_TX], Some(Anchor)),
-        // The contract counts the report as the first agree vote (N6 H.8.6).
-        A_MANUAL_REPORT => a(&[B_MANUAL_REPORT, B_VOTE_AGREE], Some(Vote)),
+        // No bucket: reports have no daily count (H8-12).
+        A_REPORT => a(&[], Some(Report)),
         A_ANCHOR_RECEIPT => a(&[B_ANCHOR_RECEIPT], None),
         _ => None,
     }
@@ -98,14 +100,15 @@ pub struct QuotaConfig {
     pub max_inflight: u32,
     /// Warn once per bucket and day when a count reaches this share of its cap.
     pub warn_percent: u8,
-    /// One manual report per target within this many seconds.
-    pub manual_report_target_window_sec: u64,
+    /// In-flight lane for `reportOffline`, apart from `max_inflight` (suggested, pending).
+    /// A concurrency bound only: settled reports free their slot at once; there is no daily count.
+    pub max_inflight_report: u32,
 }
 
 impl Default for QuotaConfig {
-    /// N6 proposals (H8-2, H8-7, H8-12), PENDING USER APPROVAL.
-    /// The manual-report daily count (H8-12) is deliberately absent: until the user sets it,
-    /// manual reports are refused.
+    /// N6 proposals (H8-2, H8-7), PENDING USER APPROVAL.
+    /// `reportOffline` has no daily count (H8-12, decided); its gas ceiling waits for the node
+    /// line's measured value, like markOnline / setOnline / extendOnline.
     fn default() -> Self {
         let daily = [
             (B_VOTE_AGREE, 20),
@@ -137,7 +140,7 @@ impl Default for QuotaConfig {
             max_fee_wei: 100_000_000,               // 0.1 gwei
             max_inflight: 4,
             warn_percent: 80,
-            manual_report_target_window_sec: DAY,
+            max_inflight_report: 4,
         }
     }
 }
@@ -151,7 +154,6 @@ impl QuotaConfig {
                 B_MARK_ONLINE,
                 B_FINALIZE,
                 B_ANCHOR_TX,
-                B_MANUAL_REPORT,
                 B_ANCHOR_RECEIPT,
             ];
             if !known.contains(&b.as_str()) {
@@ -173,6 +175,9 @@ impl QuotaConfig {
         if self.max_fee_wei == 0 || self.max_fee_wei > MAX_FEE_HARD_CAP_WEI {
             return Err("quota config: max_fee_wei must be 1..=1 gwei".into());
         }
+        if self.max_inflight_report == 0 {
+            return Err("quota config: max_inflight_report >= 1".into());
+        }
         if self.max_inflight == 0 || !(1..=100).contains(&self.warn_percent) {
             return Err("quota config: max_inflight >= 1, warn_percent 1..=100".into());
         }
@@ -190,7 +195,7 @@ pub enum QuotaError {
     MaxFeeTooHigh { cap: u64 },
     Exceeded { bucket: String, used: u64, cap: u64 },
     Inflight { cap: u32 },
-    TargetRecent { window_sec: u64 },
+    InflightReport { cap: u32 },
     UnknownTicket,
     StateBroken(String),
     Write,
@@ -209,7 +214,7 @@ impl std::fmt::Display for QuotaError {
             MaxFeeTooHigh { cap } => write!(f, "max_fee_too_high:{cap}"),
             Exceeded { bucket, used, cap } => write!(f, "quota_exceeded:{bucket} {used}/{cap}"),
             Inflight { cap } => write!(f, "quota_exceeded:inflight {cap}/{cap}"),
-            TargetRecent { window_sec } => write!(f, "target_recent:{window_sec}s"),
+            InflightReport { cap } => write!(f, "inflight_report {cap}/{cap}"),
             UnknownTicket => write!(f, "unknown_ticket"),
             StateBroken(r) => write!(f, "quota_state_broken:{r}"),
             Write => write!(f, "quota_state_write"),
@@ -225,8 +230,6 @@ pub struct Intent<'a> {
     pub action: &'a str,
     pub gas_limit: u64,
     pub max_fee_wei: u64,
-    /// Report target (node id) for a manual report.
-    pub target: Option<&'a str>,
 }
 
 impl<'a> Intent<'a> {
@@ -235,7 +238,6 @@ impl<'a> Intent<'a> {
             action,
             gas_limit: 0,
             max_fee_wei: 0,
-            target: None,
         }
     }
     pub fn tx(action: &'a str, gas_limit: u64, max_fee_wei: u64) -> Self {
@@ -243,7 +245,6 @@ impl<'a> Intent<'a> {
             action,
             gas_limit,
             max_fee_wei,
-            target: None,
         }
     }
 }
@@ -274,8 +275,9 @@ struct State {
     inflight: BTreeMap<u64, Inflight>,
     next_ticket: u64,
     warned: Vec<String>,
-    /// Manual report target -> last report time (seconds).
-    manual_targets: BTreeMap<String, u64>,
+    /// `reportOffline` gas, monitoring only.
+    #[serde(default)]
+    spent_report_wei: u64,
 }
 
 pub struct Quota {
@@ -366,20 +368,6 @@ impl Quota {
             caps.push((*b, cap as u64));
         }
 
-        // Manual report: one per target per window.
-        if intent.action == A_MANUAL_REPORT {
-            let Some(t) = intent.target.filter(|t| !t.is_empty()) else {
-                return Err(QuotaError::NotConfigured("target".into()));
-            };
-            let w = self.cfg.manual_report_target_window_sec;
-            next.manual_targets
-                .retain(|_, at| now.saturating_sub(*at) < w);
-            if next.manual_targets.contains_key(t) {
-                return Err(QuotaError::TargetRecent { window_sec: w });
-            }
-            next.manual_targets.insert(t.to_string(), now);
-        }
-
         // Transactions: gas ceiling, fee cap, in flight, spend.
         let mut ticket = None;
         let mut spend_classes = Vec::new();
@@ -398,10 +386,22 @@ impl Quota {
                     cap: self.cfg.max_fee_wei,
                 });
             }
-            if next.inflight.len() as u64 >= self.cfg.max_inflight as u64 {
-                return Err(QuotaError::Inflight {
-                    cap: self.cfg.max_inflight,
-                });
+            // Two lanes: reports never wait behind votes or anchors, and the other way round.
+            let is_report = |f: &Inflight| f.action == A_REPORT;
+            if class == SpendClass::Report {
+                let n = next.inflight.values().filter(|f| is_report(f)).count();
+                if n as u64 >= self.cfg.max_inflight_report as u64 {
+                    return Err(QuotaError::InflightReport {
+                        cap: self.cfg.max_inflight_report,
+                    });
+                }
+            } else {
+                let n = next.inflight.values().filter(|f| !is_report(f)).count();
+                if n as u64 >= self.cfg.max_inflight as u64 {
+                    return Err(QuotaError::Inflight {
+                        cap: self.cfg.max_inflight,
+                    });
+                }
             }
             let cost =
                 intent
@@ -416,11 +416,18 @@ impl Quota {
             let (cv, ca) = match class {
                 SpendClass::Vote => (cost, 0),
                 SpendClass::Anchor => (0, cost),
+                // Reports are outside every spend cap (H8-12).
+                SpendClass::Report => (0, 0),
             };
             let checks = [
                 (W_SPEND_VOTE, vote, cv, self.cfg.spend_vote_wei),
                 (W_SPEND_ANCHOR, anchor, ca, self.cfg.spend_anchor_net_wei),
-                (W_SPEND_TOTAL, vote + anchor, cost, self.cfg.spend_total_wei),
+                (
+                    W_SPEND_TOTAL,
+                    vote + anchor,
+                    cv + ca,
+                    self.cfg.spend_total_wei,
+                ),
             ];
             for (name, used, add, cap) in checks {
                 if add > 0 && used.saturating_add(add) > cap {
@@ -513,6 +520,9 @@ impl Quota {
                 Some(SpendClass::Anchor) => {
                     next.spent_anchor_wei = next.spent_anchor_wei.saturating_add(cost)
                 }
+                Some(SpendClass::Report) => {
+                    next.spent_report_wei = next.spent_report_wei.saturating_add(cost)
+                }
                 None => {}
             }
         }
@@ -527,7 +537,7 @@ impl Quota {
 }
 
 /// New UTC day: counts, spend and warnings start over. In-flight reservations carry over and
-/// keep counting against today's spend until settled; manual-report targets keep their window.
+/// keep counting against today's spend until settled.
 fn roll(s: &mut State, now: u64) {
     let day = now / DAY;
     if s.day != day {
@@ -536,6 +546,7 @@ fn roll(s: &mut State, now: u64) {
         s.spent_vote_wei = 0;
         s.spent_anchor_wei = 0;
         s.reimbursed_anchor_wei = 0;
+        s.spent_report_wei = 0;
         s.warned.clear();
     }
 }
@@ -548,7 +559,7 @@ fn committed(s: &State) -> (u64, u64) {
         match action(&f.action).and_then(|a| a.class) {
             Some(SpendClass::Vote) => vote = vote.saturating_add(f.reserved_wei),
             Some(SpendClass::Anchor) => anchor = anchor.saturating_add(f.reserved_wei),
-            None => {}
+            Some(SpendClass::Report) | None => {}
         }
     }
     (vote, anchor)

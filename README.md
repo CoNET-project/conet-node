@@ -103,7 +103,8 @@ ABIs live in `crates/conet-node/abi/` (compiled from the node line's sources; se
   survives restarts; a damaged ledger file refuses every capped request until an operator
   looks at it. `--quota-config <json>` overrides the defaults (`crates/si-signer/quota.example.json`).
   The ledger also has entries for the registry-wallet transactions (vote counts, 6,000,000 gas
-  floor for `voteReport` / `finalizeReport`, daily spend, 4 in flight), but the signer has no
+  floor for `voteReport` / `finalizeReport`, daily spend, 4 in flight; `reportOffline` has no
+  daily count and its own in-flight lane, operator decision H8-12), but the signer has no
   transaction role yet. All defaults are proposals pending user approval.
 - **Registration data**: `conet-register` prints typed data, digests and calldata for
   `registerFor`, `registerReserved` and `setEgressPolicy`. It never sends a transaction.

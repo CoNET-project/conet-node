@@ -112,6 +112,11 @@ impl Signer {
     }
 
     pub fn handle(&self, req: Request) -> Response {
+        self.handle_at(req, now())
+    }
+
+    /// `handle` with the clock given (seconds), so tests can pin the UTC day.
+    pub fn handle_at(&self, req: Request, clock: i64) -> Response {
         let refused = |r: &str| Response::Refused {
             reason: r.to_string(),
         };
@@ -126,7 +131,7 @@ impl Signer {
                 .unwrap_or_default()),
             Request::SignHop { t, n, h, k } => {
                 let hh = h.strip_prefix("0x").unwrap_or("");
-                if (now() - t).abs() > sp::HOP_SIG_TS_WINDOW_SEC
+                if (clock - t).abs() > sp::HOP_SIG_TS_WINDOW_SEC
                     || !is_hex(hh, 64)
                     || !is_hex(&k, 16)
                     || n > 64 * 1024 * 1024
@@ -151,7 +156,7 @@ impl Signer {
             } => {
                 if !is_hex(&pgp_key_id, 16)
                     || !eth::is_address(&eoa)
-                    || (now() - timestamp as i64).abs() > 600
+                    || (clock - timestamp as i64).abs() > 600
                 {
                     return refused("notice_fields");
                 }
@@ -162,7 +167,7 @@ impl Signer {
                     .unwrap_or_else(|_| refused("sign"))
             }
             Request::SignNativeWakeable { eoa, timestamp } => {
-                if !eth::is_address(&eoa) || (now() - timestamp as i64).abs() > 600 {
+                if !eth::is_address(&eoa) || (clock - timestamp as i64).abs() > 600 {
                     return refused("notice_fields");
                 }
                 let text = sp::api_texts::native_wakeable(&eoa, timestamp);
@@ -178,13 +183,13 @@ impl Signer {
                 expires_at,
                 timestamp,
             } => {
-                let now_ms = now() * 1000;
+                let now_ms = clock * 1000;
                 let fields_ok = (8..=128).contains(&call_id.len())
                     && (16..=128).contains(&session_id.len())
                     && eth::is_address(&callee_eoa)
                     && expires_at > now_ms
                     && expires_at <= now_ms + 10 * 60_000
-                    && (now() - timestamp).abs() <= 600;
+                    && (clock - timestamp).abs() <= 600;
                 if !fields_ok {
                     return refused("notice_fields");
                 }
@@ -216,8 +221,8 @@ impl Signer {
                     && key_id.eq_ignore_ascii_case(&self.key_id)
                     && port != 0
                     && sp::webrtc::valid_fingerprint(&fingerprint)
-                    && expires > now()
-                    && expires <= now() + sp::webrtc::ENDPOINT_MAX_VALID_SEC;
+                    && expires > clock
+                    && expires <= clock + sp::webrtc::ENDPOINT_MAX_VALID_SEC;
                 if !fields_ok {
                     return refused("webrtc_fields");
                 }
@@ -243,8 +248,8 @@ impl Signer {
                 let fields_ok = key_id.eq_ignore_ascii_case(&self.key_id)
                     && sp::acme::valid_txt_value(&value)
                     && sp::acme::valid_op(&op)
-                    && expires > now()
-                    && expires <= now() + sp::acme::DNS01_MAX_VALID_SEC;
+                    && expires > clock
+                    && expires <= clock + sp::acme::DNS01_MAX_VALID_SEC;
                 if !fields_ok {
                     return refused("acme_fields");
                 }
@@ -326,7 +331,7 @@ impl Signer {
                     return refused("anchor_fields");
                 };
                 // Never a receipt for ourselves, for node 0, or for an expired or overlong window.
-                let t = now();
+                let t = clock;
                 if node == anchor
                     || node == [0u8; 32]
                     || (online_until as i64) <= t

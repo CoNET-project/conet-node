@@ -15,11 +15,15 @@ fn ledger(dir: &tempfile::TempDir, cfg: QuotaConfig) -> Quota {
     Quota::open(cfg, dir.path().join("quota.json")).unwrap()
 }
 
-fn with_manual(n: u32) -> QuotaConfig {
+/// Defaults plus a test gas ceiling for reportOffline (the real one waits for measured gas).
+fn with_report_gas() -> QuotaConfig {
     let mut c = defaults();
-    c.daily.insert(B_MANUAL_REPORT.into(), n);
-    c.gas_ceiling.insert(A_MANUAL_REPORT.into(), 500_000);
+    c.gas_ceiling.insert(A_REPORT.into(), 500_000);
     c
+}
+
+fn report() -> Intent<'static> {
+    Intent::tx(A_REPORT, 400_000, GWEI_TENTH)
 }
 
 fn vote(agree: bool) -> Intent<'static> {
@@ -72,108 +76,71 @@ fn quota_vote_disagree_counted_separately() {
 }
 
 #[test]
-fn quota_manual_report_counts_toward_agree() {
+fn quota_report_offline_not_counted_in_votes() {
+    let gwei = MAX_FEE_HARD_CAP_WEI;
     let d = tempfile::tempdir().unwrap();
-    // H8-12 has no default: without a configured count, manual reports are refused.
-    let mut off = ledger(&d, QuotaConfig::default());
-    let r = Intent {
-        target: Some("41"),
-        ..Intent::tx(A_MANUAL_REPORT, 400_000, GWEI_TENTH)
-    };
-    assert_eq!(
-        off.reserve(&r, T0).unwrap_err(),
-        QuotaError::NotConfigured(B_MANUAL_REPORT.into())
-    );
-    drop(off);
-
-    let d = tempfile::tempdir().unwrap();
-    let mut q = ledger(&d, with_manual(3));
-    for _ in 0..19 {
+    let mut c = with_report_gas();
+    c.max_fee_wei = gwei;
+    let mut q = ledger(&d, c);
+    // Fill every vote-side limit: agree count, vote spend, and the vote in-flight lane.
+    for _ in 0..20 {
         vote_settled(&mut q, true, T0).unwrap();
     }
+    assert!(vote_settled(&mut q, true, T0).is_err());
+    let big = Intent::tx(A_VOTE_DISAGREE, 6_000_000, gwei);
+    let held: Vec<u64> = (0..4)
+        .map(|_| q.reserve(&big, T0).unwrap().ticket.unwrap())
+        .collect();
+    assert_eq!(
+        q.reserve(&big, T0).unwrap_err(),
+        QuotaError::Inflight { cap: 4 }
+    );
+    // A report still goes through: no count, outside spend caps, its own lane.
+    let r = Intent::tx(A_REPORT, 400_000, gwei);
     let g = q.reserve(&r, T0).unwrap();
-    q.cancel(g.ticket.unwrap(), T0).unwrap();
-    assert_eq!(q.used(B_MANUAL_REPORT, T0), 1);
+    assert!(g.warnings.is_empty());
     assert_eq!(q.used(B_VOTE_AGREE, T0), 20);
-    // The report used the last agree slot: both another vote and another report are refused.
-    assert!(matches!(
-        vote_settled(&mut q, true, T0),
-        Err(QuotaError::Exceeded { .. })
-    ));
-    let r2 = Intent {
-        target: Some("42"),
-        ..r.clone()
-    };
-    assert_eq!(
-        q.reserve(&r2, T0).unwrap_err(),
-        QuotaError::Exceeded {
-            bucket: B_VOTE_AGREE.into(),
-            used: 20,
-            cap: 20
-        }
-    );
-    // The manual daily count is its own cap too.
-    let d = tempfile::tempdir().unwrap();
-    let mut q = ledger(&d, with_manual(2));
-    for t in ["1", "2"] {
-        let g = q
-            .reserve(
-                &Intent {
-                    target: Some(t),
-                    ..r.clone()
-                },
-                T0,
-            )
-            .unwrap();
-        q.cancel(g.ticket.unwrap(), T0).unwrap();
+    // Reports in flight do not block votes either.
+    for t in held {
+        q.settle(t, 6_000_000, gwei, T0).unwrap();
     }
+    let reps: Vec<u64> = (0..3)
+        .map(|_| q.reserve(&r, T0).unwrap().ticket.unwrap())
+        .collect();
+    assert_eq!(reps.len() + 1, q.inflight()); // four reports, no votes in flight
+    assert!(q.reserve(&vote(false), T0).is_ok());
+    // The report lane is a concurrency bound only: the fifth concurrent report waits,
+    // and settling one frees a slot at once.
     assert_eq!(
-        q.reserve(
-            &Intent {
-                target: Some("3"),
-                ..r.clone()
-            },
-            T0
-        )
-        .unwrap_err(),
-        QuotaError::Exceeded {
-            bucket: B_MANUAL_REPORT.into(),
-            used: 2,
-            cap: 2
-        }
+        q.reserve(&r, T0).unwrap_err(),
+        QuotaError::InflightReport { cap: 4 }
     );
+    q.settle(g.ticket.unwrap(), 300_000, gwei, T0).unwrap();
+    assert!(q.reserve(&r, T0).is_ok());
 }
 
 #[test]
-fn quota_manual_report_same_target_24h() {
+fn quota_report_offline_no_daily_limit() {
     let d = tempfile::tempdir().unwrap();
-    let mut q = ledger(&d, with_manual(10));
-    let r = |t: &'static str| Intent {
-        target: Some(t),
-        ..Intent::tx(A_MANUAL_REPORT, 400_000, GWEI_TENTH)
-    };
-    let g = q.reserve(&r("41"), T0).unwrap();
-    q.cancel(g.ticket.unwrap(), T0).unwrap();
-    // Same target within 24 h, including just after the UTC day boundary: refused.
-    let next_day = (T0 / 86_400 + 1) * 86_400 + 60;
-    for at in [T0 + 1, next_day, T0 + 86_399] {
-        assert_eq!(
-            q.reserve(&r("41"), at).unwrap_err(),
-            QuotaError::TargetRecent { window_sec: 86_400 }
-        );
+    let mut q = ledger(&d, with_report_gas());
+    // 2,000 reports in one UTC day, settled as they go: none is refused.
+    for _ in 0..2_000 {
+        let t = q.reserve(&report(), T0).unwrap().ticket.unwrap();
+        q.settle(t, 400_000, GWEI_TENTH, T0).unwrap();
     }
-    // Another target is fine; the same target after 24 h is fine.
-    let g = q.reserve(&r("42"), T0 + 10).unwrap();
-    q.cancel(g.ticket.unwrap(), T0 + 10).unwrap();
-    let g = q.reserve(&r("41"), T0 + 86_400).unwrap();
-    q.cancel(g.ticket.unwrap(), T0 + 86_400).unwrap();
-    // A report without a target is refused.
-    assert!(q
-        .reserve(
-            &Intent::tx(A_MANUAL_REPORT, 400_000, GWEI_TENTH),
-            T0 + 86_400
-        )
-        .is_err());
+    // No daily count can be configured for reports.
+    let mut c = with_report_gas();
+    c.daily.insert(A_REPORT.into(), 3);
+    let err = Quota::open(c, d.path().join("x.json")).err().unwrap();
+    assert!(err.contains("unknown bucket reportOffline"), "{err}");
+    // Until the node line's measured gas ceiling is configured, a report is refused
+    // (configuration, not a count), like markOnline.
+    let d = tempfile::tempdir().unwrap();
+    let mut q = ledger(&d, defaults());
+    assert_eq!(
+        q.reserve(&report(), T0).unwrap_err(),
+        QuotaError::GasCeilingUnset(A_REPORT.into())
+    );
 }
 
 #[test]
@@ -449,7 +416,7 @@ fn quota_unknown_selector_refused() {
         "registerFor",
         "declareOffline",
         "settleReport",
-        "reportOffline",
+        "reportOffline.manual",
         "voteReport",
         "",
     ] {
@@ -519,11 +486,9 @@ mod anchor {
         // Anchor receipts without a ledger do not start.
         assert!(Signer::start(cfg(&d, false)).is_err());
 
-        let until = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + 3600;
+        // Fixed clock (01:00 UTC), so the test never straddles midnight.
+        let now = T0 as i64;
+        let until = T0 + 3600;
         let req = |seq| Request::SignAnchorReceipt {
             node_id: "12".into(),
             online_seq: seq,
@@ -532,7 +497,7 @@ mod anchor {
         let s = Signer::start(cfg(&d, true)).unwrap();
         for seq in 1..=1000 {
             assert!(
-                matches!(s.handle(req(seq)), Response::Ok { .. }),
+                matches!(s.handle_at(req(seq), now), Response::Ok { .. }),
                 "receipt {seq}"
             );
         }
@@ -541,24 +506,30 @@ mod anchor {
             Response::Ok { .. } => panic!("signed past the cap"),
         };
         assert_eq!(
-            refused(s.handle(req(1001))),
+            refused(s.handle_at(req(1001), now)),
             "quota_exceeded:anchorReceipt 1000/1000"
         );
         // A bad request is refused on its fields before it touches the ledger.
-        assert!(refused(s.handle(Request::SignAnchorReceipt {
-            node_id: "5".into(),
-            online_seq: 1,
-            online_until: until
-        }))
+        assert!(refused(s.handle_at(
+            Request::SignAnchorReceipt {
+                node_id: "5".into(),
+                online_seq: 1,
+                online_until: until
+            },
+            now
+        ))
         .contains("anchor_fields"));
         drop(s);
         // Still refused after a restart.
         let s = Signer::start(cfg(&d, true)).unwrap();
         assert_eq!(
-            refused(s.handle(req(1002))),
+            refused(s.handle_at(req(1002), now)),
             "quota_exceeded:anchorReceipt 1000/1000"
         );
         // Other roles keep working.
-        assert!(matches!(s.handle(Request::Address), Response::Ok { .. }));
+        assert!(matches!(
+            s.handle_at(Request::Address, now),
+            Response::Ok { .. }
+        ));
     }
 }

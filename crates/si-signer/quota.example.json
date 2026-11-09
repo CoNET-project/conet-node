@@ -1,5 +1,5 @@
 {
-  "_note": "conet-signer --quota-config example. Every value is an N6 proposal (H8-2, H8-7) and is PENDING USER APPROVAL. reportOffline.manual (H8-12) is not set: manual reports stay refused until the user decides the daily count. markOnline, setOnline and extendOnline gas ceilings wait for measured gas x 1.5.",
+  "_note": "conet-signer --quota-config example. Every value is an N6 proposal (H8-2, H8-7) and is PENDING USER APPROVAL. reportOffline has no daily count of any kind (operator decision H8-12, 2026-11-08) and none can be configured; max_inflight_report is a concurrency lane only (suggested, pending). reportOffline, markOnline, setOnline and extendOnline gas ceilings wait for measured gas x 1.5.",
   "daily": {
     "voteReport.agree": 20,
     "voteReport.disagree": 200,
@@ -19,5 +19,5 @@
   "max_fee_wei": 100000000,
   "max_inflight": 4,
   "warn_percent": 80,
-  "manual_report_target_window_sec": 86400
+  "max_inflight_report": 4
 }
