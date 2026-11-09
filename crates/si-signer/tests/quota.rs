@@ -133,10 +133,28 @@ fn quota_report_offline_no_daily_limit() {
     c.daily.insert(A_REPORT.into(), 3);
     let err = Quota::open(c, d.path().join("x.json")).err().unwrap();
     assert!(err.contains("unknown bucket reportOffline"), "{err}");
-    // Until the node line's measured gas ceiling is configured, a report is refused
-    // (configuration, not a count), like markOnline.
+    // Default gas ceiling: the node line's measurement x 1.5. Above it is refused (a per-
+    // transaction bound, not a count); without the entry a report is refused as unset.
     let d = tempfile::tempdir().unwrap();
     let mut q = ledger(&d, defaults());
+    let at = |g| Intent::tx(A_REPORT, g, GWEI_TENTH);
+    let t = q
+        .reserve(&at(REPORT_OFFLINE_GAS_DEFAULT), T0)
+        .unwrap()
+        .ticket
+        .unwrap();
+    q.cancel(t, T0).unwrap();
+    assert_eq!(
+        q.reserve(&at(REPORT_OFFLINE_GAS_DEFAULT + 1), T0)
+            .unwrap_err(),
+        QuotaError::GasAboveCeiling {
+            action: A_REPORT.into(),
+            ceiling: REPORT_OFFLINE_GAS_DEFAULT
+        }
+    );
+    let mut c = defaults();
+    c.gas_ceiling.remove(A_REPORT);
+    let mut q = ledger(&tempfile::tempdir().unwrap(), c);
     assert_eq!(
         q.reserve(&report(), T0).unwrap_err(),
         QuotaError::GasCeilingUnset(A_REPORT.into())

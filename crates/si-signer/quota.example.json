@@ -1,5 +1,5 @@
 {
-  "_note": "conet-signer --quota-config example. Every value is an N6 proposal (H8-2, H8-7) and is PENDING USER APPROVAL. reportOffline has no daily count of any kind (operator decision H8-12, 2026-11-08) and none can be configured; max_inflight_report is a concurrency lane only (suggested, pending). reportOffline, markOnline, setOnline and extendOnline gas ceilings wait for measured gas x 1.5.",
+  "_note": "conet-signer --quota-config example. Every value is an N6 proposal (H8-2, H8-7) and is PENDING USER APPROVAL. reportOffline has no daily count of any kind (operator decision H8-12, 2026-11-08) and none can be configured; max_inflight_report is a concurrency lane only (suggested, pending). reportOffline gas ceiling 384731 = local measurement x 1.5 (re-measure on a CoNET fork before deployment); markOnline, setOnline and extendOnline gas ceilings wait for measured gas x 1.5.",
   "daily": {
     "voteReport.agree": 20,
     "voteReport.disagree": 200,
@@ -11,7 +11,8 @@
   "gas_ceiling": {
     "voteReport.agree": 6000000,
     "voteReport.disagree": 6000000,
-    "finalizeReport": 6000000
+    "finalizeReport": 6000000,
+    "reportOffline": 384731
   },
   "spend_vote_wei": 60000000000000000,
   "spend_anchor_net_wei": 40000000000000000,

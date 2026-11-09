@@ -29,6 +29,9 @@ pub const STATE_VERSION: u32 = 1;
 pub const DECIDING_VOTE_GAS_FLOOR: u64 = 6_000_000;
 /// maxFee may never be configured above 1 gwei (H8-7).
 pub const MAX_FEE_HARD_CAP_WEI: u64 = 1_000_000_000;
+/// reportOffline default gas ceiling: local measurement 256,487 x 1.5 (node line, 2026-11-08).
+/// Re-measure on a CoNET fork before deployment.
+pub const REPORT_OFFLINE_GAS_DEFAULT: u64 = 384_731;
 const DAY: u64 = 86_400;
 
 /// Actions the ledger knows. Anything else is refused as `unknown_selector`.
@@ -107,8 +110,8 @@ pub struct QuotaConfig {
 
 impl Default for QuotaConfig {
     /// N6 proposals (H8-2, H8-7), PENDING USER APPROVAL.
-    /// `reportOffline` has no daily count (H8-12, decided); its gas ceiling waits for the node
-    /// line's measured value, like markOnline / setOnline / extendOnline.
+    /// `reportOffline` has no daily count (H8-12, decided); its gas ceiling defaults to the
+    /// node line's local measurement x 1.5 (re-measure on a CoNET fork before deployment).
     fn default() -> Self {
         let daily = [
             (B_VOTE_AGREE, 20),
@@ -121,11 +124,16 @@ impl Default for QuotaConfig {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect();
-        // Only the two floors are known; the rest wait for measured gas x 1.5.
+        // voteReport / finalizeReport: the 6,000,000 floor covers the measured worst case x 1.5
+        // (deciding vote 3,857,848 -> 5,786,772; finalize 3,781,011 -> 5,671,517).
+        // reportOffline: local measurement x 1.5 (256,487 -> 384,731), node line 2026-11-08;
+        // re-measure on a CoNET fork before deployment. markOnline / setOnline / extendOnline
+        // still wait for measured gas x 1.5.
         let gas_ceiling = [
             (A_VOTE_AGREE, DECIDING_VOTE_GAS_FLOOR),
             (A_VOTE_DISAGREE, DECIDING_VOTE_GAS_FLOOR),
             (A_FINALIZE, DECIDING_VOTE_GAS_FLOOR),
+            (A_REPORT, REPORT_OFFLINE_GAS_DEFAULT),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
