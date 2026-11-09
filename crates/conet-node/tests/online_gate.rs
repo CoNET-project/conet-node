@@ -175,9 +175,10 @@ fn closed_case_or_existing_vote_means_no_send() {
     assert!(!executor_race_lost("StakeLocked"));
 }
 
-/// Approval decidable after 5 minutes, rejection only after 30 (user decision 2026-11-09).
+/// Approval decidable after 5 minutes, rejection only after 12 hours from the opening (user
+/// decisions 2026-11-09).
 #[test]
-fn approve_five_minutes_reject_thirty() {
+fn approve_five_minutes_reject_twelve_hours() {
     let t0 = 1_900_000_000;
     let ahead_yes = Tally {
         opened_at: t0,
@@ -194,8 +195,9 @@ fn approve_five_minutes_reject_thirty() {
         margin: 20,
     };
     assert!(!would_decide(&ahead_no, false, t0 + 300));
-    assert!(!would_decide(&ahead_no, false, t0 + 1_799));
-    assert!(would_decide(&ahead_no, false, t0 + 1_800));
+    assert!(!would_decide(&ahead_no, false, t0 + 1_800)); // the old 30 minutes no longer suffice
+    assert!(!would_decide(&ahead_no, false, t0 + 43_199));
+    assert!(would_decide(&ahead_no, false, t0 + 43_200));
     // Not at the margin: never deciding, whatever the time.
     assert!(!would_decide(
         &Tally {
@@ -206,5 +208,5 @@ fn approve_five_minutes_reject_thirty() {
         t0 + 3_600
     ));
     assert_eq!(decidable_from(&ahead_yes, true), t0 + 300);
-    assert_eq!(decidable_from(&ahead_no, false), t0 + 1_800);
+    assert_eq!(decidable_from(&ahead_no, false), t0 + 43_200);
 }

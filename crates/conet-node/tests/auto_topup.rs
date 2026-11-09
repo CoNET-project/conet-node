@@ -245,18 +245,15 @@ fn concurrent_paths_and_retries_never_over_fund() {
         nonce: 10,
         value: 5 * C,
     };
-    // Ours pending; the web deposit of 5 lands first: our pending top-up is replaced by a zero
-    // top-up at the same nonce (consumes the nonce, adds nothing).
+    // Ours pending; the web deposit of 5 lands first: no zero-value replacement (topUp(0)
+    // reverts); ours is only rebroadcast and lands, the extra 5 stays in the node's stake.
     let web_full = ChainView {
         stake: 10 * C,
         ..v.clone()
     };
     assert_eq!(
         plan(&web_full, Some(&rec), &cfg),
-        Plan::Replace {
-            nonce: 10,
-            value: 0
-        }
+        Plan::Rebroadcast { nonce: 10 }
     );
     // The web deposit of 3 lands first: ours is cut to the remaining 2, same nonce.
     let web_part = ChainView {

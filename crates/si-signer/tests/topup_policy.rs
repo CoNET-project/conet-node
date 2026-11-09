@@ -1,4 +1,5 @@
-//! AUTO-TOPUP main-wallet SignTx entry (approved 2026-11-09). TEST keys only, no network.
+//! AUTO-TOPUP main-wallet SignTx entry (用户已批准 2026-11-09, revised after N6's pre-review).
+//! TEST keys only, no network.
 use si_crypto::eth::EthKey;
 use si_signer::keystore;
 use si_signer::probe_role::{self, Origin, ProbeRole, Refuse};
@@ -175,7 +176,7 @@ fn amount_window_gas_rules() {
 }
 
 #[test]
-fn daily_and_term_caps_and_replacement() {
+fn rolling_24h_caps_term_budget_and_replacement() {
     let c = cfg();
     let r = |n, v| TopUpRequest {
         stated_missing: 10 * C,
@@ -183,55 +184,78 @@ fn daily_and_term_caps_and_replacement() {
     };
     let l1 = check(&c, &r(1, 4 * C), &fresh(), IN_WINDOW).unwrap();
     let l2 = check(&c, &r(2, 4 * C), &l1, IN_WINDOW).unwrap();
-    // Third transaction the same UTC day: refused.
+    // Third within 24 hours: refused. Daily value: 4 + 7 > 10.
     assert_eq!(
         check(&c, &r(3, C), &l2, IN_WINDOW),
         Err(TopUpRefuse::DailyCount)
     );
-    // Daily value: 4 + 7 > 10.
     assert_eq!(
         check(&c, &r(2, 7 * C), &l1, IN_WINDOW),
         Err(TopUpRefuse::DailyValue)
     );
-    // Next day: count resets, the term budget (12) still holds: 8 + 5 > 12.
-    let next_day = IN_WINDOW + 86_400;
+    // Rolling, not calendar: two just before midnight, then just after midnight still refused.
+    let midnight = (IN_WINDOW / 86_400 + 1) * 86_400;
+    let a = check(&c, &r(11, C), &fresh(), midnight - 60).unwrap();
+    let b = check(&c, &r(12, C), &a, midnight - 30).unwrap();
     assert_eq!(
-        check(&c, &r(3, 5 * C), &l2, next_day),
+        check(&c, &r(13, C), &b, midnight + 30),
+        Err(TopUpRefuse::DailyCount)
+    );
+    assert!(check(&c, &r(13, C), &b, midnight - 60 + 86_400).is_ok()); // 24 h after the first
+                                                                       // The term budget (12) holds across days: 8 + 5 > 12.
+    let later = IN_WINDOW + 86_400;
+    assert_eq!(
+        check(&c, &r(3, 5 * C), &l2, later),
         Err(TopUpRefuse::AboveBudget)
     );
-    assert!(check(&c, &r(3, 4 * C), &l2, next_day).is_ok());
-    // A same-nonce replacement books only the difference and does not count as a new one.
+    assert!(check(&c, &r(3, 4 * C), &l2, later).is_ok());
+    // Replacement: must be our own booked nonce, value not above the original; lowers the booking.
     let rep = TopUpRequest {
         replaces_nonce: Some(2),
         ..r(2, C)
     };
     let l3 = check(&c, &rep, &l2, IN_WINDOW).unwrap();
+    assert_eq!(l3.last_24h(IN_WINDOW), (2, 5 * C));
+    assert_eq!(l3.term_value(), 5 * C);
+    let up = TopUpRequest {
+        replaces_nonce: Some(2),
+        ..r(2, 4 * C + 1)
+    };
     assert_eq!(
-        (l3.day_count, l3.day_value, l3.term_value),
-        (2, 8 * C, 5 * C)
+        check(&c, &up, &l2, IN_WINDOW),
+        Err(TopUpRefuse::AboveReplaced)
     );
-    // Zero-value replacement (the web deposit already covered the gap) is allowed.
+    // A claimed replacement of a nonce the signer never signed: refused (no budget bypass).
+    let fake = TopUpRequest {
+        replaces_nonce: Some(9),
+        ..r(9, 4 * C)
+    };
+    assert_eq!(
+        check(&c, &fake, &l2, IN_WINDOW),
+        Err(TopUpRefuse::ReplaceUnknown)
+    );
+    // Mismatched nonce in the claim.
+    let odd = TopUpRequest {
+        replaces_nonce: Some(1),
+        ..r(5, C)
+    };
+    assert_eq!(
+        check(&c, &odd, &l2, IN_WINDOW),
+        Err(TopUpRefuse::ReplaceUnknown)
+    );
+    // Zero value: refused, also as a replacement (topUp(0) reverts; let the original land).
     let zero = TopUpRequest {
         replaces_nonce: Some(2),
         stated_missing: 0,
         ..req(2, 0)
     };
-    assert_eq!(check(&c, &zero, &l2, IN_WINDOW).unwrap().term_value, 4 * C);
-    // A different top-up reusing one of our nonces, or replacing an unknown one: refused.
     assert_eq!(
-        check(&c, &r(2, C), &l2, next_day),
-        Err(TopUpRefuse::ReplaceUnknown)
+        check(&c, &zero, &l2, IN_WINDOW),
+        Err(TopUpRefuse::ZeroValue)
     );
+    // A different top-up at one of our nonces without claiming replacement: refused.
     assert_eq!(
-        check(
-            &c,
-            &TopUpRequest {
-                replaces_nonce: Some(9),
-                ..r(9, C)
-            },
-            &l2,
-            IN_WINDOW
-        ),
+        check(&c, &r(2, C), &l2, later),
         Err(TopUpRefuse::ReplaceUnknown)
     );
 }
@@ -248,13 +272,13 @@ fn ledger_persists_across_restart() {
     drop(l);
     // Restarted: the day's two are remembered, a third is refused.
     let mut l = TopUpLedger::open(&path).unwrap();
-    assert_eq!(l.state.day_count, 2);
+    assert_eq!(l.state.last_24h(IN_WINDOW).0, 2);
     assert_eq!(
         l.sign(&c, &key, &req(3, C), IN_WINDOW),
         Err(TopUpRefuse::DailyCount)
     );
     // A refused request leaves the ledger as it was.
-    assert_eq!(TopUpLedger::open(&path).unwrap().state.day_count, 2);
+    assert_eq!(TopUpLedger::open(&path).unwrap().state.booked.len(), 2);
 }
 
 fn signer(dir: &tempfile::TempDir, topup: bool) -> Signer {

@@ -1,24 +1,27 @@
-//! Main-wallet `topUp(nodeId)` signing for AUTO-TOPUP. APPROVED by the user on 2026-11-09
-//! ("批准该条目"), exactly this entry and nothing else (other SignTx entries, e.g. votes, are
-//! approved separately).
+//! Main-wallet `topUp(nodeId)` signing for AUTO-TOPUP. 用户已批准（2026-11-09）: user approval
+//! "批准该条目", exactly this entry and nothing else (other SignTx entries, e.g. votes, are
+//! approved separately). Revised after N6's pre-review the same day (rolling 24 hours,
+//! replacements bound to the signer's own record, no zero-value replacement).
 //!
 //! The signer builds the transaction itself: `to` = the configured registry, `data` =
 //! `topUp(own nodeId)`, type 2, the configured chain id. The caller (conet-node) gives only nonce,
 //! fees, gas limit, value, and what it read from the chain (missing stake, wallet balance).
 //! Rules (N6 §H.8.24 14.1-14.3 as approved):
-//! - value > 0 (0 only as a same-nonce replacement of our own pending top-up), <= the stated
-//!   missing stake (which can only lower the value), <= the per-transaction cap, and within the
-//!   per-term budget;
+//! - value > 0 always (the contract's topUp reverts on 0), <= the stated missing stake (which can
+//!   only lower the value), <= the per-transaction cap, and within the per-term budget;
+//! - a replacement must match a transaction in the signer's OWN ledger: same nonce, value not above
+//!   the original (it can only lower what is booked); conet-node's claim alone counts for nothing;
 //! - only inside the window before the term end, computed by the signer from its own clock and the
 //!   configured first term end and term length;
-//! - at most `daily_count` transactions and `daily_value` per UTC day;
-//! - after signing the wallet keeps a gas reserve (balance as stated by conet-node: the signer
-//!   cannot read the chain);
+//! - at most `daily_count` transactions and `daily_value` in any rolling 24 hours of the signer's
+//!   own clock (not the calendar day: no 4 in a row across midnight);
+//! - after signing the wallet keeps a gas reserve. RESIDUAL RISK: the balance is the one conet-node
+//!   states; a hijacked conet-node can overstate it, and the signer, offline by design, cannot
+//!   check it.
 //! - the ledger is written to disk (temp file, fsync, rename) before the signature is released.
 use crate::tx1559::{parse_address, Tx1559};
 use serde::{Deserialize, Serialize};
 use si_crypto::eth::{keccak256, EthKey};
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 mod dec {
@@ -95,6 +98,8 @@ pub struct TopUpRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TopUpRefuse {
+    /// A replacement above the value the signer booked for that nonce.
+    AboveReplaced,
     NotType2,
     WrongTo,
     Creation,
@@ -155,35 +160,54 @@ pub fn check_tx_bytes(
     Ok(())
 }
 
-/// Persistent ledger: today's count and value, this term's value, and the value booked per nonce
-/// (so a same-nonce replacement books only the difference).
+/// One signed top-up as booked by the signer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Booked {
+    /// Signer clock when first signed (replacements keep it).
+    pub at: u64,
+    pub nonce: u64,
+    #[serde(with = "dec")]
+    pub value: u128,
+    /// The term end it was signed for.
+    pub term_end: u64,
+}
+
+/// Persistent ledger: the top-ups signed in the current term (with their time, for the rolling
+/// 24-hour caps) and the term they belong to.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerState {
-    pub day: u64,
-    pub day_count: u32,
-    #[serde(with = "dec")]
-    pub day_value: u128,
     pub term_end: u64,
-    #[serde(with = "dec")]
-    pub term_value: u128,
-    pub booked: BTreeMap<u64, String>,
+    pub booked: Vec<Booked>,
 }
 
 impl LedgerState {
-    fn roll(&mut self, day: u64, term_end: u64) {
-        if self.day != day {
-            self.day = day;
-            self.day_count = 0;
-            self.day_value = 0;
-        }
-        if self.term_end != term_end {
-            self.term_end = term_end;
-            self.term_value = 0;
-            self.booked.clear();
-        }
+    /// Keep what still matters: this term's entries (budget, replacements) and the last 24 hours
+    /// (daily caps).
+    fn roll(&mut self, term_end: u64, clock: u64) {
+        self.term_end = term_end;
+        self.booked
+            .retain(|b| b.term_end == term_end || b.at + 86_400 > clock);
     }
-    fn booked(&self, nonce: u64) -> Option<u128> {
-        self.booked.get(&nonce).and_then(|v| v.parse().ok())
+    /// Count and value signed in the 24 hours before `clock`.
+    pub fn last_24h(&self, clock: u64) -> (u32, u128) {
+        self.booked
+            .iter()
+            .filter(|b| b.at + 86_400 > clock)
+            .fold((0, 0), |(n, v), b| (n + 1, v + b.value))
+    }
+    /// Value booked for the current term.
+    pub fn term_value(&self) -> u128 {
+        self.booked
+            .iter()
+            .filter(|b| b.term_end == self.term_end)
+            .map(|b| b.value)
+            .sum()
+    }
+    /// Our booked transaction at this nonce in the current term.
+    fn find(&self, nonce: u64) -> Option<usize> {
+        self.booked
+            .iter()
+            .position(|b| b.nonce == nonce && b.term_end == self.term_end)
     }
 }
 
@@ -195,7 +219,7 @@ pub fn check(
     clock: u64,
 ) -> Result<LedgerState, TopUpRefuse> {
     check_tx_bytes(cfg, 2, Some(&cfg.registry), &cfg.calldata())?;
-    if req.value == 0 && req.replaces_nonce.is_none() {
+    if req.value == 0 {
         return Err(TopUpRefuse::ZeroValue);
     }
     if req.value > req.stated_missing {
@@ -224,39 +248,42 @@ pub fn check(
         return Err(TopUpRefuse::GasReserve);
     }
     let mut l = ledger.clone();
-    l.roll(clock / 86_400, end);
-    let previous = match req.replaces_nonce {
+    l.roll(end, clock);
+    match req.replaces_nonce {
         Some(n) => {
-            if n != req.nonce {
-                return Err(TopUpRefuse::ReplaceUnknown);
+            // Must be ours: same nonce, booked by this signer in this term, value not above it.
+            let i = match l.find(n) {
+                Some(i) if n == req.nonce => i,
+                _ => return Err(TopUpRefuse::ReplaceUnknown),
+            };
+            if req.value > l.booked[i].value {
+                return Err(TopUpRefuse::AboveReplaced);
             }
-            Some(l.booked(n).ok_or(TopUpRefuse::ReplaceUnknown)?)
+            l.booked[i].value = req.value; // lowers what is booked; count and time unchanged
         }
         None => {
-            if l.booked(req.nonce).is_some() {
+            if l.find(req.nonce).is_some() {
                 // A second, different top-up at a nonce already used by ours: only as a replacement.
                 return Err(TopUpRefuse::ReplaceUnknown);
             }
-            None
+            let (n, v) = l.last_24h(clock);
+            if n >= cfg.daily_count {
+                return Err(TopUpRefuse::DailyCount);
+            }
+            if v.saturating_add(req.value) > cfg.daily_value {
+                return Err(TopUpRefuse::DailyValue);
+            }
+            if l.term_value().saturating_add(req.value) > cfg.term_budget {
+                return Err(TopUpRefuse::AboveBudget);
+            }
+            l.booked.push(Booked {
+                at: clock,
+                nonce: req.nonce,
+                value: req.value,
+                term_end: end,
+            });
         }
-    };
-    let prev = previous.unwrap_or(0);
-    let add = req.value.saturating_sub(prev);
-    if previous.is_none() && l.day_count >= cfg.daily_count {
-        return Err(TopUpRefuse::DailyCount);
     }
-    if l.day_value.saturating_add(add) > cfg.daily_value {
-        return Err(TopUpRefuse::DailyValue);
-    }
-    if l.term_value.saturating_add(add) > cfg.term_budget {
-        return Err(TopUpRefuse::AboveBudget);
-    }
-    if previous.is_none() {
-        l.day_count += 1;
-    }
-    l.day_value = l.day_value.saturating_add(add);
-    l.term_value = (l.term_value + req.value).saturating_sub(prev);
-    l.booked.insert(req.nonce, req.value.to_string());
     Ok(l)
 }
 

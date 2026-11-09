@@ -206,10 +206,12 @@ pub fn executor_race_lost(revert_name: &str) -> bool {
     matches!(revert_name, "AdmissionState" | "AlreadyVoted")
 }
 
-/// Minimum open time before a verdict (user decision 2026-11-09, "驳回加长到 30 分"): an approval
-/// may be decided after 5 minutes, a rejection only after 30. Offline reports are unchanged.
+/// Minimum open time before a verdict, counted from the case opening (user decisions 2026-11-09;
+/// the earlier "30 minutes" was corrected to 12 hours): an approval may be decided after 5
+/// minutes, a rejection only after 12 hours. Offline reports are unchanged. Independent of the
+/// 12-hour recovery cooldown after going offline (different starting event).
 pub const APPROVE_MIN_OPEN: u64 = 300;
-pub const REJECT_MIN_OPEN: u64 = 1_800;
+pub const REJECT_MIN_OPEN: u64 = 43_200;
 
 /// Tally of an online case as the chain reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

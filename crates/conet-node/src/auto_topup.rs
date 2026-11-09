@@ -75,8 +75,10 @@ pub enum Plan {
     /// THAT transaction (same nonce, same content), never a new one.
     Rebroadcast { nonce: u64 },
     /// The other path (the operator's web deposit) moved the chain stake while ours was still
-    /// unmined: replace OUR transaction at the same nonce with the remaining gap (0 = a
-    /// zero-value top-up that only consumes the nonce), so the two paths never over-fund.
+    /// unmined and a gap remains: replace OUR transaction at the same nonce with the smaller
+    /// remaining gap. If the web deposit covered the whole gap, ours is NOT replaced by a zero
+    /// top-up (topUp(0) reverts and only burns gas; not in the approved entry): it lands as is and
+    /// the extra stays in the node's stake.
     Replace { nonce: u64, value: u128 },
     /// Send `topUp(nodeId)` with exactly this value.
     Send { value: u128 },
@@ -105,7 +107,7 @@ pub fn plan(v: &ChainView, inflight: Option<&InFlight>, cfg: &Config) -> Plan {
     // it and `need` is recomputed from the chain, so a restart or a repeated run never adds twice.
     if let Some(f) = inflight {
         if v.wallet_nonce <= f.nonce {
-            return if need < f.value {
+            return if need > 0 && need < f.value {
                 Plan::Replace {
                     nonce: f.nonce,
                     value: need,
