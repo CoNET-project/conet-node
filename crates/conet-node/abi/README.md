@@ -2,10 +2,11 @@
 
 Compiled from the node line's NodeRegistryV2 sources (not yet committed upstream), in a scratch
 copy so the node line's tree is not touched, with its `hardhat.node-registry.config.ts` (solc
-0.8.35, cancun). Refreshed 2026-11-09 for the stake term and per-voter fines
-(`lockCapacityOf`, `termStateOf`, `settleTerms`). Source fingerprint (sha256 of all `.sol` files
-concatenated in sorted path order, first 16 hex): `12123775fbd4e434` (previous ABI:
-`bee380fd2c26bd66…`, computed per-file).
+0.8.35, cancun). Refreshed 2026-11-09 to the node line's tree with the stake term, per-voter fines, online fee,
+12-hour offline cooldown and online-vote settlement. Source fingerprint (sha256 of all `.sol`
+files concatenated in sorted path order, first 16 hex): `a18191abf5c80d05` (before:
+`12123775fbd4e434`, `bee380fd2c26bd66…` computed per-file). Refresh: `tools/abi-refresh.py
+<copy>/artifacts/node-registry/src/b-unit/node-registry-v2`.
 
 `NodeRegistryV2.json` = the core ABI (minus `getNodeRaw`) + events and errors of the linked
 libraries (`NodeAdminLib`, `RegistrationLib`, `OfflineReportLib`, `AdmissionLib`) + the functions,

@@ -240,7 +240,7 @@ pub fn pick(v: &VoterView, reports: &[ReportView], my_choices: &[u8], now: u64) 
 // ---- chain reads ----
 
 /// Words in `getNodeRaw`'s `Node` struct (all static members; `uint32[3] anchors` takes three).
-/// Pinned to the node line's contract source set `12123775fbd4e434` (abi/README.md): 40 members
+/// Pinned to the node line's contract source set `a18191abf5c80d05` (abi/README.md): 40 members
 /// with the stake-term fields (termEnd, termBase, termLength, stakeStop) appended.
 pub const NODE_RAW_WORDS: usize = 42;
 const W_SERVICES: usize = 5;

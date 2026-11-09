@@ -378,6 +378,11 @@
     "internalType": "uint256",
     "name": "admissionEscrow",
     "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "onlineAccounts",
+    "type": "uint256"
    }
   ],
   "stateMutability": "view",
@@ -1651,6 +1656,26 @@
       "internalType": "uint64",
       "name": "mailboxChangeFine",
       "type": "uint64"
+     },
+     {
+      "internalType": "uint8",
+      "name": "ovVoterScope",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint8",
+      "name": "ovRejectedRoles",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint8",
+      "name": "ovNoStack",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "ovMaxPaidVoters",
+      "type": "uint16"
      }
     ],
     "internalType": "struct Params",
@@ -4992,6 +5017,278 @@
   "type": "event"
  },
  {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "nextLength",
+    "type": "uint32"
+   }
+  ],
+  "name": "TermLengthSet",
+  "type": "event"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint64",
+    "name": "until",
+    "type": "uint64"
+   }
+  ],
+  "name": "OfflineCooldown",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "OnlineFeeRequired",
+  "type": "error"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "released",
+    "type": "uint256"
+   }
+  ],
+  "name": "OnlineCaseClosed",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "proposerId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "funded",
+    "type": "bool"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "reserved",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "poolAfter",
+    "type": "uint256"
+   }
+  ],
+  "name": "OnlineCaseOpened",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "needed",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "pool",
+    "type": "uint256"
+   }
+  ],
+  "name": "OnlineCaseUnfunded",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "OnlineFeeCollected",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "payer",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "OnlineFeeHeld",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "payer",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "OnlineFeeRefunded",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "role",
+    "type": "uint8"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "OnlineRolePaid",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "won",
+    "type": "bool"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "paid",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "fined",
+    "type": "uint256"
+   }
+  ],
+  "name": "OnlineVoteSettled",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "from",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "VoteRewardPoolFunded",
+  "type": "event"
+ },
+ {
   "inputs": [
    {
     "internalType": "bytes32",
@@ -5113,6 +5410,19 @@
  {
   "inputs": [
    {
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   }
+  ],
+  "name": "closeOnlineCase",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
     "internalType": "uint256",
     "name": "nodeId",
     "type": "uint256"
@@ -5153,6 +5463,13 @@
   "name": "finalizeRecovery",
   "outputs": [],
   "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "fundVoteRewardPool",
+  "outputs": [],
+  "stateMutability": "payable",
   "type": "function"
  },
  {
@@ -5480,6 +5797,129 @@
  {
   "inputs": [
    {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "offlineSinceOf",
+  "outputs": [
+   {
+    "internalType": "uint64",
+    "name": "",
+    "type": "uint64"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "onlineAccounts",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "pool",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "reserved",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "feeEscrow",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "feeCollected",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   }
+  ],
+  "name": "onlineCaseOf",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint128",
+      "name": "reserved",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint64",
+      "name": "proposerId",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "executorId",
+      "type": "uint64"
+     },
+     {
+      "internalType": "address",
+      "name": "feePayer",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "fee",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint8",
+      "name": "verdict",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "funded",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint32",
+      "name": "cursor",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint32",
+      "name": "paidVoters",
+      "type": "uint32"
+     }
+    ],
+    "internalType": "struct OnlineCase",
+    "name": "c",
+    "type": "tuple"
+   },
+   {
+    "internalType": "uint256",
+    "name": "agreeCount",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "disagreeCount",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
     "internalType": "address",
     "name": "nodeWallet",
     "type": "address"
@@ -5685,7 +6125,7 @@
     "type": "bytes32"
    }
   ],
-  "stateMutability": "nonpayable",
+  "stateMutability": "payable",
   "type": "function"
  },
  {
@@ -5726,6 +6166,30 @@
   ],
   "name": "setProbeSigner",
   "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "maxSteps",
+    "type": "uint256"
+   }
+  ],
+  "name": "settleOnlineVote",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
   "stateMutability": "nonpayable",
   "type": "function"
  },

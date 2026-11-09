@@ -306,3 +306,48 @@ fn hot_wallet_short_or_gas_short() {
         }
     );
 }
+
+/// Recovery precheck (12-hour cooldown, online fee, stake) against the real contract: for every
+/// recorded state our first blocker, in the contract's check order (stake, cooldown, fee), is the
+/// error the contract returned, and "no blocker" is exactly when the contract accepted.
+#[test]
+fn recovery_precheck_matches_the_contract() {
+    use conet_node::online_gate::{offline_since, precheck_recovery, RecoveryView};
+    let f = fixture();
+    let cases = f["B"]["recoveryCases"].as_array().unwrap();
+    assert_eq!(cases.len(), 5);
+    for c in cases {
+        let label = c["label"].as_str().unwrap();
+        let v = RecoveryView {
+            // eth_call runs in the next block (latest + 1).
+            now: n(&c["now"]) as u64 + 1,
+            offline_since: offline_since(n(&c["outOfServiceSince"]) as u64, None),
+            stake: n(&c["stake"]),
+            locked: n(&c["locked"]),
+            latest_threshold: n(&c["minStakeNow"]),
+            fee_balance: n(&c["feeSent"]),
+        };
+        let b = precheck_recovery(&v);
+        let ours = if b.stake_missing.is_some() {
+            "InsufficientStake"
+        } else if b.wait.is_some() {
+            "OfflineCooldown"
+        } else if b.fee_missing.is_some() {
+            "OnlineFeeRequired"
+        } else {
+            "ok"
+        };
+        assert_eq!(ours, c["answer"].as_str().unwrap(), "{label}: {b:?}");
+    }
+    // The "5 seconds before" case tells the operator the exact wait.
+    let early = &cases[2];
+    let b = precheck_recovery(&RecoveryView {
+        now: n(&early["now"]) as u64 + 1,
+        offline_since: n(&early["outOfServiceSince"]) as u64,
+        stake: n(&early["stake"]),
+        locked: n(&early["locked"]),
+        latest_threshold: n(&early["minStakeNow"]),
+        fee_balance: n(&early["feeSent"]),
+    });
+    assert_eq!(b.wait, Some(4));
+}

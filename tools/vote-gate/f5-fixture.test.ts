@@ -64,10 +64,12 @@ describe("F5 vote gate fixture (stake-term, per-voter fine)", function () {
     await time.increase(30 * DAY + 60);
     const w = await fundedWallet();
     const key = await newKey("ten");
-    await reg.connect(w).applyAdmission({ operator: ethers.ZeroAddress, beneficiary: ethers.ZeroAddress, tcpPort: 443, udpPort: 9990, services: SVC.ENTRY | SVC.MAINT, keyId: key.keyId, proposerNodeId: N[0].id, deadline: (await now()) + 3600n, termLength: 15_768_000 }, "172.31.0.1", pgpBytes(key), { value: E(10) });
+    await reg.connect(w).applyAdmission({ operator: ethers.ZeroAddress, beneficiary: ethers.ZeroAddress, tcpPort: 443, udpPort: 9990, services: SVC.ENTRY | SVC.MAINT, keyId: key.keyId, proposerNodeId: N[0].id, deadline: (await now()) + 3600n, termLength: 15_768_000 }, "172.31.0.1", pgpBytes(key), { value: E(10) + E("0.01") }); // stake + online fee
     const appId = await reg.pendingAdmissionOf(w.address);
     await reg.connect(N[0].wallet).proposeAdmission(appId);
-    for (let i = 1; i <= 20; i++) await reg.connect(N[i].wallet).voteAdmission(appId, true);
+    // The proposal is the proposer's agree vote; vote until the margin is reached (a vote after the
+    // deciding one reverts: the case is closed).
+    for (let i = 1; i <= 20; i++) { try { await reg.connect(N[i].wallet).voteAdmission(appId, true); } catch { break; } }
     await time.increase(300);
     await reg.finalizeAdmission(appId);
     const X = { id: await reg.nodeIdOfNodeWallet(w.address), wallet: w };

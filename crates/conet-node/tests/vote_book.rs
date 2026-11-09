@@ -121,3 +121,32 @@ fn revoked_or_changed_probe_stops_sending() {
         Pick::NodeNotEligible
     );
 }
+
+/// Main and probe wallet of one node never hold two votes in flight on the same case: the book is
+/// per node and case, not per wallet.
+#[test]
+fn main_and_probe_never_both_in_flight() {
+    use conet_node::vote_book::*;
+    let mut b = VoteBook::default();
+    let case = [7u8; 32];
+    let probe = Wallet::Probe("0xprobe".into());
+    let main = Wallet::Main("0xmain".into());
+    assert_eq!(
+        b.pick(Entry::Recovery, case, false, Some(probe.clone())),
+        Pick::Send(probe.clone())
+    );
+    assert!(b.book(Entry::Recovery, case, probe.clone(), "0xtx1"));
+    // The main wallet (fallback) is refused for the same case while the probe vote is in flight.
+    assert_eq!(
+        b.pick(Entry::Recovery, case, false, Some(main.clone())),
+        Pick::AlreadyBooked(probe)
+    );
+    assert!(!b.book(Entry::Recovery, case, main, "0xtx2"));
+    // Another case is independent.
+    assert!(b.book(
+        Entry::Recovery,
+        [8u8; 32],
+        Wallet::Main("0xmain".into()),
+        "0xtx3"
+    ));
+}

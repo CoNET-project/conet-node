@@ -149,3 +149,28 @@ fn economics_win_plus_lose_minus_one_milli() {
     assert!(executor_worth_it(true, false, 200_000, gwei, 5_000)); // 0.002 expected vs 0.0002 gas
     assert!(!executor_worth_it(true, false, 1_900_000, 10 * gwei, 5_000)); // 0.019 gas > 0.002
 }
+
+/// One valid vote per node per case; the deciding vote closes the case (project decision
+/// 2026-11-09): a closed case or an existing vote of this node (any wallet) means no send.
+#[test]
+fn closed_case_or_existing_vote_means_no_send() {
+    let me = 42;
+    let c = CaseView {
+        proposer: 9,
+        applicant: 7,
+        voted: false,
+        open: true,
+    };
+    assert_eq!(
+        may_vote_online(me, &CaseView { open: false, ..c }, C),
+        Err(OnlineSkip::NotOpen)
+    );
+    assert_eq!(
+        may_vote_online(me, &CaseView { voted: true, ..c }, C),
+        Err(OnlineSkip::AlreadyVoted)
+    );
+    // The executor strategy lost the race: expected, no retry, no error.
+    assert!(executor_race_lost("AdmissionState"));
+    assert!(executor_race_lost("AlreadyVoted"));
+    assert!(!executor_race_lost("StakeLocked"));
+}

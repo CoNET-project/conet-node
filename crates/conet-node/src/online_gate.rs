@@ -122,11 +122,15 @@ pub fn review(ballot: &Ballot, free_balance: u128) -> ProposeDecision {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaseView {
-    /// The case's proposer node id (contract record).
+    /// The case's proposer node id (contract record). Its proposal is its one vote.
     pub proposer: u64,
     /// The applicant node id (0 for a first admission with no node yet).
     pub applicant: u64,
+    /// The contract already holds a vote of this node id in the case (any wallet: main, probe,
+    /// delegate), or this node has one booked in flight (`vote_book`).
     pub voted: bool,
+    /// Still voting: false once the deciding vote locked the verdict (batch settlement after it
+    /// never reopens voting).
     pub open: bool,
 }
 
@@ -193,4 +197,11 @@ pub fn vote_expectation(win_bps: u128, gas_cost: u128) -> i128 {
     let p = win_bps.min(10_000) as i128;
     let s = VOTE_STAKE as i128;
     s * p / 10_000 - s * (10_000 - p) / 10_000 - gas_cost as i128
+}
+
+/// Optional executor strategy: a deciding-vote attempt that reverts because the case closed in
+/// the meantime (someone else cast the deciding vote) or this node's vote already counts is an
+/// expected race loss: no retry, not reported as an error.
+pub fn executor_race_lost(revert_name: &str) -> bool {
+    matches!(revert_name, "AdmissionState" | "AlreadyVoted")
 }
