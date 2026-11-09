@@ -205,3 +205,39 @@ pub fn vote_expectation(win_bps: u128, gas_cost: u128) -> i128 {
 pub fn executor_race_lost(revert_name: &str) -> bool {
     matches!(revert_name, "AdmissionState" | "AlreadyVoted")
 }
+
+/// Minimum open time before a verdict (user decision 2026-11-09, "驳回加长到 30 分"): an approval
+/// may be decided after 5 minutes, a rejection only after 30. Offline reports are unchanged.
+pub const APPROVE_MIN_OPEN: u64 = 300;
+pub const REJECT_MIN_OPEN: u64 = 1_800;
+
+/// Tally of an online case as the chain reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tally {
+    pub opened_at: u64,
+    pub agree: u32,
+    pub disagree: u32,
+    pub margin: u32,
+}
+
+/// Would this node's vote (`agree`) be the deciding one at `now`: it brings its side to the
+/// margin and that side's minimum open time has passed. The contract's exact rule is pending the
+/// node line; this follows the decision.
+pub fn would_decide(t: &Tally, agree: bool, now: u64) -> bool {
+    let (mine, other, min) = if agree {
+        (t.agree + 1, t.disagree, APPROVE_MIN_OPEN)
+    } else {
+        (t.disagree + 1, t.agree, REJECT_MIN_OPEN)
+    };
+    mine >= other + t.margin && now >= t.opened_at + min
+}
+
+/// Earliest time a vote for `agree` could decide the case (for the executor strategy's timing).
+pub fn decidable_from(t: &Tally, agree: bool) -> u64 {
+    t.opened_at
+        + if agree {
+            APPROVE_MIN_OPEN
+        } else {
+            REJECT_MIN_OPEN
+        }
+}
