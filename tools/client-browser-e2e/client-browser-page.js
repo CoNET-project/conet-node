@@ -78,12 +78,12 @@
   N.refresh = async () => { const t = Date.now(); while (!N.ui || N.ui.at <= t) await new Promise((r) => setTimeout(r, 50)); return document.getElementById('status').textContent }
 
   // Send a transaction the client signs itself (type 2, explicit gas so a revert is reported by the chain).
-  N.tx = async (fn, args, gasLimit = 1_500_000) => {
+  N.tx = async (fn, args, gasLimit = 1_500_000, value = 0n) => {
     try {
       // Nonce straight from the chain: ethers' short request cache can hand back a stale one right
       // after a refused (but mined) transaction.
       const nonce = Number(await window.rpc('eth_getTransactionCount', [N.wallet.address, 'pending']))
-      const tx = await N.reg[fn](...args, { gasLimit, nonce })
+      const tx = await N.reg[fn](...args, { gasLimit, nonce, value: BigInt(value) })
       // Receipt polled straight from the chain (no ethers cache or block subscription), 15 s limit.
       let rc = null
       for (let i = 0; i < 300 && !rc; i++) {
@@ -114,8 +114,9 @@
     return { fp: N.fp, endpointHash: N.ep }
   }
 
-  N.requestRecovery = async (ttl) => {
-    const r = await N.tx('requestRecovery', [N.cfg.nodeId, { tcpPort: 0, udpPort: 0, endpointHash: N.ep, mode: 1, servicesNow: N.cfg.servicesNow, ttl }, ''])
+  // The main wallet pays the 0.01 online fee with the request (refunded if the recovery fails).
+  N.requestRecovery = async (ttl, fee = '10000000000000000') => {
+    const r = await N.tx('requestRecovery', [N.cfg.nodeId, { tcpPort: 0, udpPort: 0, endpointHash: N.ep, mode: 1, servicesNow: N.cfg.servicesNow, ttl }, ''], 1_500_000, fee)
     const ev = (r.logs || []).find((l) => l.name === 'RecoveryRequested')
     r.recId = ev ? ethers.zeroPadValue(ethers.toBeHex(BigInt(ev.args[0])), 32) : null
     return r

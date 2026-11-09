@@ -3,7 +3,8 @@
 //   1. browser node goes offline by its own setOffline
 //   2. recovery: requestRecovery (D8 endpoint hash) -> 20 voters challenge the browser over real
 //      WebRTC (own getStats path, both DTLS fingerprints) -> voteRecovery -> finalize -> online
-//   3. reverse: markOnline / setOnline without a vote are refused; an endpoint change during the
+//   3. reverse: markOnline / setOnline without a vote are refused; a request inside the 12-hour
+//      offline cooldown or without the 0.01 online fee is refused; an endpoint change during the
 //      vote voids the old request and its votes (after the node line's 5-minute request gap, C17)
 // The browser-node page is a TEST-HARNESS client (no product browser-node client exists yet).
 // Voters are simulated by this script (their WebRTC ends run in a second Chrome page).
@@ -194,8 +195,24 @@ describe("CLIENT-BROWSER · Chrome browser node + local chain end to end", funct
   });
 
   it("2+3b. recovery over real WebRTC; an endpoint change mid-vote voids the old request; 20 votes bring it online", async () => {
-    // First request: certificate 1.
+    // First request: certificate 1. Project decision "上线表决防刷": no recovery within 12 hours of
+    // going offline, and the 0.01 online fee comes with the request.
     const c1 = await nodePage.evaluate(() => (window as any).N.newCert());
+    const inCooldown = await nodePage.evaluate(() => (window as any).N.requestRecovery(1800));
+    log("step3c requestRecovery inside the 12-hour cooldown", { ok: inCooldown.ok, error: inCooldown.error });
+    // Soft check: record and go on, fail at the end, so every step still runs and is reported.
+    const soft: string[] = [];
+    if (inCooldown.ok || inCooldown.error !== "OfflineCooldown") {
+      const raw = await ctx.reg.getNodeRaw(B.id);
+      soft.push(`3c: recovery inside the 12-hour cooldown was ${inCooldown.ok ? "ACCEPTED" : inCooldown.error} (outOfServiceSince=${raw.outOfServiceSince}, onlineFrom=${raw.onlineFrom}, onlineUntil=${raw.onlineUntil} after the browser's setOffline)`);
+    }
+    await time.increase(43_200);
+    const noFee = await nodePage.evaluate(() => (window as any).N.requestRecovery(1800, "0"));
+    log("step3c requestRecovery after the cooldown without the online fee", { ok: noFee.ok, error: noFee.error });
+    expect(noFee.ok).to.equal(false);
+    expect(noFee.error).to.equal("OnlineFeeRequired");
+    results["3c online fee enforced"] = "passed";
+    results["3c 12-hour cooldown after the browser's own setOffline"] = soft.length ? "FAILED (contract)" : "passed";
     const r1 = await nodePage.evaluate(() => (window as any).N.requestRecovery(1800));
     log("step2 requestRecovery #1 from the browser page", { fp: c1.fp.slice(0, 23) + "…", endpointHash: c1.endpointHash, tx: r1.hash, ok: r1.ok, recId: r1.recId });
     expect(r1.ok).to.equal(true);
@@ -270,5 +287,7 @@ describe("CLIENT-BROWSER · Chrome browser node + local chain end to end", funct
     expect(await lensHas(B.id)).to.equal(true);
     expect(ui).to.equal("online lens=listed");
     results["2 recovery by 20 WebRTC-checked votes"] = "passed";
+    log("soft failures", soft);
+    expect(soft, soft.join("; ")).to.deep.equal([]);
   });
 });
