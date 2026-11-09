@@ -371,3 +371,57 @@ fn waits_while_the_main_wallet_has_other_transactions_in_flight() {
     };
     assert_eq!(plan(&clear, None, &cfg), Plan::Send { value: 5 * C });
 }
+
+/// Project decision 2026-11-09: rewards first fill the node's own stake gap. The plan reads the
+/// chain stake every run, so a reward credited into stake shrinks (or closes) the gap and the node
+/// sends only the rest.
+#[test]
+fn rewards_credited_into_stake_reduce_the_top_up() {
+    let cfg = Config::default();
+    let now = END - 3 * DAY;
+    assert_eq!(
+        plan(&synthetic(5 * C, 10 * C, 100 * C, now), None, &cfg),
+        Plan::Send { value: 5 * C }
+    );
+    // 0.011 CNET of rewards landed in stake since the last run.
+    let after_reward = synthetic(5 * C + 11 * C / 1000, 10 * C, 100 * C, now);
+    assert_eq!(
+        plan(&after_reward, None, &cfg),
+        Plan::Send {
+            value: 5 * C - 11 * C / 1000
+        }
+    );
+    // Rewards covered the whole gap: nothing to send.
+    assert_eq!(
+        plan(&synthetic(10 * C, 10 * C, 100 * C, now), None, &cfg),
+        Plan::Covered
+    );
+}
+
+/// Stake refilled (by rewards or a top-up) while the node is offline: the precheck only clears the
+/// way to REQUEST recovery; the node stays offline until a recovery vote passes.
+#[test]
+fn refilled_stake_never_means_online() {
+    use conet_node::online_gate::{precheck_recovery, RecoveryView};
+    use conet_node::recovery::{Node, OfflineReason, State};
+    let v = RecoveryView {
+        now: END + 50_000,
+        offline_since: END,
+        last_rejected_at: 0,
+        open_case_opened_at: None,
+        stake: 10 * C,
+        locked: 0,
+        latest_threshold: 10 * C,
+        fee_balance: C,
+    };
+    assert!(precheck_recovery(&v).clear());
+    let mut n = Node::offline_because(OfflineReason::StakeShortfall { topped_up: false });
+    n.stake_topped_up();
+    assert_eq!(n.state, State::Offline);
+    assert!(n.open([1; 32], [2; 32]).is_ok()); // may request; the vote decides
+    assert_eq!(n.state, State::Offline);
+    assert_eq!(
+        n.mark_online_direct(),
+        Err(conet_node::recovery::Refused::RecoveryVoteRequired)
+    );
+}
