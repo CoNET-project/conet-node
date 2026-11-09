@@ -416,7 +416,7 @@ fn recovery_state_rules() {
     );
     n.vote(app, v2, 11, Verdict::Approve(direct.clone()))
         .unwrap();
-    n.vote(app, v2, 12, Verdict::Unreachable).unwrap();
+    // Voter 12 could not reach it: it does not vote at all (D3), nothing is recorded.
     // Only one approval for v2 (the v1 one was voided): stays offline.
     assert_eq!(n.resolve(t), Ok(Outcome::StayedOffline));
     assert_eq!(n.state, State::Offline);

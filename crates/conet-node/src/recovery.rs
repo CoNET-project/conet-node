@@ -28,11 +28,12 @@ pub enum State {
 pub enum Verdict {
     /// Every check passed; the class the voter's own observation proves.
     Approve(EndpointClass),
-    /// Provable impersonation (wrong key, wallet, DTLS, endpoint): evidence kept.
+    /// The applicant's own signed reply contradicts the request (`ballot::attributable`, seen
+    /// twice): evidence kept. On chain this is a disagree vote.
     RejectWithEvidence,
-    /// Timeout, no connection, nothing decryptable: not evidence of anything.
-    Unreachable,
 }
+// D3 (2026-11-08): no "unreachable" ballot. A voter that cannot reach or cannot prove anything
+// does not vote at all (`ballot::Ballot::NoVote`); nothing is recorded for it.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refused {

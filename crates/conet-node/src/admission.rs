@@ -411,6 +411,9 @@ pub enum Fail {
     /// The DTLS fingerprint on the voter's session is not the authorized one, or the two
     /// sides do not see the same pair of certificates.
     DtlsFingerprint,
+    /// The applicant's own signed reply, bound to this challenge, states DTLS fingerprints that
+    /// differ from the voter's view of a session whose remote certificate IS the authorized one.
+    SignedDtlsContradicts,
     /// The remote address is only an mDNS (.local) name: cannot confirm where the node is.
     AddressUnconfirmed,
     /// The selected candidate pair (or TCP peer) changed since the challenge: redo it.
@@ -750,7 +753,7 @@ pub fn verify(
         if r.node_dtls.as_deref() != Some(fp_norm(dtls_fingerprint).as_str())
             || r.voter_dtls.as_deref() != Some(fp_norm(local_dtls_fingerprint).as_str())
         {
-            return Err(Fail::DtlsFingerprint);
+            return Err(Fail::SignedDtlsContradicts);
         }
     }
     match (a.kind, &r.wallet_sig) {

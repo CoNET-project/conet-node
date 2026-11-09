@@ -3,6 +3,7 @@
 
 pub mod acme_dns;
 pub mod admission;
+pub mod ballot;
 pub mod chain;
 pub mod commands;
 pub mod deliver;
