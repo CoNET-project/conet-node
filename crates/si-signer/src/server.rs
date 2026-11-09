@@ -117,6 +117,10 @@ impl Signer {
                 if tc.max_fee_cap < tc.tip_cap {
                     return Err(StartError("topup max_fee_cap is below tip_cap".into()));
                 }
+                // N6: both caps must be set (a zero cap would refuse every request silently).
+                if tc.max_fee_cap == 0 || tc.tip_cap == 0 {
+                    return Err(StartError("topup fee caps must both be above 0".into()));
+                }
                 let l = TopUpLedger::open(path).map(Mutex::new).map_err(|e| {
                     warn!(refusal = %e, "topup ledger unusable: topUp refused until the operator recreates it");
                     e.to_string()

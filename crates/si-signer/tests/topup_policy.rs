@@ -530,4 +530,14 @@ fn start_refused_when_max_fee_cap_below_tip_cap() {
         ..cfg()
     })
     .is_ok());
+    for (m, t) in [(0u128, 0u128), (1_000, 0)] {
+        match start(TopUpConfig {
+            max_fee_cap: m,
+            tip_cap: t,
+            ..cfg()
+        }) {
+            Err(e) => assert!(e.0.contains("must both be above 0"), "{}", e.0),
+            Ok(_) => panic!("started with a zero cap"),
+        }
+    }
 }
