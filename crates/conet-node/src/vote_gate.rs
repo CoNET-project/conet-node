@@ -34,8 +34,10 @@ pub struct VoterView {
     pub stake: u128,
     /// Stake already held by unsettled cases.
     pub locked: u128,
-    /// Reporting and voting allowed from this time (7-day cooldown after registration or a
-    /// wallet / operator change).
+    /// Reporting and voting allowed from this time: the chain's `voteEligibleAt`, read as is.
+    /// Never derived locally (registration + 7 days): the trusted 472 can vote from their first
+    /// registration (user decision 2026-11-08), while new nodes and later wallet / operator
+    /// changes get the cooldown. Only the contract knows which case applies.
     pub eligible_at: u64,
     /// The open report naming this node as target, 0 = none (used when it is a report target).
     pub open_report_id: u64,

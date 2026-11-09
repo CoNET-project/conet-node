@@ -241,3 +241,45 @@ fn node_raw_decoding_checks_the_layout() {
     bad[37 * 32] = 1;
     assert!(decode_node_raw(&bad, 9, true).is_err());
 }
+
+/// "可信集合免冷却" (2026-11-08): eligibility is the chain's voteEligibleAt word as decoded, with
+/// no local registration + 7 days. A trusted node whose word equals its registration time votes
+/// the same day; a new node or a wallet change (word = change + 7 days) waits for that word.
+#[test]
+fn eligibility_is_the_chain_word_not_a_local_cooldown() {
+    let reg_time = NOW;
+    let build = |eligible: u64| {
+        let mut raw = vec![0u8; NODE_RAW_WORDS * 32];
+        let mut put =
+            |i: usize, v: u128| raw[i * 32 + 16..(i + 1) * 32].copy_from_slice(&v.to_be_bytes());
+        put(5, 0x29);
+        put(14, 5 * CNET);
+        put(36, eligible as u128);
+        raw
+    };
+    let r = report(1, 50);
+    // Trusted 472, first registration: the contract wrote voteEligibleAt = registration time.
+    let trusted = decode_node_raw(&build(reg_time), 1, true).unwrap();
+    assert_eq!(can_vote(&trusted, &r, 0, reg_time), Ok(()));
+    assert_eq!(can_report(&trusted, 77, true, None, CNET, reg_time), Ok(()));
+    // New node, or the trusted node after a wallet / operator change: the contract wrote +7 days.
+    let week = 7 * 24 * 3600;
+    let cooling = decode_node_raw(&build(reg_time + week), 1, true).unwrap();
+    assert_eq!(
+        can_vote(&cooling, &r, 0, reg_time),
+        Err(Skip::Cooldown {
+            until: reg_time + week
+        })
+    );
+    assert_eq!(
+        can_report(&cooling, 77, true, None, CNET, reg_time),
+        Err(Skip::Cooldown {
+            until: reg_time + week
+        })
+    );
+    let long = ReportView {
+        expires_at: reg_time + week + 60,
+        ..r.clone()
+    };
+    assert_eq!(can_vote(&cooling, &long, 0, reg_time + week), Ok(()));
+}
