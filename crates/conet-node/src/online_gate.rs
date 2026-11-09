@@ -19,6 +19,9 @@
 use crate::ballot::{Ballot, Why};
 
 pub const OFFLINE_COOLDOWN: u64 = 43_200;
+/// An own recovery case still voting can be replaced by a new version only this long after its
+/// chain `openedAt` (project decision 2026-11-09).
+pub const REPLACE_AFTER: u64 = 43_200;
 const MILLI: u128 = 1_000_000_000_000_000; // 0.001 CNET
 pub const ONLINE_FEE: u128 = 10 * MILLI; // 0.01
 pub const VOTE_STAKE: u128 = MILLI; // +0.001 / -0.001, locked at the vote
@@ -42,6 +45,8 @@ pub fn offline_since(out_of_service_since: u64, expired_declaration_end: Option<
 pub struct RecoveryBlockers {
     /// Seconds still to wait in the 12-hour cooldown.
     pub wait: Option<u64>,
+    /// The open case cannot be replaced by a new version before this chain time.
+    pub replace_at: Option<u64>,
     /// Stake still missing (stake - locked must reach the latest full threshold).
     pub stake_missing: Option<u128>,
     /// Online fee still missing in the balance it is paid from (source pending).
@@ -50,7 +55,10 @@ pub struct RecoveryBlockers {
 
 impl RecoveryBlockers {
     pub fn clear(&self) -> bool {
-        self.wait.is_none() && self.stake_missing.is_none() && self.fee_missing.is_none()
+        self.wait.is_none()
+            && self.replace_at.is_none()
+            && self.stake_missing.is_none()
+            && self.fee_missing.is_none()
     }
 }
 
@@ -63,6 +71,10 @@ pub struct RecoveryView {
     /// Chain time at which the latest valid rejection of this node's recovery sealed its votes;
     /// 0 = never rejected (user decision 2026-11-09). Contract field pending the node line.
     pub last_rejected_at: u64,
+    /// This node's own recovery case if it is still voting: its chain `openedAt` (project decision
+    /// 2026-11-09: no new version may replace it before openedAt + 43,200). None = no open case
+    /// (never opened, or already decided: those follow the other rules).
+    pub open_case_opened_at: Option<u64>,
     pub stake: u128,
     pub locked: u128,
     pub latest_threshold: u128,
@@ -81,6 +93,13 @@ pub fn precheck_recovery(v: &RecoveryView) -> RecoveryBlockers {
     let start = v.offline_since.max(v.last_rejected_at);
     if start != 0 && v.now < start + OFFLINE_COOLDOWN {
         b.wait = Some(start + OFFLINE_COOLDOWN - v.now);
+    }
+    // An own case still voting may only be replaced 12 hours after it opened (a separate rule
+    // from the post-rejection wait).
+    if let Some(opened) = v.open_case_opened_at {
+        if v.now < opened + REPLACE_AFTER {
+            b.replace_at = Some(opened + REPLACE_AFTER);
+        }
     }
     let free = v.stake.saturating_sub(v.locked);
     if free < v.latest_threshold {

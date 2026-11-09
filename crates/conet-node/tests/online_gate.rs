@@ -11,6 +11,7 @@ fn rv(now: u64, since: u64, stake: u128, fee: u128) -> RecoveryView {
         now,
         offline_since: since,
         last_rejected_at: 0,
+        open_case_opened_at: None,
         stake,
         locked: 0,
         latest_threshold: 10 * C,
@@ -242,4 +243,40 @@ fn after_rejections_always_twelve_hours_from_the_last_seal() {
         .wait,
         Some(OFFLINE_COOLDOWN - 100)
     );
+}
+
+/// An own recovery case still voting cannot be replaced by a new version before openedAt + 12 h
+/// (project decision 2026-11-09); no open case, or a decided one, is not affected.
+#[test]
+fn open_case_replaceable_only_after_twelve_hours() {
+    let opened = T + OFFLINE_COOLDOWN + 100;
+    let base = RecoveryView {
+        open_case_opened_at: Some(opened),
+        ..rv(0, T, 10 * C, ONLINE_FEE)
+    };
+    let at = |now| {
+        precheck_recovery(&RecoveryView {
+            now,
+            ..base.clone()
+        })
+    };
+    assert_eq!(at(opened + 43_199).replace_at, Some(opened + 43_200));
+    assert!(!at(opened + 43_199).clear());
+    assert!(at(opened + 43_200).clear());
+    // No open case: only the other rules.
+    let none = RecoveryView {
+        open_case_opened_at: None,
+        now: opened + 10,
+        ..base.clone()
+    };
+    assert!(precheck_recovery(&none).clear());
+    // A rejection follows its own clock (from the seal), independent of this one.
+    let rejected = RecoveryView {
+        open_case_opened_at: None,
+        last_rejected_at: opened + 50,
+        now: opened + 60,
+        ..base
+    };
+    let b = precheck_recovery(&rejected);
+    assert_eq!((b.replace_at, b.wait), (None, Some(OFFLINE_COOLDOWN - 10)));
 }
