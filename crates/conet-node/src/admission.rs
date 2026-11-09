@@ -13,9 +13,12 @@
 //!    and its full fingerprint, the applicant wallet and full PGP fingerprint, chain and
 //!    registry; PGP-signs it with its registered key and encrypts it to the applicant.
 //! 3. The applicant checks the voter against its registered key and every binding (for a
-//!    browser: the DTLS fingerprint the voter saw is its own), answers once, signs
-//!    `AdmissionResponse` (EIP-712, domain `CoNET-NodeAdmission`) with its main wallet, PGP-signs
-//!    and encrypts to the voter.
+//!    browser: both sides see the same two DTLS certificates), answers once and encrypts to the
+//!    voter. First admission: signs `AdmissionResponse` (EIP-712, domain `CoNET-NodeAdmission`)
+//!    with its main wallet and PGP-signs the reply. Recovery: the main wallet authorized the
+//!    candidate endpoint once in the application; each reply is PGP-signed only. Every
+//!    PGP-signed payload starts with a fixed `CONET-ADMISSION-` prefix that no other PGP signing
+//!    path of the node may sign.
 //! 4. The voter re-reads its observation: if the selected pair changed (ICE restart, new pair),
 //!    the challenge is void and must be redone. Then it checks the full fingerprint, both
 //!    signatures, the challenge hash (one-time) and expiry, and records the endpoint class:
@@ -80,7 +83,12 @@ pub enum Observed {
         candidate_type: String,
         /// The relay the voter's pair goes through (its TURN server or anchor), when relayed.
         relay: Option<String>,
+        /// The remote certificate on the voter's session (the node's, if nothing is in between).
         dtls_fingerprint: String,
+        /// The voter's own certificate on this session; the node reports what it sees as the
+        /// remote certificate, so a splice by the anchor (two sessions, swapped fingerprints in
+        /// signaling) shows up.
+        local_dtls_fingerprint: String,
     },
 }
 
@@ -137,6 +145,7 @@ impl Observed {
                 candidate_type,
                 relay,
                 dtls_fingerprint,
+                local_dtls_fingerprint,
             } => h(&[
                 &[0x12],
                 &keccak256(pair_id.as_bytes()),
@@ -145,9 +154,39 @@ impl Observed {
                 &keccak256(candidate_type.as_bytes()),
                 &keccak256(relay.as_deref().unwrap_or("").as_bytes()),
                 &keccak256(fp_norm(dtls_fingerprint).as_bytes()),
+                &keccak256(fp_norm(local_dtls_fingerprint).as_bytes()),
             ]),
         })
     }
+}
+
+/// Payload prefixes of every PGP-signed admission/recovery message. Any other PGP signing
+/// path of the node must refuse payloads that start with `RESERVED_PREFIX`, so a node can
+/// never be used to PGP-sign something that passes as a challenge or a reply.
+pub const RESERVED_PREFIX: &[u8] = b"CONET-ADMISSION-";
+pub const CHALLENGE_PREFIX: &[u8] = b"CONET-ADMISSION-CHALLENGE-v1\n";
+pub const REPLY_PREFIX: &[u8] = b"CONET-ADMISSION-REPLY-v1\n";
+
+/// For other PGP-signing code: true = refuse to sign this payload.
+pub fn is_reserved_pgp_payload(payload: &[u8]) -> bool {
+    payload.starts_with(RESERVED_PREFIX)
+}
+
+fn with_prefix(prefix: &[u8], json: Vec<u8>) -> Vec<u8> {
+    [prefix, &json].concat()
+}
+
+fn strip_prefix<'a>(prefix: &[u8], data: &'a [u8]) -> Result<&'a [u8], Fail> {
+    data.strip_prefix(prefix).ok_or(Fail::BadField)
+}
+
+/// The browser node's own view of the session a challenge arrived on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionView {
+    /// Its own certificate.
+    pub own_dtls: String,
+    /// The remote (voter's) certificate it sees.
+    pub peer_dtls: String,
 }
 
 /// Does what the voter sees match the authorized endpoint? Returns the class it proves.
@@ -173,6 +212,10 @@ pub fn classify(endpoint: &Endpoint, seen: &Observed) -> Result<EndpointClass, F
                 ..
             },
         ) => {
+            // An mDNS (.local) remote address hides the real one: address not confirmed.
+            if remote_ip.ends_with(".local") {
+                return Err(Fail::AddressUnconfirmed);
+            }
             // The DTLS key on the voter's own session must be the authorized one; otherwise
             // something in the middle terminates DTLS (relay or MITM impersonating the node).
             if fp_norm(seen_fp) != fp_norm(dtls_fingerprint) {
@@ -238,6 +281,8 @@ pub struct Challenge {
     /// For a browser candidate: the DTLS fingerprint the voter's session sees (the applicant
     /// checks it is its own).
     pub seen_dtls: Option<String>,
+    /// For a browser candidate: the voter's own certificate on that session.
+    pub voter_dtls: Option<String>,
     pub voter_node_id: u64,
     pub voter_fingerprint: String,
     pub applicant_wallet: String,
@@ -259,7 +304,12 @@ impl Challenge {
 #[serde(deny_unknown_fields)]
 pub struct Reply {
     pub challenge_hash: String,
-    pub wallet_sig: String,
+    /// First admission: the main wallet's AdmissionResponse signature. Recovery: none (the main
+    /// wallet authorized the candidate endpoint once; each reply is PGP-signed only).
+    pub wallet_sig: Option<String>,
+    /// Browser: the node's own certificate and the voter's certificate as the node sees them.
+    pub node_dtls: Option<String>,
+    pub voter_dtls: Option<String>,
 }
 
 /// The voter's memory of a challenge it sent, with the observation it was made on.
@@ -278,8 +328,11 @@ pub enum Fail {
     WrongApplication,
     /// The observation does not fit the authorized endpoint (address, port, path type, relay).
     WrongEndpoint,
-    /// The DTLS fingerprint on the voter's session is not the authorized one.
+    /// The DTLS fingerprint on the voter's session is not the authorized one, or the two
+    /// sides do not see the same pair of certificates.
     DtlsFingerprint,
+    /// The remote address is only an mDNS (.local) name: cannot confirm where the node is.
+    AddressUnconfirmed,
     /// The selected candidate pair (or TCP peer) changed since the challenge: redo it.
     PathChanged,
     WrongContext,
@@ -420,11 +473,16 @@ pub fn make_challenge<R: RngCore + CryptoRng>(
     classify(&a.endpoint, observed)?;
     let mut nonce = [0u8; 32];
     rng.fill_bytes(&mut nonce);
-    let seen_dtls = match observed {
+    let (seen_dtls, voter_dtls) = match observed {
         Observed::WebRtc {
-            dtls_fingerprint, ..
-        } => Some(fp_norm(dtls_fingerprint)),
-        Observed::Tcp { .. } => None,
+            dtls_fingerprint,
+            local_dtls_fingerprint,
+            ..
+        } => (
+            Some(fp_norm(dtls_fingerprint)),
+            Some(fp_norm(local_dtls_fingerprint)),
+        ),
+        Observed::Tcp { .. } => (None, None),
     };
     let c = Challenge {
         v: 1,
@@ -435,6 +493,7 @@ pub fn make_challenge<R: RngCore + CryptoRng>(
         endpoint_hash: hex::encode(a.endpoint.hash()?),
         observation_hash: hex::encode(observed.hash()?),
         seen_dtls,
+        voter_dtls,
         voter_node_id,
         voter_fingerprint: fp_norm(&voter_key.public().fingerprint()),
         applicant_wallet: a.applicant_wallet.to_lowercase(),
@@ -445,7 +504,10 @@ pub fn make_challenge<R: RngCore + CryptoRng>(
         issued_at: now,
         expires_at: now + CHALLENGE_TTL_SEC,
     };
-    let body = serde_json::to_vec(&c).map_err(|_| Fail::BadField)?;
+    let body = with_prefix(
+        CHALLENGE_PREFIX,
+        serde_json::to_vec(&c).map_err(|_| Fail::BadField)?,
+    );
     let armored = opgp::encrypt(
         &mut rng,
         &body,
@@ -468,22 +530,26 @@ pub fn make_challenge<R: RngCore + CryptoRng>(
     ))
 }
 
-/// Applicant: answer one challenge. `voter_key_of`: a voter's registered PGP key by node id
-/// (None = not registered/active). `seen`: nonces already answered.
+/// Applicant: answer one challenge. `my_wallet`: the main wallet, needed for a first admission
+/// only (a recovery reply is PGP-signed only). `session`: for a browser node, its own view of
+/// the WebRTC session the challenge came on. `voter_key_of`: a voter's registered PGP key by
+/// node id (None = not registered/active). `seen`: nonces already answered.
 #[allow(clippy::too_many_arguments)]
 pub fn answer<R: RngCore + CryptoRng>(
     mut rng: R,
     ctx: &Ctx,
     me: &Application,
     my_key: &SecretCert,
-    my_wallet: &EthKey,
+    my_wallet: Option<&EthKey>,
     armored: &str,
+    session: Option<&SessionView>,
     voter_key_of: impl Fn(u64) -> Option<PublicCert>,
     seen: &mut std::collections::HashSet<String>,
     now: u64,
 ) -> Result<String, Fail> {
     let plain = opgp::decrypt(armored, my_key, None).map_err(|_| Fail::Decrypt)?;
-    let c: Challenge = serde_json::from_slice(&plain.data).map_err(|_| Fail::BadField)?;
+    let c: Challenge = serde_json::from_slice(strip_prefix(CHALLENGE_PREFIX, &plain.data)?)
+        .map_err(|_| Fail::BadField)?;
     let voter = voter_key_of(c.voter_node_id).ok_or(Fail::VoterSig)?;
     if fp_norm(&voter.fingerprint()) != c.voter_fingerprint {
         return Err(Fail::VoterSig);
@@ -510,14 +576,23 @@ pub fn answer<R: RngCore + CryptoRng>(
     if c.endpoint_hash != hex::encode(me.endpoint.hash()?) {
         return Err(Fail::WrongEndpoint);
     }
-    // A browser only answers for a session that shows ITS certificate to the voter.
+    // A browser only answers on a session where both sides see the same two certificates:
+    // the voter sees ITS authorized certificate, and it sees the voter's certificate.
+    let mut dtls_pair = (None, None);
     if let Endpoint::Browser {
         dtls_fingerprint, ..
     } = &me.endpoint
     {
-        if c.seen_dtls.as_deref() != Some(fp_norm(dtls_fingerprint).as_str()) {
+        let s = session.ok_or(Fail::DtlsFingerprint)?;
+        let own = fp_norm(&s.own_dtls);
+        let peer = fp_norm(&s.peer_dtls);
+        if own != fp_norm(dtls_fingerprint)
+            || c.seen_dtls.as_deref() != Some(own.as_str())
+            || c.voter_dtls.as_deref() != Some(peer.as_str())
+        {
             return Err(Fail::DtlsFingerprint);
         }
+        dtls_pair = (Some(own), Some(peer));
     }
     if c.expires_at < c.issued_at
         || c.expires_at - c.issued_at > CHALLENGE_TTL_SEC
@@ -530,14 +605,25 @@ pub fn answer<R: RngCore + CryptoRng>(
         return Err(Fail::Replay);
     }
     let hc = c.hash();
-    let sig = my_wallet
-        .sign_digest(&response_digest(ctx, me, &c, &hc)?)
-        .map_err(|_| Fail::WalletSig)?;
+    let wallet_sig = match me.kind {
+        Kind::First => Some(
+            my_wallet
+                .ok_or(Fail::WalletSig)?
+                .sign_digest(&response_digest(ctx, me, &c, &hc)?)
+                .map_err(|_| Fail::WalletSig)?,
+        ),
+        Kind::Recovery => None,
+    };
     let reply = Reply {
         challenge_hash: hex::encode(hc),
-        wallet_sig: sig,
+        wallet_sig,
+        node_dtls: dtls_pair.0,
+        voter_dtls: dtls_pair.1,
     };
-    let body = serde_json::to_vec(&reply).map_err(|_| Fail::BadField)?;
+    let body = with_prefix(
+        REPLY_PREFIX,
+        serde_json::to_vec(&reply).map_err(|_| Fail::BadField)?,
+    );
     opgp::encrypt(
         &mut rng,
         &body,
@@ -580,7 +666,8 @@ pub fn verify(
     if d.verified != Some(true) {
         return Err(Fail::ApplicantPgpSig);
     }
-    let r: Reply = serde_json::from_slice(&d.data).map_err(|_| Fail::BadField)?;
+    let r: Reply =
+        serde_json::from_slice(strip_prefix(REPLY_PREFIX, &d.data)?).map_err(|_| Fail::BadField)?;
     if r.challenge_hash != hex::encode(outstanding.hash) {
         return Err(Fail::ChallengeMismatch);
     }
@@ -596,10 +683,31 @@ pub fn verify(
     {
         return Err(Fail::WrongApplication);
     }
-    let digest = response_digest(ctx, a, c, &outstanding.hash)?;
-    match eth::recover_digest(&digest, &r.wallet_sig) {
-        Ok(w) if w.eq_ignore_ascii_case(&a.applicant_wallet) => Ok(class),
-        _ => Err(Fail::WalletSig),
+    // Browser: the node's report of the session must match the voter's own view.
+    if let Observed::WebRtc {
+        dtls_fingerprint,
+        local_dtls_fingerprint,
+        ..
+    } = observed_now
+    {
+        if r.node_dtls.as_deref() != Some(fp_norm(dtls_fingerprint).as_str())
+            || r.voter_dtls.as_deref() != Some(fp_norm(local_dtls_fingerprint).as_str())
+        {
+            return Err(Fail::DtlsFingerprint);
+        }
+    }
+    match (a.kind, &r.wallet_sig) {
+        // Recovery replies are PGP-only (the PGP signature was checked above).
+        (Kind::Recovery, None) => Ok(class),
+        (Kind::Recovery, Some(_)) => Err(Fail::BadField),
+        (Kind::First, Some(sig)) => {
+            let digest = response_digest(ctx, a, c, &outstanding.hash)?;
+            match eth::recover_digest(&digest, sig) {
+                Ok(w) if w.eq_ignore_ascii_case(&a.applicant_wallet) => Ok(class),
+                _ => Err(Fail::WalletSig),
+            }
+        }
+        (Kind::First, None) => Err(Fail::WalletSig),
     }
 }
 

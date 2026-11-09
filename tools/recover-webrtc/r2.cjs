@@ -72,8 +72,15 @@ const PAGE_LIB = () => {
     const pathId = `${transport.iceLocalUsernameFragment}|${transport.selectedCandidatePairChanges}|${pair.id}`
     return { pairId: pathId, remoteIp: remote.address || remote.ip, remotePort: remote.port, candidateType: remote.candidateType,
       relay: remote.candidateType === 'relay' ? (remote.url || 'unknown-relay') : null,
-      dtls: cert && cert.fingerprint, dtlsAlg: cert && cert.fingerprintAlgorithm, localIp: local.address, localPort: local.port,
+      dtls: cert && cert.fingerprint, dtlsAlg: cert && cert.fingerprintAlgorithm,
+      localDtls: (s.get(transport.localCertificateId) || {}).fingerprint, localIp: local.address, localPort: local.port,
       iceState: rtc.pc.iceConnectionState }
+  }
+  window.peerCert = async () => {
+    const s = await rtc.pc.getStats()
+    let transport; s.forEach((r) => { if (r.type === 'transport') transport = r })
+    const c = s.get(transport.remoteCertificateId)
+    return c && c.fingerprint
   }
   window.ownCert = async () => {
     const s = await rtc.pc.getStats()
@@ -91,6 +98,7 @@ const DOMAIN = { name: 'CoNET-NodeAdmission', version: '1', chainId: CTX.chainId
 const TYPES = { RecoveryWebRtcReply: [
   { name: 'appId', type: 'bytes32' }, { name: 'nodeId', type: 'uint256' }, { name: 'endpointVersion', type: 'uint64' },
   { name: 'voterNodeId', type: 'uint256' }, { name: 'pairId', type: 'string' }, { name: 'dtls', type: 'string' },
+  { name: 'voterDtls', type: 'string' },
   { name: 'nonce', type: 'bytes32' }, { name: 'expiresAt', type: 'uint64' } ] }
 
 async function main() {
@@ -123,23 +131,26 @@ async function main() {
     const claimedUsed = seen.remoteIp === claimed.ip && seen.remotePort === claimed.port
     log(`${label}: self-reported ${claimed.ip}:${claimed.port} used? ${claimedUsed} (observed ${mask(seen.remoteIp)} port ${seen.remotePort})`)
     const nonce = '0x' + require('crypto').randomBytes(32).toString('hex')
-    const ch = { appId: CTX.appId, nodeId: CTX.nodeId, endpointVersion: version, voterNodeId: CTX.voterNodeId, pairId: seen.pairId, dtls: seen.dtls, nonce, expiresAt: Math.floor(Date.now() / 1000) + 60 }
+    const ch = { appId: CTX.appId, nodeId: CTX.nodeId, endpointVersion: version, voterNodeId: CTX.voterNodeId, pairId: seen.pairId, dtls: seen.dtls, voterDtls: seen.localDtls, nonce, expiresAt: Math.floor(Date.now() / 1000) + 60 }
     await voter.evaluate((c) => send({ challenge: c }), ch)
     // The node answers on its data channel, signing with its main wallet (golden test key).
     const got = await node.evaluate(() => recv())
     const sig = await node.evaluate(async ({ c, key, domain, types }) => {
-      const own = (await ownCert())
-      if (c.dtls !== own) return { refused: 'dtls not mine' }
+      const own = await ownCert()
+      const peer = await peerCert()
+      // Both sides must see the same two certificates (no splice by the anchor).
+      if (c.dtls !== own || c.voterDtls !== peer) return { refused: 'session certificates differ' }
       const w = new ethers.Wallet(key)
-      return { sig: await w.signTypedData(domain, types, c) }
+      return { sig: await w.signTypedData(domain, types, c), nodeDtls: own, voterDtls: peer }
     }, { c: got.challenge, key: NODE_KEY, domain: DOMAIN, types: TYPES })
     await node.evaluate((r) => send(r), sig)
     const reply = await voter.evaluate(() => recv())
     const now = await voter.evaluate(() => observe())
     const pairSame = now.pairId === ch.pairId
     const who = reply.sig ? require('ethers').verifyTypedData(DOMAIN, TYPES, ch, reply.sig) : null
-    log(`${label}: reply signer ${who} == node wallet ${NODE_ADDR}: ${who === NODE_ADDR}; selected pair unchanged: ${pairSame}`)
-    return { seen, ok: dtlsOk && !claimedUsed && who === NODE_ADDR && pairSame, ch, reply }
+    const pairOk = reply.nodeDtls === now.dtls && reply.voterDtls === now.localDtls
+    log(`${label}: reply signer ${who} == node wallet ${NODE_ADDR}: ${who === NODE_ADDR}; selected pair unchanged: ${pairSame}; both DTLS fingerprints match the voter's session: ${pairOk}`)
+    return { seen, ok: dtlsOk && !claimedUsed && who === NODE_ADDR && pairSame && pairOk, ch, reply }
   }
 
   // Wait until the voter's selected pair has been stable for 1 s before challenging.

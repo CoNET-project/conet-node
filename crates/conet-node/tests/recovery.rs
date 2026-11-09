@@ -14,6 +14,7 @@ const NOW: u64 = 1_800_000_000;
 const VOTER: u64 = 7;
 const NODE: u64 = 573;
 const DTLS: &str = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
+const VOTER_DTLS: &str = "99:88:77:66:55:44:33:22:11:00:99:88:77:66:55:44:33:22:11:00:99:88:77:66:55:44:33:22:11:00:99:88";
 const OTHER_DTLS: &str = "11:22:33:44:55:66:77:88:99:00:11:22:33:44:55:66:77:88:99:00:11:22:33:44:55:66:77:88:99:00:11:22";
 
 fn g() -> Value {
@@ -105,14 +106,31 @@ impl W {
         )
     }
     fn answer(&mut self, a: &Application, armored: &str) -> Result<String, Fail> {
+        let s = SessionView {
+            own_dtls: DTLS.into(),
+            peer_dtls: VOTER_DTLS.into(),
+        };
+        self.answer_on(a, armored, Some(&s))
+    }
+    fn answer_on(
+        &mut self,
+        a: &Application,
+        armored: &str,
+        s: Option<&SessionView>,
+    ) -> Result<String, Fail> {
         let v = self.voter.armor.clone();
+        let session = match a.endpoint {
+            Endpoint::Browser { .. } => s,
+            Endpoint::Tcp { .. } => None,
+        };
         answer(
             &mut self.rng,
             &self.ctx,
             a,
             &self.node.key,
-            &self.node.wallet,
+            None, // recovery: PGP-only replies
             armored,
+            session,
             move |id| (id == VOTER).then(|| PublicCert::from_armor(&v).unwrap()),
             &mut HashSet::new(),
             NOW + 1,
@@ -153,6 +171,7 @@ fn webrtc(
         candidate_type: kind.into(),
         relay: relay.map(str::to_string),
         dtls_fingerprint: dtls.into(),
+        local_dtls_fingerprint: VOTER_DTLS.into(),
     }
 }
 
@@ -292,8 +311,9 @@ fn relay_cannot_answer_for_the_browser() {
         &w.ctx,
         &a,
         &w.relay.key,
-        &w.relay.wallet,
+        None,
         &ch,
+        None,
         move |id| (id == VOTER).then(|| PublicCert::from_armor(&v).unwrap()),
         &mut HashSet::new(),
         NOW + 1,
@@ -366,6 +386,7 @@ fn recovery_state_rules() {
     let t = Threshold {
         min_approve: 2,
         veto_on_evidence: true,
+        relay_only_allowed: true,
     };
     let app = [0x22; 32];
     let direct = EndpointClass::Direct {
@@ -417,4 +438,138 @@ fn recovery_state_rules() {
     assert_eq!(n.open(app, [5; 32]), Err(Refused::NotOffline));
     n.go_offline();
     assert_eq!(n.routable(), None);
+}
+
+#[test]
+fn mdns_remote_address_is_unconfirmed() {
+    let mut w = w();
+    let a = w.app(browser(None), 1);
+    let seen = webrtc(
+        "u|1|p",
+        "3f0c9a1e-77aa-4f2b-9d1c-1234abcd5678.local",
+        51_234,
+        "host",
+        None,
+        DTLS,
+    );
+    assert_eq!(
+        w.challenge(&a, &seen).unwrap_err(),
+        Fail::AddressUnconfirmed
+    );
+}
+
+#[test]
+fn anchor_splice_of_two_sessions_is_detected() {
+    let mut w = w();
+    let a = w.app(browser(None), 1);
+    let seen = webrtc("u|1|p", "198.51.100.7", 51_234, "srflx", None, DTLS);
+    let (o, ch) = w.challenge(&a, &seen).unwrap();
+    // The anchor spliced two sessions: the browser sees another remote certificate than the
+    // voter's own one. The browser refuses to answer.
+    let spliced = SessionView {
+        own_dtls: DTLS.into(),
+        peer_dtls: OTHER_DTLS.into(),
+    };
+    assert_eq!(
+        w.answer_on(&a, &ch, Some(&spliced)),
+        Err(Fail::DtlsFingerprint)
+    );
+    // A browser node without a session view does not answer either.
+    assert_eq!(w.answer_on(&a, &ch, None), Err(Fail::DtlsFingerprint));
+    // The honest session: both sides see the same pair; the reply carries it and verifies.
+    let reply = w.answer(&a, &ch).unwrap();
+    assert!(w.verify(&a, &o, &reply, &seen).is_ok());
+}
+
+#[test]
+fn recovery_reply_is_pgp_only_with_fixed_prefix() {
+    let mut w = w();
+    let a = w.app(
+        Endpoint::Tcp {
+            ip: "203.0.113.9".into(),
+            port: 80,
+        },
+        1,
+    );
+    let seen = Observed::Tcp {
+        ip: "203.0.113.9".into(),
+        port: 80,
+    };
+    let (o, ch) = w.challenge(&a, &seen).unwrap();
+    let reply = w.answer(&a, &ch).unwrap();
+    // The decrypted reply starts with the fixed prefix and carries no wallet signature.
+    let d = si_crypto::opgp::decrypt(&reply, &w.voter.key, Some(&w.node.public)).unwrap();
+    assert_eq!(d.verified, Some(true));
+    assert!(d.data.starts_with(REPLY_PREFIX));
+    let r: Reply = serde_json::from_slice(&d.data[REPLY_PREFIX.len()..]).unwrap();
+    assert_eq!(r.wallet_sig, None);
+    assert_eq!(
+        w.verify(&a, &o, &reply, &seen),
+        Ok(EndpointClass::Direct {
+            ip: "203.0.113.9".into(),
+            port: 80
+        })
+    );
+    // Other PGP signing paths must refuse the reserved prefix; ordinary payloads are fine.
+    assert!(is_reserved_pgp_payload(REPLY_PREFIX));
+    assert!(is_reserved_pgp_payload(CHALLENGE_PREFIX));
+    assert!(is_reserved_pgp_payload(b"CONET-ADMISSION-anything"));
+    assert!(!is_reserved_pgp_payload(b"hello"));
+    // A PGP-signed reply body without the prefix is not accepted.
+    let bare = serde_json::to_vec(&r).unwrap();
+    let forged = si_crypto::opgp::encrypt(
+        &mut w.rng,
+        &bare,
+        &w.voter.public,
+        si_crypto::opgp::EncryptOpts {
+            text: false,
+            zlib: false,
+            sign_with: Some(&w.node.key),
+        },
+    )
+    .unwrap();
+    assert_eq!(w.verify(&a, &o, &forged, &seen), Err(Fail::BadField));
+}
+
+#[test]
+fn relay_only_browser_policy_both_ways() {
+    let app = [0x22; 32];
+    let relay = EndpointClass::Relay {
+        relay: "turn:relay-1".into(),
+        relay_ip: "192.0.2.50".into(),
+        relay_port: 3478,
+    };
+    let direct = EndpointClass::Direct {
+        ip: "198.51.100.7".into(),
+        port: 51_234,
+    };
+    for allowed in [false, true] {
+        let t = Threshold {
+            min_approve: 2,
+            veto_on_evidence: true,
+            relay_only_allowed: allowed,
+        };
+        let mut n = Node::offline();
+        let v = n.open(app, [7; 32]).unwrap();
+        n.vote(app, v, 1, Verdict::Approve(relay.clone())).unwrap();
+        n.vote(app, v, 2, Verdict::Approve(relay.clone())).unwrap();
+        let out = n.resolve(t).unwrap();
+        if allowed {
+            assert_eq!(out, Outcome::Online);
+            assert!(matches!(
+                n.state,
+                State::Online {
+                    class: EndpointClass::Relay { .. },
+                    ..
+                }
+            ));
+        } else {
+            assert_eq!(out, Outcome::StayedOffline);
+            // One direct approval is enough to pass when relay-only is not allowed.
+            let v = n.open(app, [8; 32]).unwrap();
+            n.vote(app, v, 1, Verdict::Approve(relay.clone())).unwrap();
+            n.vote(app, v, 2, Verdict::Approve(direct.clone())).unwrap();
+            assert_eq!(n.resolve(t).unwrap(), Outcome::Online);
+        }
+    }
 }

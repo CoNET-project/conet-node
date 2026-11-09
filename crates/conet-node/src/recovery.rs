@@ -48,6 +48,9 @@ pub enum Refused {
 pub struct Threshold {
     pub min_approve: usize,
     pub veto_on_evidence: bool,
+    /// Operator's call: may a browser node that only voters reaching it through a relay approve
+    /// come back online? false = at least one approval must prove a direct path.
+    pub relay_only_allowed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +137,12 @@ impl Node {
             })
             .collect();
         let evidence = p.votes.values().any(|v| *v == Verdict::RejectWithEvidence);
+        let any_direct = approvals
+            .iter()
+            .any(|c| matches!(c, EndpointClass::Direct { .. }));
+        if !t.relay_only_allowed && !any_direct {
+            return Ok(Outcome::StayedOffline);
+        }
         if !approvals.is_empty()
             && approvals.len() >= t.min_approve
             && !(t.veto_on_evidence && evidence)
