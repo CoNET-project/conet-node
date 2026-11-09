@@ -30,6 +30,7 @@ fn report(rid: u64, target: u64) -> ReportView {
         margin: 20,
         state: REPORT_OPEN,
         ratio_bps: NEW_REPORT_RATIO_BPS,
+        eligible_snapshot: None,
     }
 }
 
@@ -370,12 +371,12 @@ fn report_window_600_to_7200() {
     let st = conet_node::online_gate::SealStrategy::default();
     assert!(!report_seal_ready(&r, t0 + 599, &st));
     assert!(report_seal_ready(&r, t0 + 600, &st));
-    assert!(!report_seal_ready(&r, t0 + 7_200, &st));
-    let after = conet_node::online_gate::SealStrategy {
-        seal_after_window: true,
+    assert!(report_seal_ready(&r, t0 + 7_200, &st)); // late sealing, default on
+    let off = conet_node::online_gate::SealStrategy {
+        seal_after_window: false,
         ..st
     };
-    assert!(report_seal_ready(&r, t0 + 7_200, &after));
+    assert!(!report_seal_ready(&r, t0 + 7_200, &off));
     // Disagree side the same.
     let d = ReportView {
         agree: 1,
@@ -400,4 +401,40 @@ fn report_window_600_to_7200() {
     assert_eq!(held.capacity(NEW_REPORT_RATIO_BPS), 0);
     let freed = VoterView { locked: 0, ..held };
     assert_eq!(freed.capacity(NEW_REPORT_RATIO_BPS), 5);
+}
+
+/// Reports: early seal on turnout over half, late seal / void close after the end.
+#[test]
+fn report_turnout_and_late_seal() {
+    use conet_node::online_gate::{AfterWindow, SealStrategy};
+    let t0 = NOW;
+    let st = SealStrategy::default();
+    let r = ReportView {
+        opened_at: t0,
+        min_open: 600,
+        expires_at: t0 + 7_200,
+        agree: 21,
+        disagree: 0,
+        eligible_snapshot: Some(40),
+        ..report(1, 50)
+    };
+    assert!(report_seal_ready(&r, t0 + 60, &st)); // 21 of 40 > half, margin met
+    let half = ReportView {
+        agree: 20,
+        ..r.clone()
+    };
+    assert!(!report_seal_ready(&half, t0 + 60, &st)); // exactly half
+    assert!(would_decide_report(&half, true, t0 + 60)); // the 21st vote decides
+    let short = ReportView {
+        agree: 15,
+        disagree: 10,
+        ..r.clone()
+    };
+    assert!(!report_seal_ready(&short, t0 + 3_600, &st)); // over half, margin short
+    assert_eq!(report_after_window(&r, t0 + 7_199), AfterWindow::StillOpen);
+    assert_eq!(report_after_window(&r, t0 + 7_200), AfterWindow::Seal);
+    assert_eq!(
+        report_after_window(&short, t0 + 7_200),
+        AfterWindow::VoidClose
+    );
 }

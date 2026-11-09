@@ -243,12 +243,35 @@ pub const MIN_OPEN: u64 = 600;
 pub const MAX_OPEN: u64 = 7_200;
 
 /// Tally of an online case as the chain reports it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Tally {
     pub opened_at: u64,
     pub agree: u32,
     pub disagree: u32,
     pub margin: u32,
+    /// Eligible nodes when the case opened (the turnout denominator; project decision 2026-11-09).
+    /// None until the node line's read exists: then only the 600 s rule applies.
+    pub eligible_snapshot: Option<u32>,
+}
+
+/// Participating nodes: agree + disagree. The contract takes one vote per node (a second one
+/// reverts), so each vote is a distinct node; [`count_participants`] dedupes local records.
+pub fn participants(agree: u32, disagree: u32) -> u32 {
+    agree + disagree
+}
+
+/// Distinct node ids among recorded votes (a repeated vote of the same node counts once).
+pub fn count_participants(voters: &[u64]) -> u32 {
+    voters
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len() as u32
+}
+
+/// More than half participated: participants x 2 > eligible snapshot (exactly half is not enough).
+/// Turnout never replaces the margin.
+pub fn turnout_over_half(participants: u32, eligible_snapshot: Option<u32>) -> bool {
+    eligible_snapshot.is_some_and(|e| (participants as u64) * 2 > e as u64)
 }
 
 /// Voting still open at `now` (before opening + 7,200 s).
@@ -256,16 +279,18 @@ pub fn voting_open(t: &Tally, now: u64) -> bool {
     now < t.opened_at + MAX_OPEN
 }
 
-/// Would this node's vote (`agree`) be the deciding one at `now`: it brings its side to the
-/// margin, at least 600 s have passed, and voting has not ended. The contract's exact rule is
-/// pending the node line; this follows the decision.
+/// Would this node's vote (`agree`) be the deciding one at `now`: with it, its side reaches the
+/// margin and either 600 s have passed or more than half of the eligible nodes have now voted
+/// (early seal, admission / recovery / report only), and voting has not ended. Then the same
+/// transaction is expected to seal.
 pub fn would_decide(t: &Tally, agree: bool, now: u64) -> bool {
     let (mine, other) = if agree {
         (t.agree + 1, t.disagree)
     } else {
         (t.disagree + 1, t.agree)
     };
-    mine >= other + t.margin && now >= t.opened_at + MIN_OPEN && voting_open(t, now)
+    let early = turnout_over_half(participants(t.agree, t.disagree) + 1, t.eligible_snapshot);
+    mine >= other + t.margin && (now >= t.opened_at + MIN_OPEN || early) && voting_open(t, now)
 }
 
 /// Earliest time any vote could decide the case (same for both sides).
@@ -299,9 +324,9 @@ pub fn vote_timing(t: &Tally, _agree: bool, now: u64) -> VoteTiming {
 pub struct SealStrategy {
     /// Call the unified seal entry for the executor reward. Default off.
     pub enabled: bool,
-    /// PENDING project item (decision record / whitepaper ch. 11 item 31): may a case whose
-    /// threshold was met inside the window still be sealed after 7,200 s? Default false: stop at
-    /// 7,200 s.
+    /// DECIDED (user 2026-11-09, "允许补封", item 31 for node cases): after 7,200 s the votes are
+    /// frozen; anyone may call the unified entry: frozen votes meeting the margin seal (executor
+    /// reward paid), otherwise the same entry closes the case as void. Default on.
     pub seal_after_window: bool,
     /// Strategy choice: do not seal a case this node proposed. Default true.
     pub skip_own_proposal: bool,
@@ -319,7 +344,7 @@ impl Default for SealStrategy {
     fn default() -> Self {
         Self {
             enabled: false,
-            seal_after_window: false,
+            seal_after_window: true,
             skip_own_proposal: true,
             no_retry_after_race_loss: true,
             online_reward: EXECUTOR_REWARD,
@@ -333,12 +358,33 @@ pub fn threshold_met(t: &Tally) -> bool {
     t.agree >= t.disagree + t.margin || t.disagree >= t.agree + t.margin
 }
 
-/// The case can be sealed through the unified entry: threshold met, 600 s passed, and (unless the
-/// pending `seal_after_window` switch is on) voting has not ended.
+/// The case can be sealed through the unified entry: threshold met, and either 600 s passed or
+/// more than half of the eligible nodes voted; after 7,200 s (frozen votes) only with late sealing.
 pub fn seal_ready(t: &Tally, now: u64, s: &SealStrategy) -> bool {
-    threshold_met(t)
-        && now >= t.opened_at + MIN_OPEN
-        && (s.seal_after_window || voting_open(t, now))
+    let time_or_turnout = now >= t.opened_at + MIN_OPEN
+        || turnout_over_half(participants(t.agree, t.disagree), t.eligible_snapshot);
+    threshold_met(t) && time_or_turnout && (s.seal_after_window || voting_open(t, now))
+}
+
+/// After 7,200 s the votes are frozen: what the unified entry would do (user decision 2026-11-09).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterWindow {
+    /// Voting still open.
+    StillOpen,
+    /// Frozen votes meet the margin: the entry seals (executor reward paid).
+    Seal,
+    /// Frozen votes do not: the entry closes the case as void (no reward, no fine, locks freed).
+    VoidClose,
+}
+
+pub fn after_window(t: &Tally, now: u64) -> AfterWindow {
+    if voting_open(t, now) {
+        AfterWindow::StillOpen
+    } else if threshold_met(t) {
+        AfterWindow::Seal
+    } else {
+        AfterWindow::VoidClose
+    }
 }
 
 /// Seal for the executor reward? Rewards do not stack per node and case: a node already earning

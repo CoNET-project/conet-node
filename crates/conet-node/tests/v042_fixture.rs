@@ -21,7 +21,12 @@ fn n(v: &Value) -> u128 {
 #[test]
 fn seal_window_matches_all_three_finalize_entries() {
     let d = data();
-    let st = SealStrategy::default();
+    // v0.4.2 predates the late-seal decision (2026-11-09): it refuses at 7,200 s, so compare with
+    // late sealing off.
+    let st = SealStrategy {
+        seal_after_window: false,
+        ..SealStrategy::default()
+    };
     let mut checked = 0;
     for c in d["seal"].as_array().unwrap() {
         let Some(answer) = c["answer"].as_str() else {
@@ -43,6 +48,7 @@ fn seal_window_matches_all_three_finalize_entries() {
                     margin: n(&c["margin"]) as u16,
                     state: REPORT_OPEN,
                     ratio_bps: 2_000,
+                    eligible_snapshot: None,
                 };
                 report_seal_ready(&r, now, &st)
             }
@@ -52,6 +58,7 @@ fn seal_window_matches_all_three_finalize_entries() {
                     agree: n(&c["agree"]) as u32,
                     disagree: n(&c["disagree"]) as u32,
                     margin: n(&c["margin"]) as u32,
+                    eligible_snapshot: None,
                 };
                 seal_ready(&t, now, &st)
             }

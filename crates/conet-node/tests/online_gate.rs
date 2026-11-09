@@ -187,12 +187,14 @@ fn online_vote_window_600_to_7200() {
         agree: 19,
         disagree: 0,
         margin: 20,
+        eligible_snapshot: None,
     };
     let no19 = Tally {
         opened_at: t0,
         agree: 1,
         disagree: 20,
         margin: 20,
+        eligible_snapshot: None,
     };
     for (t, side) in [(yes19, true), (no19, false)] {
         assert!(!would_decide(&t, side, t0 + 599));
@@ -290,27 +292,31 @@ fn vote_at_once_and_optional_seal_strategy() {
         agree: 19,
         disagree: 0,
         margin: 20,
+        eligible_snapshot: None,
     };
     assert_eq!(vote_timing(&yes19, true, t0 + 120), VoteTiming::Now);
     assert_eq!(vote_timing(&yes19, true, t0 + 7_199), VoteTiming::Now);
     assert_eq!(vote_timing(&yes19, true, t0 + 7_200), VoteTiming::Closed);
-    // Threshold met at minute 2: sealable from 600 s; after 7,200 s only with the pending switch.
+    // Threshold met at minute 2: sealable from 600 s; after 7,200 s with the frozen votes (late
+    // sealing decided 2026-11-09, default on); with the switch off, not.
     let st = SealStrategy::default();
+    assert!(st.seal_after_window);
     let yes20 = Tally { agree: 20, ..yes19 };
     assert!(!seal_ready(&yes20, t0 + 599, &st));
     assert!(seal_ready(&yes20, t0 + 600, &st));
-    assert!(!seal_ready(&yes20, t0 + 7_200, &st));
-    let after = SealStrategy {
-        seal_after_window: true,
+    assert!(seal_ready(&yes20, t0 + 7_200, &st));
+    let off = SealStrategy {
+        seal_after_window: false,
         ..st
     };
-    assert!(seal_ready(&yes20, t0 + 7_200, &after));
+    assert!(!seal_ready(&yes20, t0 + 7_200, &off));
     assert!(!seal_ready(&yes19, t0 + 1_000, &st)); // threshold not met
     let no20 = Tally {
         opened_at: t0,
         agree: 1,
         disagree: 21,
         margin: 20,
+        eligible_snapshot: None,
     };
     assert!(seal_ready(&no20, t0 + 600, &st));
     // Seal strategy: default off; proposer skip and no-retry are strategy choices (switchable).
@@ -417,4 +423,87 @@ fn admission_reapply_after_rejection_twelve_hours() {
         }
     );
     assert_eq!(review_admission(&agree, C, None), ProposeDecision::Propose);
+}
+
+/// Early seal when more than half of the eligible nodes voted (project decision 2026-11-09;
+/// admission / recovery / report): exactly half is not enough; turnout never replaces the margin.
+#[test]
+fn turnout_over_half_allows_early_seal() {
+    let t0 = 1_900_000_000;
+    let st = SealStrategy::default();
+    // 40 eligible; 21 agree, 0 disagree, margin 20 -> participants 21 > 20 = half.
+    let over = Tally {
+        opened_at: t0,
+        agree: 21,
+        disagree: 0,
+        margin: 20,
+        eligible_snapshot: Some(40),
+    };
+    assert!(seal_ready(&over, t0 + 60, &st));
+    // Exactly half (20 of 40) with the margin met: not early.
+    let half = Tally { agree: 20, ..over };
+    assert!(!seal_ready(&half, t0 + 60, &st));
+    assert!(seal_ready(&half, t0 + 600, &st)); // but from 600 s, yes
+                                               // Over half but margin short (15 vs 10 of 40, margin 20): never.
+    let short = Tally {
+        agree: 15,
+        disagree: 10,
+        ..over
+    };
+    assert!(turnout_over_half(participants(15, 10), Some(40)));
+    assert!(!seal_ready(&short, t0 + 60, &st));
+    assert!(!seal_ready(&short, t0 + 3_600, &st));
+    // 599 / 600 without turnout data (denominator pending): only the 600 s rule.
+    let unknown = Tally {
+        eligible_snapshot: None,
+        ..over
+    };
+    assert!(!seal_ready(&unknown, t0 + 599, &st));
+    assert!(seal_ready(&unknown, t0 + 600, &st));
+    // The vote that makes it over half and meets the margin decides in the same transaction.
+    let before = Tally { agree: 20, ..over };
+    assert!(would_decide(&before, true, t0 + 60));
+    assert!(!would_decide(
+        &Tally {
+            eligible_snapshot: Some(42),
+            ..before
+        },
+        true,
+        t0 + 60
+    )); // 21 of 42 = half
+        // Repeated votes of the same node count once.
+    assert_eq!(count_participants(&[7, 8, 7, 9, 8]), 3);
+    // After the end: no early seal by turnout when late sealing is off, and no voting.
+    let off = SealStrategy {
+        seal_after_window: false,
+        ..st
+    };
+    assert!(!seal_ready(&over, t0 + 7_200, &off));
+    assert_eq!(vote_timing(&over, true, t0 + 7_200), VoteTiming::Closed);
+}
+
+/// Late sealing (user decision 2026-11-09): after 7,200 s the votes are frozen; the unified entry
+/// seals if they meet the margin, otherwise closes the case as void.
+#[test]
+fn after_the_window_seal_or_void_close() {
+    let t0 = 1_900_000_000;
+    let met = Tally {
+        opened_at: t0,
+        agree: 20,
+        disagree: 0,
+        margin: 20,
+        eligible_snapshot: None,
+    };
+    let not_met = Tally {
+        agree: 12,
+        disagree: 3,
+        ..met
+    };
+    assert_eq!(after_window(&met, t0 + 7_199), AfterWindow::StillOpen);
+    assert_eq!(after_window(&met, t0 + 7_200), AfterWindow::Seal);
+    assert_eq!(after_window(&not_met, t0 + 7_200), AfterWindow::VoidClose);
+    // Nodes stop voting at 7,200 s; sealing is only for the (optional) seal strategy.
+    assert_eq!(vote_timing(&met, true, t0 + 7_200), VoteTiming::Closed);
+    assert!(seal_ready(&met, t0 + 9_000, &SealStrategy::default()));
+    assert!(!seal_ready(&not_met, t0 + 9_000, &SealStrategy::default()));
 }

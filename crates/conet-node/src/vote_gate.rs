@@ -85,6 +85,9 @@ pub struct ReportView {
     /// Penalty RATIO of this case in BPS, fixed when it opened (`Report.fine`); each voter's
     /// amount is this ratio times its own term amount.
     pub ratio_bps: u128,
+    /// Eligible nodes when the report opened (turnout denominator, project decision 2026-11-09);
+    /// None until the node line's read exists.
+    pub eligible_snapshot: Option<u32>,
 }
 
 impl ReportView {
@@ -404,6 +407,7 @@ impl VoteReader {
             margin: r.margin,
             state: r.state,
             ratio_bps: r.fine,
+            eligible_snapshot: None, // pending the node line's read
         })
     }
 
@@ -446,9 +450,11 @@ pub fn would_decide_report(r: &ReportView, agree: bool, now: u64) -> bool {
     } else {
         (r.disagree + 1, r.agree)
     };
+    let early =
+        crate::online_gate::turnout_over_half(r.agree + r.disagree + 1, r.eligible_snapshot);
     r.state == REPORT_OPEN
         && mine >= other + r.margin as u32
-        && now >= r.decidable_at()
+        && (now >= r.decidable_at() || early)
         && now < r.expires_at
 }
 
@@ -465,12 +471,25 @@ pub fn report_vote_timing(r: &ReportView, now: u64) -> crate::online_gate::VoteT
     }
 }
 
-/// The report's threshold is met and it can be sealed through the unified entry (after the
-/// observation time; after `expiresAt` only if the pending `seal_after_window` switch is on).
+/// The report's threshold is met and it can be sealed through the unified entry: after the
+/// observation time or with more than half of the eligible nodes voting; after `expiresAt` with
+/// the frozen votes when late sealing is on (decided 2026-11-09, default on).
 pub fn report_seal_ready(r: &ReportView, now: u64, s: &crate::online_gate::SealStrategy) -> bool {
     let met = r.agree >= r.disagree + r.margin as u32 || r.disagree >= r.agree + r.margin as u32;
-    r.state == REPORT_OPEN
-        && met
-        && now >= r.decidable_at()
-        && (s.seal_after_window || now < r.expires_at)
+    let time_or_turnout = now >= r.decidable_at()
+        || crate::online_gate::turnout_over_half(r.agree + r.disagree, r.eligible_snapshot);
+    r.state == REPORT_OPEN && met && time_or_turnout && (s.seal_after_window || now < r.expires_at)
+}
+
+/// After the report's end the votes are frozen: seal if they meet the margin, else void close.
+pub fn report_after_window(r: &ReportView, now: u64) -> crate::online_gate::AfterWindow {
+    use crate::online_gate::AfterWindow;
+    let met = r.agree >= r.disagree + r.margin as u32 || r.disagree >= r.agree + r.margin as u32;
+    if now < r.expires_at {
+        AfterWindow::StillOpen
+    } else if met {
+        AfterWindow::Seal
+    } else {
+        AfterWindow::VoidClose
+    }
 }
