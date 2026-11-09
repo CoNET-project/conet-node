@@ -30,6 +30,8 @@ fn cfg() -> TopUpConfig {
         window: 7 * 86_400,
         gas_reserve: C / 100,
         max_gas_limit: 300_000,
+        max_fee_cap: 50 * GWEI,
+        tip_cap: GWEI,
     }
 }
 fn req(nonce: u64, value: u128) -> TopUpRequest {
@@ -441,4 +443,54 @@ fn example_config_parses() {
         &s.replace("\"window\"", "\"extra\": 1, \"window\"")
     )
     .is_err());
+}
+
+/// N6 third review: absolute caps on maxFee and the tip; a hijacked conet-node cannot burn the
+/// wallet as fees. A +10% replacement may not pass the caps either.
+#[test]
+fn fee_caps_are_absolute() {
+    let c = TopUpConfig {
+        tip_cap: 100_000_000,
+        ..cfg()
+    };
+    let l = fresh();
+    // N6's request: 1 CNET per gas as maxFee and tip.
+    let burn = TopUpRequest {
+        max_fee_wei: C,
+        priority_fee_wei: C,
+        stated_wallet: u128::MAX / 4,
+        ..req(1, C)
+    };
+    assert_eq!(check(&c, &burn, &l, IN_WINDOW), Err(TopUpRefuse::FeeCap));
+    let over_max = TopUpRequest {
+        max_fee_wei: 50 * GWEI + 1,
+        ..req(1, C)
+    };
+    assert_eq!(
+        check(&c, &over_max, &l, IN_WINDOW),
+        Err(TopUpRefuse::FeeCap)
+    );
+    let over_tip = TopUpRequest {
+        priority_fee_wei: 100_000_001,
+        ..req(1, C)
+    };
+    assert_eq!(
+        check(&c, &over_tip, &l, IN_WINDOW),
+        Err(TopUpRefuse::FeeCap)
+    );
+    // At the caps: fine.
+    let at = TopUpRequest {
+        max_fee_wei: 50 * GWEI,
+        priority_fee_wei: 100_000_000,
+        ..req(1, C)
+    };
+    let l1 = check(&c, &at, &l, IN_WINDOW).unwrap();
+    // Replacing it needs +10% on both fees, which would pass the caps: refused.
+    let bump = TopUpRequest {
+        replaces_nonce: Some(1),
+        max_fee_wei: 55 * GWEI,
+        priority_fee_wei: 110_000_000,
+        ..req(1, C)
+    };
+    assert_eq!(check(&c, &bump, &l1, IN_WINDOW), Err(TopUpRefuse::FeeCap));
 }

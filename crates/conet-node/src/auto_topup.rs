@@ -52,6 +52,8 @@ pub struct Config {
     pub critical: u64,
     /// `topUp` gas limit x worst-case maxFee (vote_price style); value pending measurement.
     pub gas_reserve: u128,
+    /// A busy wallet this close to the end raises the "use the web page" alert.
+    pub busy_alert: u64,
 }
 
 impl Default for Config {
@@ -63,6 +65,7 @@ impl Default for Config {
             critical: 3_600,
             // Placeholder: 300,000 gas x 1 gwei x 4 (maxFee = 4 x baseFee + tip rule).
             gas_reserve: 300_000u128 * 1_000_000_000 * 4,
+            busy_alert: 86_400,
         }
     }
 }
@@ -85,8 +88,10 @@ pub enum Plan {
     /// Send `topUp(nodeId)` with exactly this value.
     Send { value: u128 },
     /// The main wallet has other transactions in flight (N6 second review): wait until they are
-    /// mined or dropped, so a top-up never queues behind or races them.
-    WalletBusy { in_flight: u64 },
+    /// mined or dropped, so a top-up never queues behind or races them. "In flight" comes from
+    /// conet-node's own RPC, which a hijacked node could report forever (N6 third review): close
+    /// to the end (`alert_use_web`) the operator is told to deposit through the web page instead.
+    WalletBusy { in_flight: u64, alert_use_web: bool },
     /// Objective obstacle: the wallet lacks `missing` (top-up plus gas reserve).
     WalletShort { missing: u128, need_stake: u128 },
     /// Not enough time left to count on mining before the end; renewal will fail unless a
@@ -140,6 +145,7 @@ pub fn plan(v: &ChainView, inflight: Option<&InFlight>, cfg: &Config) -> Plan {
     if v.wallet_pending_nonce > v.wallet_nonce {
         return Plan::WalletBusy {
             in_flight: v.wallet_pending_nonce - v.wallet_nonce,
+            alert_use_web: left <= cfg.busy_alert,
         };
     }
     let required = need.saturating_add(cfg.gas_reserve);

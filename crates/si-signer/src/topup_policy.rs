@@ -21,6 +21,9 @@
 //!   configured first term end and term length;
 //! - at most `daily_count` transactions and `daily_value` in any rolling 24 hours of the signer's
 //!   own clock (not the calendar day: no 4 in a row across midnight);
+//! - maxFeePerGas and the tip are capped absolutely (N6 third review): without caps a hijacked
+//!   conet-node could burn the whole wallet as fees (or, with a block producer, take it);
+//!   a +10% replacement may not pass the caps either;
 //! - after signing the wallet keeps a gas reserve. RESIDUAL RISK: the balance is the one conet-node
 //!   states; a hijacked conet-node can overstate it, and the signer, offline by design, cannot
 //!   check it.
@@ -65,6 +68,12 @@ pub struct TopUpConfig {
     #[serde(with = "dec")]
     pub gas_reserve: u128,
     pub max_gas_limit: u64,
+    /// Absolute cap on maxFeePerGas (wei).
+    #[serde(with = "dec")]
+    pub max_fee_cap: u128,
+    /// Absolute cap on maxPriorityFeePerGas (wei); the vote tip cap is 1e8.
+    #[serde(with = "dec")]
+    pub tip_cap: u128,
 }
 
 impl TopUpConfig {
@@ -108,6 +117,8 @@ pub enum TopUpRefuse {
     AboveReplaced,
     /// A replacement that does not raise both fees by at least 10%.
     ReplaceFeeBump,
+    /// maxFeePerGas or the tip above its absolute cap.
+    FeeCap,
     /// No ledger file, or one readable / writable by others: refused until the operator acts.
     LedgerMissing,
     LedgerPerms,
@@ -254,6 +265,9 @@ pub fn check(
     }
     if req.priority_fee_wei > req.max_fee_wei || req.max_fee_wei == 0 {
         return Err(TopUpRefuse::BadFees);
+    }
+    if req.max_fee_wei > cfg.max_fee_cap || req.priority_fee_wei > cfg.tip_cap {
+        return Err(TopUpRefuse::FeeCap);
     }
     let gas = (req.gas_limit as u128).saturating_mul(req.max_fee_wei);
     if req.stated_wallet

@@ -364,7 +364,25 @@ fn waits_while_the_main_wallet_has_other_transactions_in_flight() {
         wallet_pending_nonce: 12,
         ..synthetic(5 * C, 10 * C, 100 * C, now)
     };
-    assert_eq!(plan(&busy, None, &cfg), Plan::WalletBusy { in_flight: 2 });
+    assert_eq!(
+        plan(&busy, None, &cfg),
+        Plan::WalletBusy {
+            in_flight: 2,
+            alert_use_web: false
+        }
+    );
+    // Still busy one day before the end: alert, deposit through the web page.
+    let late = ChainView {
+        now: END - 86_400,
+        ..busy.clone()
+    };
+    assert_eq!(
+        plan(&late, None, &cfg),
+        Plan::WalletBusy {
+            in_flight: 2,
+            alert_use_web: true
+        }
+    );
     let clear = ChainView {
         wallet_nonce: 12,
         ..busy

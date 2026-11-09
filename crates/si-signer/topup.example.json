@@ -10,5 +10,7 @@
   "term_length": 15768000,
   "window": 604800,
   "gas_reserve": "10000000000000000",
-  "max_gas_limit": 300000
+  "max_gas_limit": 300000,
+  "max_fee_cap": "50000000000",
+  "tip_cap": "100000000"
 }
