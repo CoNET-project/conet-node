@@ -102,6 +102,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => println!("previous route key removed; restart conet-signer and conet-node"),
             }
         }
+        Some("topup-ledger-init") => {
+            // The operator creates the AUTO-TOPUP ledger once (mode 0600), never over an existing one.
+            let state = PathBuf::from(arg("--topup-state").ok_or("--topup-state <file>")?);
+            si_signer::topup_policy::TopUpLedger::create(&state)?;
+            println!("topup ledger created");
+        }
         Some("serve") => {
             let socket = PathBuf::from(arg("--socket").ok_or("--socket <path>")?);
             let cfg = server::SignerConfig {
@@ -141,7 +147,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             set_mode(&socket, 0o660)?;
             server::serve(listener, signer).await?;
         }
-        _ => eprintln!("usage: conet-signer keygen|init|rotate-route|retire-route|serve ..."),
+        _ => eprintln!(
+            "usage: conet-signer keygen|init|rotate-route|retire-route|topup-ledger-init|serve ..."
+        ),
     }
     Ok(())
 }

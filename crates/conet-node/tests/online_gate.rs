@@ -280,3 +280,22 @@ fn open_case_replaceable_only_after_twelve_hours() {
     let b = precheck_recovery(&rejected);
     assert_eq!((b.replace_at, b.wait), (None, Some(OFFLINE_COOLDOWN - 10)));
 }
+
+#[test]
+fn finalize_own_decided_rejection_early() {
+    let t0 = 1_900_000_000;
+    let lost = Tally {
+        opened_at: t0,
+        agree: 1,
+        disagree: 21,
+        margin: 20,
+    };
+    assert!(!should_finalize_own_rejection(true, &lost, t0 + 43_199));
+    assert!(should_finalize_own_rejection(true, &lost, t0 + 43_200));
+    assert!(!should_finalize_own_rejection(false, &lost, t0 + 43_200)); // someone else's case
+    let open = Tally {
+        disagree: 15,
+        ..lost
+    };
+    assert!(!should_finalize_own_rejection(true, &open, t0 + 50_000)); // not decided
+}

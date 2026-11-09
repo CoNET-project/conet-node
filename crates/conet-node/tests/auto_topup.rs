@@ -30,6 +30,7 @@ fn view(s: &Value) -> ChainView {
         threshold_at_end: n(&s["thresholdAtEnd"]),
         wallet: n(&s["wallet"]),
         wallet_nonce: n(&s["nonce"]) as u64,
+        wallet_pending_nonce: n(&s["nonce"]) as u64,
     }
 }
 fn synthetic(stake: u128, thr: u128, wallet: u128, now: u64) -> ChainView {
@@ -42,6 +43,7 @@ fn synthetic(stake: u128, thr: u128, wallet: u128, now: u64) -> ChainView {
         threshold_at_end: thr,
         wallet,
         wallet_nonce: 10,
+        wallet_pending_nonce: 10,
     }
 }
 
@@ -351,4 +353,21 @@ fn recovery_precheck_matches_the_contract() {
         fee_balance: n(&early["feeSent"]),
     });
     assert_eq!(b.wait, Some(4));
+}
+
+/// Other main-wallet transactions in flight: no top-up until they clear (N6 second review).
+#[test]
+fn waits_while_the_main_wallet_has_other_transactions_in_flight() {
+    let cfg = Config::default();
+    let now = END - 3 * DAY;
+    let busy = ChainView {
+        wallet_pending_nonce: 12,
+        ..synthetic(5 * C, 10 * C, 100 * C, now)
+    };
+    assert_eq!(plan(&busy, None, &cfg), Plan::WalletBusy { in_flight: 2 });
+    let clear = ChainView {
+        wallet_nonce: 12,
+        ..busy
+    };
+    assert_eq!(plan(&clear, None, &cfg), Plan::Send { value: 5 * C });
 }

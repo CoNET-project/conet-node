@@ -27,8 +27,9 @@ pub struct Signer {
     pub anchor_node_id: Option<String>,
     /// Quota ledger (§31); required when anchor receipts are enabled.
     quota: Option<Mutex<Quota>>,
-    /// AUTO-TOPUP entry (approved 2026-11-09): config and its ledger; None = refused.
-    topup: Option<(TopUpConfig, Mutex<TopUpLedger>)>,
+    /// AUTO-TOPUP entry (approved 2026-11-09): config and its ledger (Err = missing or not
+    /// private: every topUp refused until the operator acts); None = not configured.
+    topup: Option<(TopUpConfig, Result<Mutex<TopUpLedger>, String>)>,
 }
 
 /// Contract ceiling for an online window (`ONLINE_TTL_CEIL`, 7 days): a receipt never covers more.
@@ -111,8 +112,11 @@ impl Signer {
                         "topup registry differs from --verifying-contract".into(),
                     ));
                 }
-                let l = TopUpLedger::open(path).map_err(StartError)?;
-                Some((tc, Mutex::new(l)))
+                let l = TopUpLedger::open(path).map(Mutex::new).map_err(|e| {
+                    warn!(refusal = %e, "topup ledger unusable: topUp refused until the operator recreates it");
+                    e.to_string()
+                });
+                Some((tc, l))
             }
         };
         Ok(Self {
@@ -384,6 +388,10 @@ impl Signer {
             } => {
                 let Some((tc, ledger)) = &self.topup else {
                     return refused("topup_disabled");
+                };
+                let ledger = match ledger {
+                    Ok(l) => l,
+                    Err(e) => return refused(e),
                 };
                 let p = |s: &str| s.parse::<u128>().ok();
                 let (Some(max_fee_wei), Some(priority_fee_wei), Some(value), Some(sm), Some(sw)) = (

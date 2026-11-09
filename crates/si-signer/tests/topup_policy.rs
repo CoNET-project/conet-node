@@ -1,4 +1,4 @@
-//! AUTO-TOPUP main-wallet SignTx entry (用户已批准 2026-11-09, revised after N6's pre-review).
+//! AUTO-TOPUP main-wallet SignTx entry (用户已批准 2026-11-09, revised after N6's two reviews).
 //! TEST keys only, no network.
 use si_crypto::eth::EthKey;
 use si_signer::keystore;
@@ -7,12 +7,12 @@ use si_signer::proto::{Request, Response};
 use si_signer::server::{Signer, SignerConfig};
 use si_signer::topup_policy::*;
 use si_signer::tx1559::{parse_address, Tx1559};
+use std::path::PathBuf;
 use zeroize::Zeroizing;
 
 const REG: &str = "0x00000000000000000000000000000000c0de0001";
 const C: u128 = 1_000_000_000_000_000_000;
 const GWEI: u128 = 1_000_000_000;
-/// First term end: 2030-03-17-ish; the window opens 7 days before.
 const END: u64 = 1_900_000_000;
 const IN_WINDOW: u64 = END - 3 * 86_400;
 
@@ -44,6 +44,16 @@ fn req(nonce: u64, value: u128) -> TopUpRequest {
         replaces_nonce: None,
     }
 }
+/// A same-nonce replacement with both fees raised by 10%.
+fn replacement(nonce: u64, value: u128) -> TopUpRequest {
+    TopUpRequest {
+        replaces_nonce: Some(nonce),
+        max_fee_wei: 4 * GWEI * 11 / 10,
+        priority_fee_wei: GWEI / 10 * 11 / 10,
+        stated_missing: 10 * C,
+        ..req(nonce, value)
+    }
+}
 fn data(id: u64) -> Vec<u8> {
     let mut d = topup_selector().to_vec();
     let mut w = [0u8; 32];
@@ -54,13 +64,69 @@ fn data(id: u64) -> Vec<u8> {
 fn fresh() -> LedgerState {
     LedgerState::default()
 }
+fn golden_key() -> (keystore::Secrets, EthKey) {
+    let g: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../conformance/vectors/golden.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let wallet = g["wallets"]["nodeA"]["privateKey"].as_str().unwrap();
+    (
+        keystore::Secrets {
+            wallet_hex: wallet.into(),
+            pgp_armored: g["keys"]["nodeA"]["armoredPrivate"]
+                .as_str()
+                .unwrap()
+                .into(),
+            pgp_pass: g["keys"]["nodeA"]["passphrase"].as_str().unwrap().into(),
+            previous_pgp_armored: String::new(),
+            previous_pgp_pass: String::new(),
+        },
+        EthKey::from_hex(wallet).unwrap(),
+    )
+}
+fn signer(topup: Option<PathBuf>) -> Signer {
+    let kek = [7u8; 32];
+    let (secrets, _) = golden_key();
+    Signer::start(SignerConfig {
+        keystore_file: keystore::seal(&kek, &secrets).unwrap(),
+        kek: Zeroizing::new(kek),
+        verifying_contract: REG.into(),
+        allow_bind: false,
+        allow_uid: None,
+        anchor_node_id: None,
+        quota: None,
+        topup: topup.map(|p| (cfg(), p)),
+    })
+    .unwrap()
+}
+fn wire(nonce: u64, value: u128, wallet: u128) -> Request {
+    Request::SignTopUp {
+        nonce,
+        gas_limit: 200_000,
+        max_fee_wei: (4 * GWEI).to_string(),
+        priority_fee_wei: (GWEI / 10).to_string(),
+        value: value.to_string(),
+        stated_missing: (5 * C).to_string(),
+        stated_wallet: wallet.to_string(),
+        replaces_nonce: None,
+    }
+}
+fn refused(r: Response) -> String {
+    match r {
+        Response::Refused { reason } => reason,
+        Response::Ok { .. } => panic!("signed"),
+    }
+}
 
 #[test]
 fn builds_only_own_topup_to_the_registry() {
     let c = cfg();
     assert_eq!(c.calldata(), data(573));
     assert_eq!(check_tx_bytes(&c, 2, Some(REG), &data(573)), Ok(()));
-    // Another node, another contract, contract creation, another selector, extra bytes, type 0.
     assert_eq!(
         check_tx_bytes(&c, 2, Some(REG), &data(574)),
         Err(TopUpRefuse::NotOwnNode)
@@ -101,7 +167,6 @@ fn amount_window_gas_rules() {
     let c = cfg();
     let l = fresh();
     assert!(check(&c, &req(1, 5 * C), &l, IN_WINDOW).is_ok());
-    // Above the stated missing amount (it only lowers), above the per-tx cap, zero.
     assert_eq!(
         check(&c, &req(1, 5 * C + 1), &l, IN_WINDOW),
         Err(TopUpRefuse::AboveMissing)
@@ -115,7 +180,6 @@ fn amount_window_gas_rules() {
         check(&c, &req(1, 0), &l, IN_WINDOW),
         Err(TopUpRefuse::ZeroValue)
     );
-    // Window: computed by the signer from its clock and the configured schedule.
     assert_eq!(
         check(&c, &req(1, C), &l, END - 8 * 86_400),
         Err(TopUpRefuse::OutsideWindow)
@@ -123,56 +187,28 @@ fn amount_window_gas_rules() {
     assert_eq!(
         check(&c, &req(1, C), &l, END),
         Err(TopUpRefuse::OutsideWindow)
-    ); // next term, far
-    assert!(check(&c, &req(1, C), &l, END + 15_768_000 - 86_400).is_ok()); // next term's window
-                                                                           // Gas: wallet must keep value + gas_limit x maxFee + reserve.
+    );
+    assert!(check(&c, &req(1, C), &l, END + 15_768_000 - 86_400).is_ok());
     let need = 5 * C + 200_000 * 4 * GWEI + C / 100;
-    assert!(check(
-        &c,
-        &TopUpRequest {
-            stated_wallet: need,
-            ..req(1, 5 * C)
-        },
-        &l,
-        IN_WINDOW
-    )
-    .is_ok());
+    let w = |stated_wallet| TopUpRequest {
+        stated_wallet,
+        ..req(1, 5 * C)
+    };
+    assert!(check(&c, &w(need), &l, IN_WINDOW).is_ok());
     assert_eq!(
-        check(
-            &c,
-            &TopUpRequest {
-                stated_wallet: need - 1,
-                ..req(1, 5 * C)
-            },
-            &l,
-            IN_WINDOW
-        ),
+        check(&c, &w(need - 1), &l, IN_WINDOW),
         Err(TopUpRefuse::GasReserve)
     );
-    assert_eq!(
-        check(
-            &c,
-            &TopUpRequest {
-                gas_limit: 300_001,
-                ..req(1, C)
-            },
-            &l,
-            IN_WINDOW
-        ),
-        Err(TopUpRefuse::GasLimit)
-    );
-    assert_eq!(
-        check(
-            &c,
-            &TopUpRequest {
-                priority_fee_wei: 5 * GWEI,
-                ..req(1, C)
-            },
-            &l,
-            IN_WINDOW
-        ),
-        Err(TopUpRefuse::BadFees)
-    );
+    let g = TopUpRequest {
+        gas_limit: 300_001,
+        ..req(1, C)
+    };
+    assert_eq!(check(&c, &g, &l, IN_WINDOW), Err(TopUpRefuse::GasLimit));
+    let f = TopUpRequest {
+        priority_fee_wei: 5 * GWEI,
+        ..req(1, C)
+    };
+    assert_eq!(check(&c, &f, &l, IN_WINDOW), Err(TopUpRefuse::BadFees));
 }
 
 #[test]
@@ -184,7 +220,6 @@ fn rolling_24h_caps_term_budget_and_replacement() {
     };
     let l1 = check(&c, &r(1, 4 * C), &fresh(), IN_WINDOW).unwrap();
     let l2 = check(&c, &r(2, 4 * C), &l1, IN_WINDOW).unwrap();
-    // Third within 24 hours: refused. Daily value: 4 + 7 > 10.
     assert_eq!(
         check(&c, &r(3, C), &l2, IN_WINDOW),
         Err(TopUpRefuse::DailyCount)
@@ -193,7 +228,7 @@ fn rolling_24h_caps_term_budget_and_replacement() {
         check(&c, &r(2, 7 * C), &l1, IN_WINDOW),
         Err(TopUpRefuse::DailyValue)
     );
-    // Rolling, not calendar: two just before midnight, then just after midnight still refused.
+    // Rolling, not calendar: two just before midnight, the third just after is still refused.
     let midnight = (IN_WINDOW / 86_400 + 1) * 86_400;
     let a = check(&c, &r(11, C), &fresh(), midnight - 60).unwrap();
     let b = check(&c, &r(12, C), &a, midnight - 30).unwrap();
@@ -201,40 +236,35 @@ fn rolling_24h_caps_term_budget_and_replacement() {
         check(&c, &r(13, C), &b, midnight + 30),
         Err(TopUpRefuse::DailyCount)
     );
-    assert!(check(&c, &r(13, C), &b, midnight - 60 + 86_400).is_ok()); // 24 h after the first
-                                                                       // The term budget (12) holds across days: 8 + 5 > 12.
+    assert!(check(&c, &r(13, C), &b, midnight - 60 + 86_400).is_ok());
+    // Term budget across days.
     let later = IN_WINDOW + 86_400;
     assert_eq!(
         check(&c, &r(3, 5 * C), &l2, later),
         Err(TopUpRefuse::AboveBudget)
     );
     assert!(check(&c, &r(3, 4 * C), &l2, later).is_ok());
-    // Replacement: must be our own booked nonce, value not above the original; lowers the booking.
-    let rep = TopUpRequest {
+    // Replacement: own nonce, value not above, fees +10%; the booking keeps the highest version.
+    let l3 = check(&c, &replacement(2, C), &l2, IN_WINDOW).unwrap();
+    assert_eq!(l3.last_24h(IN_WINDOW), (2, 8 * C));
+    assert_eq!(l3.term_value(), 8 * C);
+    let cheap = TopUpRequest {
         replaces_nonce: Some(2),
         ..r(2, C)
     };
-    let l3 = check(&c, &rep, &l2, IN_WINDOW).unwrap();
-    assert_eq!(l3.last_24h(IN_WINDOW), (2, 5 * C));
-    assert_eq!(l3.term_value(), 5 * C);
-    let up = TopUpRequest {
-        replaces_nonce: Some(2),
-        ..r(2, 4 * C + 1)
-    };
     assert_eq!(
-        check(&c, &up, &l2, IN_WINDOW),
+        check(&c, &cheap, &l2, IN_WINDOW),
+        Err(TopUpRefuse::ReplaceFeeBump)
+    );
+    assert_eq!(
+        check(&c, &replacement(2, 4 * C + 1), &l2, IN_WINDOW),
         Err(TopUpRefuse::AboveReplaced)
     );
-    // A claimed replacement of a nonce the signer never signed: refused (no budget bypass).
-    let fake = TopUpRequest {
-        replaces_nonce: Some(9),
-        ..r(9, 4 * C)
-    };
+    // A claimed replacement of a nonce the signer never signed, or a mismatched nonce.
     assert_eq!(
-        check(&c, &fake, &l2, IN_WINDOW),
+        check(&c, &replacement(9, 4 * C), &l2, IN_WINDOW),
         Err(TopUpRefuse::ReplaceUnknown)
     );
-    // Mismatched nonce in the claim.
     let odd = TopUpRequest {
         replaces_nonce: Some(1),
         ..r(5, C)
@@ -243,21 +273,40 @@ fn rolling_24h_caps_term_budget_and_replacement() {
         check(&c, &odd, &l2, IN_WINDOW),
         Err(TopUpRefuse::ReplaceUnknown)
     );
-    // Zero value: refused, also as a replacement (topUp(0) reverts; let the original land).
-    let zero = TopUpRequest {
-        replaces_nonce: Some(2),
-        stated_missing: 0,
-        ..req(2, 0)
-    };
+    // Zero value: refused, also as a replacement.
     assert_eq!(
-        check(&c, &zero, &l2, IN_WINDOW),
+        check(&c, &replacement(2, 0), &l2, IN_WINDOW),
         Err(TopUpRefuse::ZeroValue)
     );
-    // A different top-up at one of our nonces without claiming replacement: refused.
+    // Another top-up at one of our nonces without claiming replacement.
     assert_eq!(
         check(&c, &r(2, C), &l2, later),
         Err(TopUpRefuse::ReplaceUnknown)
     );
+}
+
+/// N6 second review: sign 4, then an unbroadcast cheaper replacement of 1 at the same nonce, then
+/// another 4: both 4s could be mined. With the booking at the highest version, refused.
+#[test]
+fn cheap_unbroadcast_replacement_does_not_free_budget() {
+    let c = TopUpConfig {
+        term_budget: 5 * C,
+        daily_value: 20 * C,
+        daily_count: 5,
+        ..cfg()
+    };
+    let r = |n, v| TopUpRequest {
+        stated_missing: 10 * C,
+        ..req(n, v)
+    };
+    let l1 = check(&c, &r(1, 4 * C), &fresh(), IN_WINDOW).unwrap();
+    let l2 = check(&c, &replacement(1, C), &l1, IN_WINDOW).unwrap();
+    assert_eq!(l2.term_value(), 4 * C);
+    assert_eq!(
+        check(&c, &r(2, 4 * C), &l2, IN_WINDOW),
+        Err(TopUpRefuse::AboveBudget)
+    );
+    assert!(check(&c, &r(2, C), &l2, IN_WINDOW).is_ok());
 }
 
 #[test]
@@ -266,86 +315,59 @@ fn ledger_persists_across_restart() {
     let path = d.path().join("topup.json");
     let key = EthKey::from_hex(&format!("0x{}", "22".repeat(32))).unwrap();
     let c = cfg();
-    let mut l = TopUpLedger::open(&path).unwrap();
+    let mut l = TopUpLedger::create(&path).unwrap();
     l.sign(&c, &key, &req(1, 2 * C), IN_WINDOW).unwrap();
     l.sign(&c, &key, &req(2, 2 * C), IN_WINDOW).unwrap();
     drop(l);
-    // Restarted: the day's two are remembered, a third is refused.
     let mut l = TopUpLedger::open(&path).unwrap();
     assert_eq!(l.state.last_24h(IN_WINDOW).0, 2);
     assert_eq!(
         l.sign(&c, &key, &req(3, C), IN_WINDOW),
         Err(TopUpRefuse::DailyCount)
     );
-    // A refused request leaves the ledger as it was.
     assert_eq!(TopUpLedger::open(&path).unwrap().state.booked.len(), 2);
 }
 
-fn signer(dir: &tempfile::TempDir, topup: bool) -> Signer {
-    let g: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../conformance/vectors/golden.json"
-        ))
-        .unwrap(),
-    )
-    .unwrap();
-    let kek = [7u8; 32];
-    let secrets = keystore::Secrets {
-        wallet_hex: g["wallets"]["nodeA"]["privateKey"].as_str().unwrap().into(),
-        pgp_armored: g["keys"]["nodeA"]["armoredPrivate"]
-            .as_str()
-            .unwrap()
-            .into(),
-        pgp_pass: g["keys"]["nodeA"]["passphrase"].as_str().unwrap().into(),
-        previous_pgp_armored: String::new(),
-        previous_pgp_pass: String::new(),
-    };
-    Signer::start(SignerConfig {
-        keystore_file: keystore::seal(&kek, &secrets).unwrap(),
-        kek: Zeroizing::new(kek),
-        verifying_contract: REG.into(),
-        allow_bind: false,
-        allow_uid: None,
-        anchor_node_id: None,
-        quota: None,
-        topup: topup.then(|| (cfg(), dir.path().join("topup.json"))),
-    })
-    .unwrap()
-}
-
-fn wire(nonce: u64, value: &str, wallet: &str) -> Request {
-    Request::SignTopUp {
-        nonce,
-        gas_limit: 200_000,
-        max_fee_wei: (4 * GWEI).to_string(),
-        priority_fee_wei: (GWEI / 10).to_string(),
-        value: value.into(),
-        stated_missing: (5 * C).to_string(),
-        stated_wallet: wallet.into(),
-        replaces_nonce: None,
+/// A missing or non-private ledger refuses every topUp; the operator recreates it explicitly.
+#[test]
+fn missing_or_open_ledger_refuses() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("topup.json");
+    assert_eq!(
+        TopUpLedger::open(&p).err(),
+        Some(TopUpRefuse::LedgerMissing)
+    );
+    TopUpLedger::create(&p).unwrap();
+    assert!(TopUpLedger::create(&p).is_err());
+    assert!(TopUpLedger::open(&p).is_ok());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(TopUpLedger::open(&p).err(), Some(TopUpRefuse::LedgerPerms));
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
+    // Deleted, then the signer restarts: topUp refused, never restarted from zero.
+    std::fs::remove_file(&p).unwrap();
+    let s = signer(Some(p));
+    assert_eq!(
+        refused(s.handle_at(wire(1, C, 100 * C), IN_WINDOW as i64)),
+        "topup:LedgerMissing"
+    );
 }
 
-/// Through the signer service: a valid request returns the raw transaction the signer built
-/// (own node, registry, type 2); everything outside the entry is refused by name.
 #[test]
 fn signer_service_end_to_end() {
     let d = tempfile::tempdir().unwrap();
-    let s = signer(&d, true);
-    let g: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../conformance/vectors/golden.json"
-        ))
-        .unwrap(),
-    )
-    .unwrap();
-    let key = EthKey::from_hex(g["wallets"]["nodeA"]["privateKey"].as_str().unwrap()).unwrap();
-    let Response::Ok { value: raw } = s.handle_at(
-        wire(7, &(5 * C).to_string(), &(100 * C).to_string()),
-        IN_WINDOW as i64,
-    ) else {
+    let p = d.path().join("topup.json");
+    TopUpLedger::create(&p).unwrap();
+    let s = signer(Some(p));
+    let (_, key) = golden_key();
+    let Response::Ok { value: raw } = s.handle_at(wire(7, 5 * C, 100 * C), IN_WINDOW as i64) else {
         panic!("refused")
     };
     let expect = Tx1559 {
@@ -362,53 +384,32 @@ fn signer_service_end_to_end() {
     .unwrap()
     .0;
     assert_eq!(raw, format!("0x{}", hex::encode(expect)));
-    let refused = |r: Response| match r {
-        Response::Refused { reason } => reason,
-        Response::Ok { .. } => panic!("signed"),
-    };
-    // Above the gap, outside the window, gas short, daily count, malformed amount.
+    let at = |r| refused(s.handle_at(r, IN_WINDOW as i64));
+    assert_eq!(at(wire(8, 6 * C, 100 * C)), "topup:AboveMissing");
     assert_eq!(
-        refused(s.handle_at(
-            wire(8, &(6 * C).to_string(), &(100 * C).to_string()),
-            IN_WINDOW as i64
-        )),
-        "topup:AboveMissing"
-    );
-    assert_eq!(
-        refused(s.handle_at(
-            wire(8, &C.to_string(), &(100 * C).to_string()),
-            (END - 8 * 86_400) as i64
-        )),
+        refused(s.handle_at(wire(8, C, 100 * C), (END - 8 * 86_400) as i64)),
         "topup:OutsideWindow"
     );
+    assert_eq!(at(wire(8, C, C)), "topup:GasReserve");
+    let _ = s.handle_at(wire(8, C, 100 * C), IN_WINDOW as i64);
+    assert_eq!(at(wire(9, C, 100 * C)), "topup:DailyCount");
+    let bad = Request::SignTopUp {
+        nonce: 9,
+        gas_limit: 1,
+        max_fee_wei: "x".into(),
+        priority_fee_wei: "1".into(),
+        value: "1e18".into(),
+        stated_missing: "1".into(),
+        stated_wallet: "1".into(),
+        replaces_nonce: None,
+    };
+    assert_eq!(at(bad), "topup_fields");
     assert_eq!(
-        refused(s.handle_at(wire(8, &C.to_string(), &C.to_string()), IN_WINDOW as i64)),
-        "topup:GasReserve"
-    );
-    let _ = s.handle_at(
-        wire(8, &C.to_string(), &(100 * C).to_string()),
-        IN_WINDOW as i64,
-    );
-    assert_eq!(
-        refused(s.handle_at(
-            wire(9, &C.to_string(), &(100 * C).to_string()),
-            IN_WINDOW as i64
-        )),
-        "topup:DailyCount"
-    );
-    assert_eq!(
-        refused(s.handle_at(wire(9, "1e18", "1"), IN_WINDOW as i64)),
-        "topup_fields"
-    );
-    // Not configured: refused.
-    let d2 = tempfile::tempdir().unwrap();
-    assert_eq!(
-        refused(signer(&d2, false).handle_at(wire(1, "1", "1"), IN_WINDOW as i64)),
+        refused(signer(None).handle_at(wire(1, 1, 1), IN_WINDOW as i64)),
         "topup_disabled"
     );
 }
 
-/// The probe wallet never signs a top-up, whatever channel it comes from.
 #[test]
 fn probe_wallet_refuses_topup() {
     let k = EthKey::from_hex(&format!("0x{}", "22".repeat(32))).unwrap();

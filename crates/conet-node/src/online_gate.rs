@@ -130,7 +130,8 @@ pub enum ProposeDecision {
     CannotCoverFine { missing: u128 },
 }
 
-/// Review standard = the agree standard of [`crate::ballot::decide`]: only a verified challenge
+/// Review standard = the agree standard of [`crate::ballot::decide`], on this node's OWN challenge
+/// results only (N6 second review: the applicant's past rejections are not an input): only a verified challenge
 /// (direct, or relay where the policy allows) leads to a proposal. The proposer keeps 0.001 free
 /// for the fine of a valid rejection (lock interface pending).
 pub fn review(ballot: &Ballot, free_balance: u128) -> ProposeDecision {
@@ -268,4 +269,11 @@ pub fn decidable_from(t: &Tally, agree: bool) -> u64 {
         } else {
             REJECT_MIN_OPEN
         }
+}
+
+/// N6 second review: when a rejection of this node's own recovery case is already decided
+/// (disagree side at the margin and the 12-hour minimum open time passed), the node finalizes it
+/// itself, so the fixed 12-hour wait to re-apply (from the seal) starts as early as possible.
+pub fn should_finalize_own_rejection(own_case: bool, t: &Tally, now: u64) -> bool {
+    own_case && t.disagree >= t.agree + t.margin && now >= t.opened_at + REJECT_MIN_OPEN
 }

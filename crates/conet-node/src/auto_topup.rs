@@ -33,6 +33,8 @@ pub struct ChainView {
     pub wallet: u128,
     /// The wallet's nonce at this confirmed block (transactions mined so far).
     pub wallet_nonce: u64,
+    /// The wallet's `pending` nonce (mined + sent but not mined, as the node's RPC sees it).
+    pub wallet_pending_nonce: u64,
 }
 
 /// A top-up of ours that was signed and broadcast, as recorded locally before broadcasting.
@@ -82,6 +84,9 @@ pub enum Plan {
     Replace { nonce: u64, value: u128 },
     /// Send `topUp(nodeId)` with exactly this value.
     Send { value: u128 },
+    /// The main wallet has other transactions in flight (N6 second review): wait until they are
+    /// mined or dropped, so a top-up never queues behind or races them.
+    WalletBusy { in_flight: u64 },
     /// Objective obstacle: the wallet lacks `missing` (top-up plus gas reserve).
     WalletShort { missing: u128, need_stake: u128 },
     /// Not enough time left to count on mining before the end; renewal will fail unless a
@@ -130,6 +135,11 @@ pub fn plan(v: &ChainView, inflight: Option<&InFlight>, cfg: &Config) -> Plan {
     if left > cfg.window_open {
         return Plan::NotYet {
             opens_at: v.term_end - cfg.window_open,
+        };
+    }
+    if v.wallet_pending_nonce > v.wallet_nonce {
+        return Plan::WalletBusy {
+            in_flight: v.wallet_pending_nonce - v.wallet_nonce,
         };
     }
     let required = need.saturating_add(cfg.gas_reserve);

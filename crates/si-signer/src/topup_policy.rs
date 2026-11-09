@@ -10,7 +10,13 @@
 //! - value > 0 always (the contract's topUp reverts on 0), <= the stated missing stake (which can
 //!   only lower the value), <= the per-transaction cap, and within the per-term budget;
 //! - a replacement must match a transaction in the signer's OWN ledger: same nonce, value not above
-//!   the original (it can only lower what is booked); conet-node's claim alone counts for nothing;
+//!   the original, both fees raised by at least 10% (geth); conet-node's claim alone counts for
+//!   nothing. Any signed version of a nonce may still be mined, so the ledger keeps the HIGHEST
+//!   value ever signed for that nonce (N6 second review: lowering the booking let a hijacked
+//!   conet-node exceed the term budget with an unbroadcast cheap replacement);
+//! - the ledger file must exist and be private to the signer account (no group / other bits): a
+//!   deleted ledger is never silently restarted from zero; the operator recreates it with
+//!   `conet-signer topup-ledger-init` after checking;
 //! - only inside the window before the term end, computed by the signer from its own clock and the
 //!   configured first term end and term length;
 //! - at most `daily_count` transactions and `daily_value` in any rolling 24 hours of the signer's
@@ -100,6 +106,11 @@ pub struct TopUpRequest {
 pub enum TopUpRefuse {
     /// A replacement above the value the signer booked for that nonce.
     AboveReplaced,
+    /// A replacement that does not raise both fees by at least 10%.
+    ReplaceFeeBump,
+    /// No ledger file, or one readable / writable by others: refused until the operator acts.
+    LedgerMissing,
+    LedgerPerms,
     NotType2,
     WrongTo,
     Creation,
@@ -166,10 +177,16 @@ pub struct Booked {
     /// Signer clock when first signed (replacements keep it).
     pub at: u64,
     pub nonce: u64,
+    /// Highest value ever signed for this nonce (any version may be mined).
     #[serde(with = "dec")]
     pub value: u128,
     /// The term end it was signed for.
     pub term_end: u64,
+    /// Fees of the latest signed version (a replacement must exceed them by 10%).
+    #[serde(with = "dec")]
+    pub max_fee: u128,
+    #[serde(with = "dec")]
+    pub tip: u128,
 }
 
 /// Persistent ledger: the top-ups signed in the current term (with their time, for the rolling
@@ -256,10 +273,17 @@ pub fn check(
                 Some(i) if n == req.nonce => i,
                 _ => return Err(TopUpRefuse::ReplaceUnknown),
             };
-            if req.value > l.booked[i].value {
+            let b = &mut l.booked[i];
+            if req.value > b.value {
                 return Err(TopUpRefuse::AboveReplaced);
             }
-            l.booked[i].value = req.value; // lowers what is booked; count and time unchanged
+            let bump = |old: u128| old + old.div_ceil(10);
+            if req.max_fee_wei < bump(b.max_fee) || req.priority_fee_wei < bump(b.tip) {
+                return Err(TopUpRefuse::ReplaceFeeBump);
+            }
+            // Booked value stays the highest version (the earlier one may still be mined).
+            b.max_fee = req.max_fee_wei;
+            b.tip = req.priority_fee_wei;
         }
         None => {
             if l.find(req.nonce).is_some() {
@@ -281,6 +305,8 @@ pub fn check(
                 nonce: req.nonce,
                 value: req.value,
                 term_end: end,
+                max_fee: req.max_fee_wei,
+                tip: req.priority_fee_wei,
             });
         }
     }
@@ -294,20 +320,61 @@ pub struct TopUpLedger {
 }
 
 impl TopUpLedger {
-    pub fn open(path: impl Into<PathBuf>) -> Result<Self, String> {
+    /// Open the existing ledger. A missing file or one open to group / others is refused: the
+    /// count must never silently restart from zero.
+    pub fn open(path: impl Into<PathBuf>) -> Result<Self, TopUpRefuse> {
         let path = path.into();
-        let state = match std::fs::read(&path) {
-            Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("topup ledger: {e}"))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => LedgerState::default(),
-            Err(e) => return Err(format!("topup ledger: {e}")),
+        let meta = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(TopUpRefuse::LedgerMissing)
+            }
+            Err(e) => return Err(TopUpRefuse::State(e.to_string())),
         };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if meta.permissions().mode() & 0o077 != 0 {
+                return Err(TopUpRefuse::LedgerPerms);
+            }
+        }
+        let b = std::fs::read(&path).map_err(|e| TopUpRefuse::State(e.to_string()))?;
+        let state =
+            serde_json::from_slice(&b).map_err(|e| TopUpRefuse::State(format!("ledger: {e}")))?;
+        Ok(Self { path, state })
+    }
+
+    /// Create a new, empty ledger (mode 0600); refuses to overwrite an existing file. Run by the
+    /// operator (`conet-signer topup-ledger-init`), never automatically.
+    pub fn create(path: impl Into<PathBuf>) -> Result<Self, String> {
+        use std::io::Write;
+        let path = path.into();
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600);
+        }
+        let mut f = o.open(&path).map_err(|e| format!("topup ledger: {e}"))?;
+        let state = LedgerState::default();
+        f.write_all(&serde_json::to_vec(&state).expect("serializable"))
+            .and_then(|_| f.sync_all())
+            .map_err(|e| format!("topup ledger: {e}"))?;
         Ok(Self { path, state })
     }
 
     fn write(&self, s: &LedgerState) -> std::io::Result<()> {
         use std::io::Write;
         let tmp = self.path.with_extension("tmp");
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600);
+        }
+        let mut f = o.open(&tmp)?;
         f.write_all(&serde_json::to_vec(s).expect("serializable"))?;
         f.sync_all()?;
         std::fs::rename(&tmp, &self.path)
