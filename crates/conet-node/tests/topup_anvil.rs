@@ -219,8 +219,10 @@ async fn first_bid_bump_cap_alert_on_anvil() {
             &cfg,
         );
         if let SendAction::Busy { alert } = a {
-            assert!(!alert, "far from the end: busy, no alert yet");
-            log.push(format!("caps reached after {bumps} replacements: busy"));
+            assert!(alert, "stuck at the caps: busy + alert");
+            log.push(format!(
+                "caps reached after {bumps} replacements: busy + alert"
+            ));
             break;
         }
         let (next, raw) = sign(a);

@@ -538,7 +538,7 @@ fn send_flow_first_bid_bump_busy_alert() {
     };
     assert_eq!(
         next_action(&plan, Some(&at_cap), 7, gwei, true, 3 * DAY, &p, &cfg),
-        SendAction::Busy { alert: false }
+        SendAction::Busy { alert: true } // stuck at the caps: alert even far from the end
     );
     assert_eq!(
         next_action(&plan, Some(&at_cap), 7, gwei, true, 3_600, &p, &cfg),

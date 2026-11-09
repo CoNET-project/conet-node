@@ -232,8 +232,9 @@ pub enum SendAction {
     Rebroadcast {
         nonce: u64,
     },
-    /// Cannot bump any further under the caps: report busy; `alert` close to the end (the operator
-    /// should deposit through the web page).
+    /// Busy. `alert`: always when our transaction is stuck at the fee caps (N6: it cannot be
+    /// replaced any more, the operator must act); for a wallet busy with other transactions, close
+    /// to the end (deposit through the web page).
     Busy {
         alert: bool,
     },
@@ -254,9 +255,9 @@ pub fn next_action(
     p: &PriceConfig,
     cfg: &Config,
 ) -> SendAction {
-    let busy = SendAction::Busy {
-        alert: left <= cfg.busy_alert,
-    };
+    // Stuck at the caps: busy + alert, whatever the time left (N6 fifth review).
+    let busy = SendAction::Busy { alert: true };
+    let _ = (left, cfg);
     match (plan, pending) {
         (Plan::Send { value }, None) => {
             let (max_fee, tip) = first_bid(base_fee, p.wanted_tip, p.max_fee_cap, p.tip_cap);
