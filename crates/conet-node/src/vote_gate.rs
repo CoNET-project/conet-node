@@ -6,9 +6,11 @@
 //! is short.
 //!
 //! The checks mirror `OfflineReportLib.voteReport` / `reportOffline` of the node line's contract
-//! (per-case lock: every vote, the report included, locks the case's penalty standard F; a node
-//! may hold at most `(stake - locked) / F` more cases). The decisive check is still the contract;
-//! a disagreement shows up as a reverted eth_call in tests.
+//! (per-voter lock, user decision 2026-11-08 "按节点本期核定额"; node line stake-term v0.1 §14-15:
+//! a case fixes its penalty RATIO when it opens; every vote, the report included, locks
+//! ratio x the voter's OWN read-time term amount (`termState`), fixed at the vote; a node may hold
+//! at most `(stake - locked) / own fine` more cases). The decisive check is still the contract; a
+//! disagreement shows up as a reverted eth_call in tests.
 //!
 //! Nothing here sends a transaction or signs. Wiring this to a real send path is F5, which is
 //! not approved.
@@ -17,9 +19,11 @@ use crate::nr2::NodeRegistryV2;
 use alloy_primitives::{keccak256, U256};
 use alloy_sol_types::SolCall;
 
-/// `SUSPEND_BPS / BPS`: below 80% of the threshold a node is suspended; F = threshold - 80%.
+/// `SUSPEND_BPS / BPS`: below 80% of the term amount a node is suspended.
 pub const SUSPEND_BPS: u128 = 8_000;
 pub const BPS: u128 = 10_000;
+/// Ratio a report opened now fixes (`BPS - SUSPEND_BPS`, 20%).
+pub const NEW_REPORT_RATIO_BPS: u128 = BPS - SUSPEND_BPS;
 pub const REPORT_OPEN: u8 = 1;
 /// Maintenance service bit: only nodes carrying it may report or vote.
 pub const SVC_MAINT: u16 = 1 << 3;
@@ -32,8 +36,11 @@ pub struct VoterView {
     pub active: bool,
     pub services: u16,
     pub stake: u128,
-    /// Stake already held by unsettled cases.
+    /// Stake already held by unsettled cases (`voteLocked`).
     pub locked: u128,
+    /// The node's approved amount of its current term, read-time (`termStateOf(nodeId).termBase`):
+    /// what its own fine is computed from.
+    pub term_base: u128,
     /// Reporting and voting allowed from this time: the chain's `voteEligibleAt`, read as is.
     /// Never derived locally (registration + 7 days): the trusted 472 can vote from their first
     /// registration (user decision 2026-11-08), while new nodes and later wallet / operator
@@ -48,12 +55,18 @@ impl VoterView {
     pub fn available(&self) -> u128 {
         self.stake.saturating_sub(self.locked)
     }
-    /// How many more cases with penalty standard `fine` this node can join.
-    pub fn capacity(&self, fine: u128) -> u128 {
-        if fine == 0 {
-            return u128::MAX;
+    /// This node's fine (and lock) for a case of `ratio_bps`, as the contract's `_voterFine`.
+    pub fn fine_for(&self, ratio_bps: u128) -> u128 {
+        self.term_base * ratio_bps / BPS
+    }
+    /// How many more cases of `ratio_bps` this node can join (`lockCapacityOf().slotsLeft` for
+    /// the 20% ratio).
+    pub fn capacity(&self, ratio_bps: u128) -> u128 {
+        let f = self.fine_for(ratio_bps);
+        if f == 0 {
+            return 0;
         }
-        self.available() / fine
+        self.available() / f
     }
 }
 
@@ -69,8 +82,9 @@ pub struct ReportView {
     pub disagree: u32,
     pub margin: u16,
     pub state: u8,
-    /// Penalty standard F of this case, fixed when it opened.
-    pub fine: u128,
+    /// Penalty RATIO of this case in BPS, fixed when it opened (`Report.fine`); each voter's
+    /// amount is this ratio times its own term amount.
+    pub ratio_bps: u128,
 }
 
 impl ReportView {
@@ -132,7 +146,8 @@ fn eligible(v: &VoterView, now: u64) -> Result<(), Skip> {
     Ok(())
 }
 
-fn lock(v: &VoterView, fine: u128) -> Result<(), Skip> {
+fn lock(v: &VoterView, ratio_bps: u128) -> Result<(), Skip> {
+    let fine = v.fine_for(ratio_bps);
     if v.stake < v.locked.saturating_add(fine) {
         return Err(Skip::NoLockCapacity {
             available: v.available(),
@@ -158,23 +173,18 @@ pub fn can_vote(v: &VoterView, r: &ReportView, my_choice: u8, now: u64) -> Resul
     if my_choice != 0 {
         return Err(Skip::AlreadyVoted);
     }
-    lock(v, r.fine)
-}
-
-/// Penalty standard a report opened now would fix: threshold - 80% of threshold.
-pub fn fine_now(effective_min: u128) -> u128 {
-    effective_min - effective_min * SUSPEND_BPS / BPS
+    lock(v, r.ratio_bps)
 }
 
 /// Would `reportOffline(target)` from this reporter go through at `now`?
 /// `target_serving` is the contract's `canServe` for the target (for a TCP node the same as
-/// `isActive`); `target_open` is the target's open report, if any.
+/// `isActive`); `target_open` is the target's open report, if any. The reporter locks its own
+/// fine at [`NEW_REPORT_RATIO_BPS`].
 pub fn can_report(
     v: &VoterView,
     target_id: u64,
     target_serving: bool,
     target_open: Option<&ReportView>,
-    fine: u128,
     now: u64,
 ) -> Result<(), Skip> {
     eligible(v, now)?;
@@ -189,14 +199,14 @@ pub fn can_report(
             return Err(Skip::ReportOpen { rid: o.rid });
         }
     }
-    lock(v, fine)
+    lock(v, NEW_REPORT_RATIO_BPS)
 }
 
 /// Which of these open cases to join, in order, given the voter's lock capacity (H8-16).
 ///
 /// Only cases the voter can vote on now. Most urgent first: the earliest to become decidable,
 /// then the one closest to its margin (where one vote matters most), then the lowest id. Stops
-/// when the next case's penalty no longer fits the unlocked stake. `my_choices` gives
+/// when the voter's own fine for the next case no longer fits its unlocked stake. `my_choices` gives
 /// `getVote(rid, voter).choice` per report, in the same order.
 pub fn pick(v: &VoterView, reports: &[ReportView], my_choices: &[u8], now: u64) -> Vec<u64> {
     let mut open: Vec<&ReportView> = reports
@@ -217,10 +227,11 @@ pub fn pick(v: &VoterView, reports: &[ReportView], my_choices: &[u8], now: u64) 
     let mut left = v.available();
     let mut out = Vec::new();
     for r in open {
-        if r.fine > left {
+        let f = v.fine_for(r.ratio_bps);
+        if f > left {
             break;
         }
-        left -= r.fine;
+        left -= f;
         out.push(r.rid);
     }
     out
@@ -229,8 +240,9 @@ pub fn pick(v: &VoterView, reports: &[ReportView], my_choices: &[u8], now: u64) 
 // ---- chain reads ----
 
 /// Words in `getNodeRaw`'s `Node` struct (all static members; `uint32[3] anchors` takes three).
-/// Pinned to the node line's contract source set `bee380fd2c26bd66` (abi/README.md).
-pub const NODE_RAW_WORDS: usize = 38;
+/// Pinned to the node line's contract source set `12123775fbd4e434` (abi/README.md): 40 members
+/// with the stake-term fields (termEnd, termBase, termLength, stakeStop) appended.
+pub const NODE_RAW_WORDS: usize = 42;
 const W_SERVICES: usize = 5;
 const W_NODE_WALLET: usize = 10;
 const W_STAKE: usize = 14;
@@ -252,7 +264,14 @@ fn word_u128(raw: &[u8], i: usize) -> Result<u128, ChainError> {
 
 /// Decode the voter-relevant members of `getNodeRaw(nodeId)`. The struct is not in the bound ABI
 /// (alloy's tuple limit), so the layout is checked by length and by the wallet word.
-pub fn decode_node_raw(raw: &[u8], node_id: u64, active: bool) -> Result<VoterView, ChainError> {
+/// `term_base` comes from `termStateOf` (read-time), not from the stored word, which can lag
+/// until someone calls `settleTerms`.
+pub fn decode_node_raw(
+    raw: &[u8],
+    node_id: u64,
+    active: bool,
+    term_base: u128,
+) -> Result<VoterView, ChainError> {
     if raw.len() != NODE_RAW_WORDS * 32 {
         return Err(ChainError(format!(
             "getNodeRaw: {} bytes, expected {} (contract layout changed?)",
@@ -272,9 +291,19 @@ pub fn decode_node_raw(raw: &[u8], node_id: u64, active: bool) -> Result<VoterVi
         services: services as u16,
         stake: word_u128(raw, W_STAKE)?,
         locked: word_u128(raw, W_LOCKED)?,
+        term_base,
         eligible_at: eligible as u64,
         open_report_id: open as u64,
     })
+}
+
+/// The contract's `lockCapacityOf`: free stake (stake - locked), the fine one new 20% vote would
+/// lock now, and how many more such cases fit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockCapacity {
+    pub free_stake: u128,
+    pub fine_per_vote: u128,
+    pub slots_left: u128,
 }
 
 /// Reads for the gate. Calls never set `from` and never send.
@@ -303,7 +332,10 @@ impl VoteReader {
         let mut data = keccak256(b"getNodeRaw(uint256)")[..4].to_vec();
         data.extend_from_slice(&id.to_be_bytes::<32>());
         let raw = self.rpc.eth_call(&self.registry, data, None).await?;
-        let v = decode_node_raw(&raw, node_id, active)?;
+        let term = self
+            .call(NodeRegistryV2::termStateOfCall { nodeId: id })
+            .await?;
+        let v = decode_node_raw(&raw, node_id, active, term.termBase.try_into().map_err(ce)?)?;
         // Layout check: the wallet word must match nodeWalletOf.
         let w = &raw[W_NODE_WALLET * 32 + 12..(W_NODE_WALLET + 1) * 32];
         if w != wallet.as_slice() {
@@ -311,7 +343,29 @@ impl VoteReader {
                 "getNodeRaw: wallet word mismatch (contract layout changed?)".into(),
             ));
         }
+        // Cross-check with the contract's own capacity view: free stake and fine per vote.
+        let cap = self.lock_capacity(node_id).await?;
+        if cap.free_stake != v.available() || cap.fine_per_vote != v.fine_for(NEW_REPORT_RATIO_BPS)
+        {
+            return Err(ChainError(
+                "lockCapacityOf disagrees with getNodeRaw / termStateOf".into(),
+            ));
+        }
         Ok(v)
+    }
+
+    /// `lockCapacityOf(nodeId)`: the contract's view of this node's lock capacity.
+    pub async fn lock_capacity(&self, node_id: u64) -> Result<LockCapacity, ChainError> {
+        let r = self
+            .call(NodeRegistryV2::lockCapacityOfCall {
+                nodeId: U256::from(node_id),
+            })
+            .await?;
+        Ok(LockCapacity {
+            free_stake: r.freeStake.try_into().map_err(ce)?,
+            fine_per_vote: r.finePerVote.try_into().map_err(ce)?,
+            slots_left: r.slotsLeft.try_into().map_err(ce)?,
+        })
     }
 
     pub async fn report(&self, rid: u64) -> Result<ReportView, ChainError> {
@@ -331,7 +385,7 @@ impl VoteReader {
             disagree: r.disagree,
             margin: r.margin,
             state: r.state,
-            fine: r.fine,
+            ratio_bps: r.fine,
         })
     }
 
@@ -344,12 +398,6 @@ impl VoteReader {
             })
             .await?;
         Ok(v.choice)
-    }
-
-    /// Penalty standard of a report opened now.
-    pub async fn fine_now(&self) -> Result<u128, ChainError> {
-        let thr = self.call(NodeRegistryV2::effectiveMinStakeCall {}).await?;
-        Ok(fine_now(thr.try_into().map_err(ce)?))
     }
 
     pub async fn report_count(&self) -> Result<u64, ChainError> {

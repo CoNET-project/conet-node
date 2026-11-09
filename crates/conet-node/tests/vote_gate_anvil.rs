@@ -1,5 +1,10 @@
 //! F5 vote gate against the node line's contract on a LOCAL anvil (chain 224422). TEST keys only.
 //!
+//! OUTDATED SETUP (2026-11-09): `tools/vote-gate/setup.sh` targets the pre-stake-term contract
+//! (old constructor, reserved id 7, no term length); it cannot deploy the current sources. The
+//! current cross-check is `vote_gate_fixture.rs` (real contract state recorded by
+//! `tools/vote-gate/f5-fixture.test.ts`). This file is kept compiling against the new gate API.
+//!
 //! Runs only with `F5_RPC` and `F5_REGISTRY` set (CI does not: the contract sources are not
 //! upstream yet). Expected state, made by `tools/vote-gate/setup.sh` (`conet-register` + cast):
 //! node 7 = golden nodeA (maintenance bit), a sponsored golden nodeB (no maintenance bit) and a
@@ -215,10 +220,10 @@ async fn gate_matches_the_contract_on_local_anvil() {
         nr.node_id_of_wallet(&wc).await.unwrap(),
     );
     assert!(a == 7 && b > 0 && c > 0, "setup: ids {a} {b} {c}");
-    let fine = rd.fine_now().await.unwrap();
+    let fine = rd.lock_capacity(a).await.unwrap().fine_per_vote;
     assert_eq!(
         fine, 1_000_000_000_000_000_000,
-        "F = 20% of a 5 CNET threshold"
+        "own fine = 20% of a 5 CNET term amount"
     );
 
     // 1. Freshly registered: everyone is in the 7-day cooldown.
@@ -228,7 +233,7 @@ async fn gate_matches_the_contract_on_local_anvil() {
         va.eligible_at > now,
         "setup must be fresh (cooldown running)"
     );
-    let gate = can_report(&va, b, true, None, fine, now);
+    let gate = can_report(&va, b, true, None, now);
     assert!(matches!(gate, Err(Skip::Cooldown { .. })));
     agree(
         "cooldown report",
@@ -252,7 +257,7 @@ async fn gate_matches_the_contract_on_local_anvil() {
         ("C reports B", &vc, b, &wc),
     ];
     for (what, v, target, w) in cases {
-        let gate = can_report(v, target, true, None, fine, now);
+        let gate = can_report(v, target, true, None, now);
         agree(what, &gate, &ch.simulate(w, report_call(target)).await);
     }
 
@@ -260,7 +265,10 @@ async fn gate_matches_the_contract_on_local_anvil() {
     ch.send(&wa, report_call(b)).await;
     let rid = rd.report_count().await.unwrap();
     let r = rd.report(rid).await.unwrap();
-    assert_eq!((r.target, r.reporter, r.agree, r.fine), (b, a, 1, fine));
+    assert_eq!(
+        (r.target, r.reporter, r.agree, r.ratio_bps),
+        (b, a, 1, NEW_REPORT_RATIO_BPS)
+    );
     // The reader sees the lock the report took: decoded getNodeRaw matches the contract.
     let va = rd.voter(a).await.unwrap();
     assert_eq!(va.locked, fine);
@@ -276,7 +284,7 @@ async fn gate_matches_the_contract_on_local_anvil() {
         agree(what, &gate, &ch.simulate(w, vote_call(rid, false)).await);
     }
     let open = Some(&r);
-    let gate = can_report(&rd.voter(c).await.unwrap(), b, true, open, fine, now);
+    let gate = can_report(&rd.voter(c).await.unwrap(), b, true, open, now);
     assert!(matches!(gate, Err(Skip::ReportOpen { .. })));
     agree(
         "C reports B again",

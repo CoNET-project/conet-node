@@ -1,1016 +1,1016 @@
 [
-  {
-    "type": "constructor",
-    "inputs": [
-      {
-        "name": "registry",
-        "type": "address",
-        "internalType": "contract NodeRegistryV2"
-      }
+ {
+  "inputs": [
+   {
+    "internalType": "contract NodeRegistryV2",
+    "name": "registry",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "constructor"
+ },
+ {
+  "inputs": [],
+  "name": "REGISTRY",
+  "outputs": [
+   {
+    "internalType": "contract NodeRegistryV2",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "operator",
+    "type": "address"
+   },
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bytes32",
+    "name": "ipHash",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "bytes8",
+    "name": "keyId",
+    "type": "bytes8"
+   },
+   {
+    "internalType": "bytes32",
+    "name": "pgpHash",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "nonce",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "deadline",
+    "type": "uint256"
+   }
+  ],
+  "name": "bindNodeDigest",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "start",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "len",
+    "type": "uint256"
+   }
+  ],
+  "name": "getActiveNodes",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stake",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "principal",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint8",
+      "name": "status",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "active",
+      "type": "bool"
+     },
+     {
+      "internalType": "bool",
+      "name": "suspended",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "servicesNow",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mode",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "string",
+      "name": "ip",
+      "type": "string"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes",
+      "name": "pgpBase64",
+      "type": "bytes"
+     },
+     {
+      "internalType": "uint64",
+      "name": "registeredAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "unlockAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "offlineSince",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineUntil",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineSeq",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32[3]",
+      "name": "anchors",
+      "type": "uint32[3]"
+     }
     ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "REGISTRY",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract NodeRegistryV2"
-      }
+    "internalType": "struct NodeRegistryLens.NodeView[]",
+    "name": "",
+    "type": "tuple[]"
+   },
+   {
+    "internalType": "uint256",
+    "name": "version",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint16",
+    "name": "serviceBits",
+    "type": "uint16"
+   },
+   {
+    "internalType": "uint256",
+    "name": "start",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "len",
+    "type": "uint256"
+   }
+  ],
+  "name": "getActiveNodesByService",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stake",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "principal",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint8",
+      "name": "status",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "active",
+      "type": "bool"
+     },
+     {
+      "internalType": "bool",
+      "name": "suspended",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "servicesNow",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mode",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "string",
+      "name": "ip",
+      "type": "string"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes",
+      "name": "pgpBase64",
+      "type": "bytes"
+     },
+     {
+      "internalType": "uint64",
+      "name": "registeredAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "unlockAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "offlineSince",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineUntil",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineSeq",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32[3]",
+      "name": "anchors",
+      "type": "uint32[3]"
+     }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bindNodeDigest",
-    "inputs": [
-      {
-        "name": "operator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "ipHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "keyId",
-        "type": "bytes8",
-        "internalType": "bytes8"
-      },
-      {
-        "name": "pgpHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "nonce",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
+    "internalType": "struct NodeRegistryLens.NodeView[]",
+    "name": "",
+    "type": "tuple[]"
+   },
+   {
+    "internalType": "uint256",
+    "name": "version",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint8",
+    "name": "nodeType",
+    "type": "uint8"
+   },
+   {
+    "internalType": "uint256",
+    "name": "start",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "len",
+    "type": "uint256"
+   }
+  ],
+  "name": "getActiveNodesByType",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stake",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "principal",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint8",
+      "name": "status",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "active",
+      "type": "bool"
+     },
+     {
+      "internalType": "bool",
+      "name": "suspended",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "servicesNow",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mode",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "string",
+      "name": "ip",
+      "type": "string"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes",
+      "name": "pgpBase64",
+      "type": "bytes"
+     },
+     {
+      "internalType": "uint64",
+      "name": "registeredAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "unlockAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "offlineSince",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineUntil",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineSeq",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32[3]",
+      "name": "anchors",
+      "type": "uint32[3]"
+     }
     ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
+    "internalType": "struct NodeRegistryLens.NodeView[]",
+    "name": "",
+    "type": "tuple[]"
+   },
+   {
+    "internalType": "uint256",
+    "name": "version",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "getNode",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stake",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "principal",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint8",
+      "name": "status",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "active",
+      "type": "bool"
+     },
+     {
+      "internalType": "bool",
+      "name": "suspended",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "servicesNow",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mode",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "string",
+      "name": "ip",
+      "type": "string"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes",
+      "name": "pgpBase64",
+      "type": "bytes"
+     },
+     {
+      "internalType": "uint64",
+      "name": "registeredAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "unlockAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "offlineSince",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineUntil",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineSeq",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32[3]",
+      "name": "anchors",
+      "type": "uint32[3]"
+     }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getActiveNodes",
-    "inputs": [
-      {
-        "name": "start",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "len",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
+    "internalType": "struct NodeRegistryLens.NodeView",
+    "name": "v",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "start",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "len",
+    "type": "uint256"
+   }
+  ],
+  "name": "getNodes",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stake",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "principal",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint8",
+      "name": "status",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "active",
+      "type": "bool"
+     },
+     {
+      "internalType": "bool",
+      "name": "suspended",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "servicesNow",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mode",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "string",
+      "name": "ip",
+      "type": "string"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes",
+      "name": "pgpBase64",
+      "type": "bytes"
+     },
+     {
+      "internalType": "uint64",
+      "name": "registeredAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "unlockAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "offlineSince",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineUntil",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineSeq",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32[3]",
+      "name": "anchors",
+      "type": "uint32[3]"
+     }
     ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple[]",
-        "internalType": "struct NodeRegistryLens.NodeView[]",
-        "components": [
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeWallet",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "stake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "principal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "suspended",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "servicesNow",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "mode",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "ip",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "udpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "pgpBase64",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "registeredAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "unlockAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "offlineSince",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineSeq",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "anchors",
-            "type": "uint32[3]",
-            "internalType": "uint32[3]"
-          }
-        ]
-      },
-      {
-        "name": "version",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
+    "internalType": "struct NodeRegistryLens.NodeView[]",
+    "name": "out",
+    "type": "tuple[]"
+   },
+   {
+    "internalType": "uint256",
+    "name": "version",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "total",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "start",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "len",
+    "type": "uint256"
+   }
+  ],
+  "name": "getSlashesOf",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "slashId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint64",
+      "name": "time",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint8",
+      "name": "track",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint8",
+      "name": "reason",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint256",
+      "name": "amount",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stakeAfter",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "refId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "evidenceHash",
+      "type": "bytes32"
+     }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getActiveNodesByService",
-    "inputs": [
-      {
-        "name": "serviceBits",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "start",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "len",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
+    "internalType": "struct SlashRecord[]",
+    "name": "out",
+    "type": "tuple[]"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes8",
+    "name": "keyId",
+    "type": "bytes8"
+   }
+  ],
+  "name": "keyIdStringHash",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "pure",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "ipHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "pgpHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint256",
+      "name": "sponsorNodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "nonce",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "deadline",
+      "type": "uint256"
+     }
     ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple[]",
-        "internalType": "struct NodeRegistryLens.NodeView[]",
-        "components": [
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeWallet",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "stake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "principal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "suspended",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "servicesNow",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "mode",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "ip",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "udpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "pgpBase64",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "registeredAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "unlockAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "offlineSince",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineSeq",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "anchors",
-            "type": "uint32[3]",
-            "internalType": "uint32[3]"
-          }
-        ]
-      },
-      {
-        "name": "version",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getActiveNodesByType",
-    "inputs": [
-      {
-        "name": "nodeType",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "start",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "len",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple[]",
-        "internalType": "struct NodeRegistryLens.NodeView[]",
-        "components": [
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeWallet",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "stake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "principal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "suspended",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "servicesNow",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "mode",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "ip",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "udpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "pgpBase64",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "registeredAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "unlockAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "offlineSince",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineSeq",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "anchors",
-            "type": "uint32[3]",
-            "internalType": "uint32[3]"
-          }
-        ]
-      },
-      {
-        "name": "version",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getNode",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "v",
-        "type": "tuple",
-        "internalType": "struct NodeRegistryLens.NodeView",
-        "components": [
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeWallet",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "stake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "principal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "suspended",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "servicesNow",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "mode",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "ip",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "udpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "pgpBase64",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "registeredAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "unlockAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "offlineSince",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineSeq",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "anchors",
-            "type": "uint32[3]",
-            "internalType": "uint32[3]"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getNodes",
-    "inputs": [
-      {
-        "name": "start",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "len",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "out",
-        "type": "tuple[]",
-        "internalType": "struct NodeRegistryLens.NodeView[]",
-        "components": [
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeWallet",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "stake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "principal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "suspended",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "servicesNow",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "mode",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "ip",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "udpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "pgpBase64",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "registeredAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "unlockAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "offlineSince",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineSeq",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "anchors",
-            "type": "uint32[3]",
-            "internalType": "uint32[3]"
-          }
-        ]
-      },
-      {
-        "name": "version",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getSlashesOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "start",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "len",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "out",
-        "type": "tuple[]",
-        "internalType": "struct SlashRecord[]",
-        "components": [
-          {
-            "name": "slashId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "time",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "track",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "reason",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "stakeAfter",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "refId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "evidenceHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "keyIdStringHash",
-    "inputs": [
-      {
-        "name": "keyId",
-        "type": "bytes8",
-        "internalType": "bytes8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "registerRequestDigest",
-    "inputs": [
-      {
-        "name": "r",
-        "type": "tuple",
-        "internalType": "struct RegisterRequest",
-        "components": [
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeWallet",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "ipHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "udpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "pgpHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "sponsorNodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  }
+    "internalType": "struct RegisterRequest",
+    "name": "r",
+    "type": "tuple"
+   }
+  ],
+  "name": "registerRequestDigest",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ }
 ]

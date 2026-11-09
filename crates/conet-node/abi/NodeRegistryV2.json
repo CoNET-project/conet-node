@@ -1,4143 +1,5886 @@
 [
-  {
-    "type": "constructor",
-    "inputs": [
-      {
-        "name": "c",
-        "type": "tuple",
-        "internalType": "struct NodeRegistryV2.InitConfig",
-        "components": [
-          {
-            "name": "governor",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "minStake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "thresholdGrace",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "unbondingPeriod",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "seedHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "reservePeriod",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "vdr",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "projectBeneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "vdrSyncPeriod",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "receive",
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "GOVERNOR",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "PROJECT_BENEFICIARY",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "RESERVE_PERIOD",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "VDR",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "VDR_SYNC_DEADLINE",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "acceptOperator",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "accounting",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "stakeTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "prestakeTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "owedTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "reserve",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "reportEscrow",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "voteReserve",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "activeKeyIdExists",
-    "inputs": [
-      {
-        "name": "keyIdStringHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "beneficiaryOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bindNonceOf",
-    "inputs": [
-      {
-        "name": "w",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "cancelExit",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "claimReportSettlement",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "voterNodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "paid",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "fined",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "declareOffline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "domainSeparator",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "effectiveMinStake",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "egressPolicyOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "cid",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "version",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "updatedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "extendOnline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "onlineSeq",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "newUntil",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "nodeSig",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "fetchAllowlist",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "root",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "uri",
-        "type": "string",
-        "internalType": "string"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "finalizeReport",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getPrestake",
-    "inputs": [
-      {
-        "name": "requestHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct Prestake",
-        "components": [
-          {
-            "name": "payer",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "since",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "amount",
-            "type": "uint128",
-            "internalType": "uint128"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getReport",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct Report",
-        "components": [
-          {
-            "name": "target",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "reporter",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "openedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "expiresAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "resolvedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "minOpen",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "agree",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "disagree",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "margin",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "winners",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "state",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "payCursor",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "closed",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "perWinner",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "pot",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "fine",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "voterCursor",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "roundPer",
-            "type": "uint96",
-            "internalType": "uint96"
-          },
-          {
-            "name": "executor",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "reporterPaid",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "executorPaid",
-            "type": "uint128",
-            "internalType": "uint128"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getReservation",
-    "inputs": [
-      {
-        "name": "legacyId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct Reservation",
-        "components": [
-          {
-            "name": "ipHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "vdrSyncable",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "used",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getVote",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "voterNodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct Vote",
-        "components": [
-          {
-            "name": "choice",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "settled",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "fined",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "rank",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "claimed",
-            "type": "uint128",
-            "internalType": "uint128"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "ipOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "string",
-        "internalType": "string"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isActive",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isActiveNode",
-    "inputs": [
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isDeclaredOnline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isLeakedNodeWallet",
-    "inputs": [
-      {
-        "name": "w",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isRequestUsed",
-    "inputs": [
-      {
-        "name": "requestHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isVdrSynced",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "keyIdHashOfNodeWallet",
-    "inputs": [
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "listedAt",
-    "inputs": [
-      {
-        "name": "i",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "listedCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "mailboxKeyIdExists",
-    "inputs": [
-      {
-        "name": "keyIdStringHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "mailboxKeyIdHashOf",
-    "inputs": [
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "mailboxNodeByKeyIdHash",
-    "inputs": [
-      {
-        "name": "keyIdStringHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pgpBase64",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "markOnline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "minStakeAt",
-    "inputs": [
-      {
-        "name": "t",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "minStakeNow",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nextNodeId",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nodeIdOfEndpoint",
-    "inputs": [
-      {
-        "name": "ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "port",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "proto",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nodeIdOfKeyId",
-    "inputs": [
-      {
-        "name": "keyId",
-        "type": "bytes8",
-        "internalType": "bytes8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nodeIdOfKeyIdHash",
-    "inputs": [
-      {
-        "name": "keyIdStringHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nodeIdOfNodeWallet",
-    "inputs": [
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nodeInfo",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "operator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "beneficiary",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "stake",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "active",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nodeOf",
-    "inputs": [
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "v",
-        "type": "tuple",
-        "internalType": "struct NodeStatusView",
-        "components": [
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "stake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "effectiveMin",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "lastSlashAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "slashCount",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "offlineSince",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "suspended",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "onlineUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nodeStatus",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct NodeStatusView",
-        "components": [
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "stake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "effectiveMin",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "lastSlashAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "slashCount",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "offlineSince",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "suspended",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "onlineUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nodeWalletOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "nodeWalletOfKeyIdHash",
-    "inputs": [
-      {
-        "name": "keyIdStringHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "onlineSecondsOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "operatorOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "owedOf",
-    "inputs": [
-      {
-        "name": "a",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "params",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct Params",
-        "components": [
-          {
-            "name": "thresholdGrace",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "unbondingPeriod",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "reportExpiry",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "reportMinOpen",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "reportMargin",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "offlineRateBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "fraudReporterBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxOnlineTtl",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "maxDailyOnline",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "subsidyPool",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "mailboxChangeFine",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pauseBySig",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "onlineSeq",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "pauseAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "nodeSig",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "pendingOfflineDeduction",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pendingOperatorOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pgpOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pgpOfKeyIdHash",
-    "inputs": [
-      {
-        "name": "keyIdStringHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "prestake",
-    "inputs": [
-      {
-        "name": "requestHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "principalOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "registerFor",
-    "inputs": [
-      {
-        "name": "r",
-        "type": "tuple",
-        "internalType": "struct RegisterRequest",
-        "components": [
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeWallet",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "ipHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "udpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "pgpHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "sponsorNodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "pgp",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "operatorSig",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "nodeWalletSig",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "registerReserved",
-    "inputs": [
-      {
-        "name": "legacyId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "udpPort",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "bindSig",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "pgp",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "services",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "reportCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "reportFraudulentRequest",
-    "inputs": [
-      {
-        "name": "kind",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "a",
-        "type": "tuple",
-        "internalType": "struct RegisterRequest",
-        "components": [
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeWallet",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "ipHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "udpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "pgpHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "sponsorNodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "aSig",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "b",
-        "type": "tuple",
-        "internalType": "struct RegisterRequest",
-        "components": [
-          {
-            "name": "operator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "beneficiary",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeWallet",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "nodeType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "ipHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "tcpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "udpPort",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "pgpHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "keyId",
-            "type": "bytes8",
-            "internalType": "bytes8"
-          },
-          {
-            "name": "services",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "sponsorNodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nonce",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "bSig",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "reportOffline",
-    "inputs": [
-      {
-        "name": "targetNodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "reportVoters",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "agree",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      },
-      {
-        "name": "disagree",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "requestExit",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "reservedIdOfKeyId",
-    "inputs": [
-      {
-        "name": "keyId",
-        "type": "bytes8",
-        "internalType": "bytes8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "revokeNodeWallet",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "seed",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "batch",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "nextHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "seedState",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "seedHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "expectedNext",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "nextIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "reserveUntil",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "serviceMaskOf",
-    "inputs": [
-      {
-        "name": "nodeType",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "servicesOfNodeWallet",
-    "inputs": [
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "setEgressPolicy",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cid",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setFetchAllowlist",
-    "inputs": [
-      {
-        "name": "root",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "uri",
-        "type": "string",
-        "internalType": "string"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setMinStake",
-    "inputs": [
-      {
-        "name": "v",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setOffline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setOnline",
-    "inputs": [
-      {
-        "name": "d",
-        "type": "tuple",
-        "internalType": "struct OnlineDeclaration",
-        "components": [
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "mode",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "anchorNodeIds",
-            "type": "uint256[]",
-            "internalType": "uint256[]"
-          },
-          {
-            "name": "servicesNow",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "onlineUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "onlineSeq",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "deadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "nodeSig",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "receipts",
-        "type": "bytes[]",
-        "internalType": "bytes[]"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setParam",
-    "inputs": [
-      {
-        "name": "name",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "v",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setServiceMask",
-    "inputs": [
-      {
-        "name": "nodeType",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "mask",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setSubsidyPool",
-    "inputs": [
-      {
-        "name": "pool",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "settleOffline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "settleReport",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxSteps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "done",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "slash",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "bps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "evidenceHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "refId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "slashCountOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "slashIdOfNodeAt",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "i",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "slashMany",
-    "inputs": [
-      {
-        "name": "nodeIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "bps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "evidenceHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "refId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "slashRecord",
-    "inputs": [
-      {
-        "name": "slashId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "r",
-        "type": "tuple",
-        "internalType": "struct SlashRecord",
-        "components": [
-          {
-            "name": "slashId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "time",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "track",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "reason",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "stakeAfter",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "refId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "evidenceHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "stakeOf",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "sweepReserve",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "syncBeneficiaryFromVdr",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "tableVersion",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "topUp",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "totalSlashCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "transferBeneficiary",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "transferOperator",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updateEndpoint",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "tcpPort",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "udpPort",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updateNodeWallet",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "w",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "sig",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updatePgp",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "pgp",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "keyId",
-        "type": "bytes8",
-        "internalType": "bytes8"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updateServices",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "services",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "voteReport",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "agree",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "withdraw",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "withdrawOwed",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "withdrawPrestake",
-    "inputs": [
-      {
-        "name": "requestHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "withdrawVoteReserve",
-    "inputs": [
-      {
-        "name": "to",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "FetchAllowlistSet",
-    "inputs": [
-      {
-        "name": "root",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "version",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "uri",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OwedWithdrawn",
-    "inputs": [
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ParamSet",
-    "inputs": [
-      {
-        "name": "name",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReserveSwept",
-    "inputs": [
-      {
-        "name": "pool",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SeedCompleted",
-    "inputs": [
-      {
-        "name": "reserveUntil",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ServiceMaskSet",
-    "inputs": [
-      {
-        "name": "nodeType",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "mask",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VoteReserveWithdrawn",
-    "inputs": [
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "BadNodeType",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BadParam",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BadServices",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "GasReserve",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotGovernor",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NothingOwed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReentrancyGuardReentrantCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "event",
-    "name": "BeneficiarySyncedFromVdr",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "beneficiary",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BeneficiaryTransferred",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "EgressPolicySet",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "version",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "cid",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ExitCancelled",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ExitRequested",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "unlockAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeEndpointUpdated",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "ip",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "tcpPort",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "udpPort",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodePgpUpdated",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "oldKeyId",
-        "type": "bytes8",
-        "indexed": false,
-        "internalType": "bytes8"
-      },
-      {
-        "name": "newKeyId",
-        "type": "bytes8",
-        "indexed": false,
-        "internalType": "bytes8"
-      },
-      {
-        "name": "pgpHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeResumed",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "stake",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "threshold",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeStatusChanged",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "active",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      },
-      {
-        "name": "status",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "stake",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeSuspended",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "stake",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "threshold",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeWalletRevoked",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "oldWallet",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeWalletUpdated",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "oldWallet",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newWallet",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OperatorTransferStarted",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OperatorTransferred",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OwedCredited",
-    "inputs": [
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ServicesUpdated",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "services",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Slashed",
-    "inputs": [
-      {
-        "name": "slashId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "track",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "stakeAfter",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "refId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "evidenceHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "StakeAdded",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "added",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "stake",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "principal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ToPool",
-    "inputs": [
-      {
-        "name": "pool",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sent",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Withdrawn",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "FraudReported",
-    "inputs": [
-      {
-        "name": "requestHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "reporterNodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "kind",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "forfeited",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "reward",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeRegistered",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "operator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "nodeWallet",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "nodeType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "keyId",
-        "type": "bytes8",
-        "indexed": false,
-        "internalType": "bytes8"
-      },
-      {
-        "name": "ip",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "tcpPort",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "udpPort",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "services",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "stake",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sponsorNodeId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PrestakeWithdrawn",
-    "inputs": [
-      {
-        "name": "requestHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Prestaked",
-    "inputs": [
-      {
-        "name": "requestHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "payer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RegistrationRejectedDuplicate",
-    "inputs": [
-      {
-        "name": "requestHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "keyId",
-        "type": "bytes8",
-        "indexed": false,
-        "internalType": "bytes8"
-      },
-      {
-        "name": "sponsorNodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sponsorPenalty",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "prestakeForfeited",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SeedBatchWritten",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "acc",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LockedStakeReleased",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "beneficiary",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeBackOnline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "offlineSeconds",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeMarkedOffline",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "since",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeOnlineExtended",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "onlineSeq",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "onlineUntil",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeSelfOffline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "effectiveAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "by",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodeSelfOnline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "mode",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "anchorNodeIds",
-        "type": "uint256[]",
-        "indexed": false,
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "servicesNow",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "onlineUntil",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "onlineSeq",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OfflineDeducted",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OfflineReported",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "targetNodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "reporterNodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReportClosed",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "pot",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "remainderToVoteReserve",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReportExecutor",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "executor",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReportPotCredited",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "toWinners",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "toVoteReserve",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReportResolved",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "accepted",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReportSettled",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "voterNodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "paid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "fined",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReportSettlementProgress",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "voterCursor",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "payCursor",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "done",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReportVoided",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReportVoted",
-    "inputs": [
-      {
-        "name": "reportId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "voterNodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "agree",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      },
-      {
-        "name": "agreeCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "disagreeCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TcpNodeDeclaredOffline",
-    "inputs": [
-      {
-        "name": "nodeId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  }
+ {
+  "inputs": [
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "governor",
+      "type": "address"
+     },
+     {
+      "internalType": "uint256",
+      "name": "minStake",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint64",
+      "name": "thresholdGrace",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "unbondingPeriod",
+      "type": "uint64"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "seedHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "uint64",
+      "name": "reservePeriod",
+      "type": "uint64"
+     },
+     {
+      "internalType": "address",
+      "name": "vdr",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "projectBeneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "vdrSyncPeriod",
+      "type": "uint64"
+     },
+     {
+      "internalType": "bool",
+      "name": "openRegistration",
+      "type": "bool"
+     },
+     {
+      "internalType": "address",
+      "name": "extension",
+      "type": "address"
+     },
+     {
+      "internalType": "uint256",
+      "name": "claimsPerDay",
+      "type": "uint256"
+     }
+    ],
+    "internalType": "struct NodeRegistryV2.InitConfig",
+    "name": "c",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "constructor"
+ },
+ {
+  "inputs": [],
+  "name": "BadNodeType",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "BadParam",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "BadServices",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "GasReserve",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotGovernor",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NothingOwed",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ReentrancyGuardReentrantCall",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "TransferFailed",
+  "type": "error"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "root",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "version",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "string",
+    "name": "uri",
+    "type": "string"
+   }
+  ],
+  "name": "FetchAllowlistSet",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "OwedWithdrawn",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "name",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "value",
+    "type": "uint256"
+   }
+  ],
+  "name": "ParamSet",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "pool",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "ReserveSwept",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "reserveUntil",
+    "type": "uint64"
+   }
+  ],
+  "name": "SeedCompleted",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint8",
+    "name": "nodeType",
+    "type": "uint8"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "mask",
+    "type": "uint16"
+   }
+  ],
+  "name": "ServiceMaskSet",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "VoteReserveWithdrawn",
+  "type": "event"
+ },
+ {
+  "stateMutability": "payable",
+  "type": "fallback"
+ },
+ {
+  "inputs": [],
+  "name": "EXTENSION",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "GOVERNOR",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "PROJECT_BENEFICIARY",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "RESERVE_PERIOD",
+  "outputs": [
+   {
+    "internalType": "uint64",
+    "name": "",
+    "type": "uint64"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "VDR",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "VDR_SYNC_DEADLINE",
+  "outputs": [
+   {
+    "internalType": "uint64",
+    "name": "",
+    "type": "uint64"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "acceptOperator",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "accounting",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "stakeTotal",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "prestakeTotal",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "owedTotal",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "reserve",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "reportEscrow",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "voteReserve",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "admissionEscrow",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "keyIdStringHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "activeKeyIdExists",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "beneficiaryOf",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "w",
+    "type": "address"
+   }
+  ],
+  "name": "bindNonceOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "cancelExit",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "voterNodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "claimReportSettlement",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "paid",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "fined",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "declareOffline",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "domainSeparator",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "effectiveMinStake",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "egressPolicyOf",
+  "outputs": [
+   {
+    "internalType": "bytes",
+    "name": "cid",
+    "type": "bytes"
+   },
+   {
+    "internalType": "uint64",
+    "name": "version",
+    "type": "uint64"
+   },
+   {
+    "internalType": "uint64",
+    "name": "updatedAt",
+    "type": "uint64"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint64",
+    "name": "onlineSeq",
+    "type": "uint64"
+   },
+   {
+    "internalType": "uint64",
+    "name": "newUntil",
+    "type": "uint64"
+   },
+   {
+    "internalType": "uint256",
+    "name": "deadline",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bytes",
+    "name": "nodeSig",
+    "type": "bytes"
+   }
+  ],
+  "name": "extendOnline",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "fetchAllowlist",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "root",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint64",
+    "name": "version",
+    "type": "uint64"
+   },
+   {
+    "internalType": "string",
+    "name": "uri",
+    "type": "string"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   }
+  ],
+  "name": "finalizeReport",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "getPrestake",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "payer",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "since",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint128",
+      "name": "amount",
+      "type": "uint128"
+     }
+    ],
+    "internalType": "struct Prestake",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   }
+  ],
+  "name": "getReport",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint64",
+      "name": "target",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "reporter",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "openedAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "expiresAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "resolvedAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32",
+      "name": "minOpen",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint32",
+      "name": "agree",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint32",
+      "name": "disagree",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "margin",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "winners",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "state",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "payCursor",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bool",
+      "name": "closed",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint128",
+      "name": "perWinner",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint128",
+      "name": "pot",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint128",
+      "name": "fine",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint32",
+      "name": "voterCursor",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint96",
+      "name": "roundPer",
+      "type": "uint96"
+     },
+     {
+      "internalType": "address",
+      "name": "executor",
+      "type": "address"
+     },
+     {
+      "internalType": "uint128",
+      "name": "reporterPaid",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint128",
+      "name": "executorPaid",
+      "type": "uint128"
+     }
+    ],
+    "internalType": "struct Report",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "legacyId",
+    "type": "uint256"
+   }
+  ],
+  "name": "getReservation",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "bytes32",
+      "name": "ipHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "bool",
+      "name": "vdrSyncable",
+      "type": "bool"
+     },
+     {
+      "internalType": "bool",
+      "name": "used",
+      "type": "bool"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "notBefore",
+      "type": "uint64"
+     }
+    ],
+    "internalType": "struct Reservation",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "voterNodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "getVote",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint8",
+      "name": "choice",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "settled",
+      "type": "bool"
+     },
+     {
+      "internalType": "bool",
+      "name": "fined",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint32",
+      "name": "rank",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint96",
+      "name": "claimed",
+      "type": "uint96"
+     },
+     {
+      "internalType": "uint96",
+      "name": "fine",
+      "type": "uint96"
+     }
+    ],
+    "internalType": "struct Vote",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "ipOf",
+  "outputs": [
+   {
+    "internalType": "string",
+    "name": "",
+    "type": "string"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "isActive",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   }
+  ],
+  "name": "isActiveNode",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "isDeclaredOnline",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "w",
+    "type": "address"
+   }
+  ],
+  "name": "isLeakedNodeWallet",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "isRequestUsed",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "isVdrSynced",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   }
+  ],
+  "name": "keyIdHashOfNodeWallet",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "i",
+    "type": "uint256"
+   }
+  ],
+  "name": "listedAt",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "listedCount",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "keyIdStringHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "mailboxKeyIdExists",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   }
+  ],
+  "name": "mailboxKeyIdHashOf",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "keyIdStringHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "mailboxNodeByKeyIdHash",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   },
+   {
+    "internalType": "bytes",
+    "name": "pgpBase64",
+    "type": "bytes"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint64",
+    "name": "t",
+    "type": "uint64"
+   }
+  ],
+  "name": "minStakeAt",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "minStakeNow",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "nextNodeId",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   },
+   {
+    "internalType": "uint16",
+    "name": "port",
+    "type": "uint16"
+   },
+   {
+    "internalType": "uint8",
+    "name": "proto",
+    "type": "uint8"
+   }
+  ],
+  "name": "nodeIdOfEndpoint",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes8",
+    "name": "keyId",
+    "type": "bytes8"
+   }
+  ],
+  "name": "nodeIdOfKeyId",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "keyIdStringHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "nodeIdOfKeyIdHash",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   }
+  ],
+  "name": "nodeIdOfNodeWallet",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "nodeInfo",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "operator",
+    "type": "address"
+   },
+   {
+    "internalType": "address",
+    "name": "beneficiary",
+    "type": "address"
+   },
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   },
+   {
+    "internalType": "uint256",
+    "name": "stake",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bool",
+    "name": "active",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   }
+  ],
+  "name": "nodeOf",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stake",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "effectiveMin",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint8",
+      "name": "status",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "active",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint64",
+      "name": "lastSlashAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32",
+      "name": "slashCount",
+      "type": "uint32"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint64",
+      "name": "offlineSince",
+      "type": "uint64"
+     },
+     {
+      "internalType": "bool",
+      "name": "suspended",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineUntil",
+      "type": "uint64"
+     }
+    ],
+    "internalType": "struct NodeStatusView",
+    "name": "v",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "nodeStatus",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stake",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "effectiveMin",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint8",
+      "name": "status",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "active",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint64",
+      "name": "lastSlashAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32",
+      "name": "slashCount",
+      "type": "uint32"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint64",
+      "name": "offlineSince",
+      "type": "uint64"
+     },
+     {
+      "internalType": "bool",
+      "name": "suspended",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineUntil",
+      "type": "uint64"
+     }
+    ],
+    "internalType": "struct NodeStatusView",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "nodeWalletOf",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "keyIdStringHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "nodeWalletOfKeyIdHash",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "onlineSecondsOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "operatorOf",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "a",
+    "type": "address"
+   }
+  ],
+  "name": "owedOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "params",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint64",
+      "name": "thresholdGrace",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "unbondingPeriod",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "reportExpiry",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32",
+      "name": "reportMinOpen",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "reportMargin",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "offlineRateBps",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "fraudReporterBps",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint32",
+      "name": "maxOnlineTtl",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "maxDailyOnline",
+      "type": "uint16"
+     },
+     {
+      "internalType": "address",
+      "name": "subsidyPool",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "mailboxChangeFine",
+      "type": "uint64"
+     }
+    ],
+    "internalType": "struct Params",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint64",
+    "name": "onlineSeq",
+    "type": "uint64"
+   },
+   {
+    "internalType": "uint64",
+    "name": "pauseAt",
+    "type": "uint64"
+   },
+   {
+    "internalType": "uint256",
+    "name": "deadline",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bytes",
+    "name": "nodeSig",
+    "type": "bytes"
+   }
+  ],
+  "name": "pauseBySig",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "pendingOfflineDeduction",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "pendingOperatorOf",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "pgpOf",
+  "outputs": [
+   {
+    "internalType": "bytes",
+    "name": "",
+    "type": "bytes"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "keyIdStringHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "pgpOfKeyIdHash",
+  "outputs": [
+   {
+    "internalType": "bytes",
+    "name": "",
+    "type": "bytes"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "prestake",
+  "outputs": [],
+  "stateMutability": "payable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "principalOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "ipHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "pgpHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint256",
+      "name": "sponsorNodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "nonce",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "deadline",
+      "type": "uint256"
+     }
+    ],
+    "internalType": "struct RegisterRequest",
+    "name": "r",
+    "type": "tuple"
+   },
+   {
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   },
+   {
+    "internalType": "bytes",
+    "name": "pgp",
+    "type": "bytes"
+   },
+   {
+    "internalType": "bytes",
+    "name": "operatorSig",
+    "type": "bytes"
+   },
+   {
+    "internalType": "bytes",
+    "name": "nodeWalletSig",
+    "type": "bytes"
+   }
+  ],
+  "name": "registerFor",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "legacyId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   },
+   {
+    "internalType": "uint16",
+    "name": "udpPort",
+    "type": "uint16"
+   },
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   },
+   {
+    "internalType": "uint256",
+    "name": "deadline",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bytes",
+    "name": "bindSig",
+    "type": "bytes"
+   },
+   {
+    "internalType": "bytes",
+    "name": "pgp",
+    "type": "bytes"
+   },
+   {
+    "internalType": "uint16",
+    "name": "services",
+    "type": "uint16"
+   }
+  ],
+  "name": "registerReserved",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "payable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "reportCount",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint8",
+    "name": "kind",
+    "type": "uint8"
+   },
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "ipHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "pgpHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint256",
+      "name": "sponsorNodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "nonce",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "deadline",
+      "type": "uint256"
+     }
+    ],
+    "internalType": "struct RegisterRequest",
+    "name": "a",
+    "type": "tuple"
+   },
+   {
+    "internalType": "bytes",
+    "name": "aSig",
+    "type": "bytes"
+   },
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint8",
+      "name": "nodeType",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "ipHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "pgpHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint256",
+      "name": "sponsorNodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "nonce",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "deadline",
+      "type": "uint256"
+     }
+    ],
+    "internalType": "struct RegisterRequest",
+    "name": "b",
+    "type": "tuple"
+   },
+   {
+    "internalType": "bytes",
+    "name": "bSig",
+    "type": "bytes"
+   }
+  ],
+  "name": "reportFraudulentRequest",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "targetNodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "reportOffline",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   }
+  ],
+  "name": "reportVoters",
+  "outputs": [
+   {
+    "internalType": "uint64[]",
+    "name": "agree",
+    "type": "uint64[]"
+   },
+   {
+    "internalType": "uint64[]",
+    "name": "disagree",
+    "type": "uint64[]"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "requestExit",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes8",
+    "name": "keyId",
+    "type": "bytes8"
+   }
+  ],
+  "name": "reservedIdOfKeyId",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "revokeNodeWallet",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "index",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bytes",
+    "name": "batch",
+    "type": "bytes"
+   },
+   {
+    "internalType": "bytes32",
+    "name": "nextHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "seed",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "seedState",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "seedHash",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "bytes32",
+    "name": "expectedNext",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "nextIndex",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint64",
+    "name": "reserveUntil",
+    "type": "uint64"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint8",
+    "name": "nodeType",
+    "type": "uint8"
+   }
+  ],
+  "name": "serviceMaskOf",
+  "outputs": [
+   {
+    "internalType": "uint16",
+    "name": "",
+    "type": "uint16"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   }
+  ],
+  "name": "servicesOfNodeWallet",
+  "outputs": [
+   {
+    "internalType": "uint16",
+    "name": "",
+    "type": "uint16"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bytes",
+    "name": "cid",
+    "type": "bytes"
+   }
+  ],
+  "name": "setEgressPolicy",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "root",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint64",
+    "name": "version",
+    "type": "uint64"
+   },
+   {
+    "internalType": "string",
+    "name": "uri",
+    "type": "string"
+   }
+  ],
+  "name": "setFetchAllowlist",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "v",
+    "type": "uint256"
+   }
+  ],
+  "name": "setMinStake",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "setOffline",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mode",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint256[]",
+      "name": "anchorNodeIds",
+      "type": "uint256[]"
+     },
+     {
+      "internalType": "uint16",
+      "name": "servicesNow",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineUntil",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "onlineSeq",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint256",
+      "name": "deadline",
+      "type": "uint256"
+     }
+    ],
+    "internalType": "struct OnlineDeclaration",
+    "name": "d",
+    "type": "tuple"
+   },
+   {
+    "internalType": "bytes",
+    "name": "nodeSig",
+    "type": "bytes"
+   },
+   {
+    "internalType": "bytes[]",
+    "name": "receipts",
+    "type": "bytes[]"
+   }
+  ],
+  "name": "setOnline",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "name",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "v",
+    "type": "uint256"
+   }
+  ],
+  "name": "setParam",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint8",
+    "name": "nodeType",
+    "type": "uint8"
+   },
+   {
+    "internalType": "uint16",
+    "name": "mask",
+    "type": "uint16"
+   }
+  ],
+  "name": "setServiceMask",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "pool",
+    "type": "address"
+   }
+  ],
+  "name": "setSubsidyPool",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "settleOffline",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "maxSteps",
+    "type": "uint256"
+   }
+  ],
+  "name": "settleReport",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "done",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint16",
+    "name": "bps",
+    "type": "uint16"
+   },
+   {
+    "internalType": "uint8",
+    "name": "reason",
+    "type": "uint8"
+   },
+   {
+    "internalType": "bytes32",
+    "name": "evidenceHash",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "refId",
+    "type": "uint256"
+   }
+  ],
+  "name": "slash",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "slashCountOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "i",
+    "type": "uint256"
+   }
+  ],
+  "name": "slashIdOfNodeAt",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256[]",
+    "name": "nodeIds",
+    "type": "uint256[]"
+   },
+   {
+    "internalType": "uint16",
+    "name": "bps",
+    "type": "uint16"
+   },
+   {
+    "internalType": "uint8",
+    "name": "reason",
+    "type": "uint8"
+   },
+   {
+    "internalType": "bytes32",
+    "name": "evidenceHash",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "refId",
+    "type": "uint256"
+   }
+  ],
+  "name": "slashMany",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "slashId",
+    "type": "uint256"
+   }
+  ],
+  "name": "slashRecord",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "slashId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint64",
+      "name": "time",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint8",
+      "name": "track",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint8",
+      "name": "reason",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint256",
+      "name": "amount",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stakeAfter",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "refId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "evidenceHash",
+      "type": "bytes32"
+     }
+    ],
+    "internalType": "struct SlashRecord",
+    "name": "r",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "stakeOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "sweepReserve",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "syncBeneficiaryFromVdr",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "tableVersion",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "topUp",
+  "outputs": [],
+  "stateMutability": "payable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "totalSlashCount",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   }
+  ],
+  "name": "transferBeneficiary",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   }
+  ],
+  "name": "transferOperator",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "address",
+    "name": "w",
+    "type": "address"
+   },
+   {
+    "internalType": "uint256",
+    "name": "deadline",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bytes",
+    "name": "sig",
+    "type": "bytes"
+   }
+  ],
+  "name": "updateNodeWallet",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bytes",
+    "name": "pgp",
+    "type": "bytes"
+   },
+   {
+    "internalType": "bytes8",
+    "name": "keyId",
+    "type": "bytes8"
+   }
+  ],
+  "name": "updatePgp",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint16",
+    "name": "services",
+    "type": "uint16"
+   }
+  ],
+  "name": "updateServices",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bool",
+    "name": "agree",
+    "type": "bool"
+   }
+  ],
+  "name": "voteReport",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "withdraw",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "withdrawOwed",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "withdrawPrestake",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   },
+   {
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "withdrawVoteReserve",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "stateMutability": "payable",
+  "type": "receive"
+ },
+ {
+  "inputs": [],
+  "name": "BadKeyId",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "BadSignature",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "BadStatus",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "Expired",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "InsufficientStake",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "KeyIdTaken",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "LeakedWallet",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "MailboxFixed",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "MailboxNoExit",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "MinStakeStep",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "MinStakeTooManyChanges",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotBeneficiary",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotOperator",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ProbeTaken",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ReservedKeyId",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "StillLocked",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "TooMany",
+  "type": "error"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "count",
+    "type": "uint256"
+   }
+  ],
+  "name": "UnderStakedNotMarked",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "UnknownNode",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "VdrSyncClosed",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "VdrSyncNotApplicable",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "WalletTaken",
+  "type": "error"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "beneficiary",
+    "type": "address"
+   }
+  ],
+  "name": "BeneficiarySyncedFromVdr",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "from",
+    "type": "address"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   }
+  ],
+  "name": "BeneficiaryTransferred",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "version",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes",
+    "name": "cid",
+    "type": "bytes"
+   }
+  ],
+  "name": "EgressPolicySet",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "ExitCancelled",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "unlockAt",
+    "type": "uint64"
+   }
+  ],
+  "name": "ExitRequested",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes8",
+    "name": "oldKeyId",
+    "type": "bytes8"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes8",
+    "name": "newKeyId",
+    "type": "bytes8"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "pgpHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "NodePgpUpdated",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stake",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "threshold",
+    "type": "uint256"
+   }
+  ],
+  "name": "NodeResumed",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "active",
+    "type": "bool"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "status",
+    "type": "uint8"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stake",
+    "type": "uint256"
+   }
+  ],
+  "name": "NodeStatusChanged",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stake",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "threshold",
+    "type": "uint256"
+   }
+  ],
+  "name": "NodeSuspended",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "oldWallet",
+    "type": "address"
+   }
+  ],
+  "name": "NodeWalletRevoked",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "oldWallet",
+    "type": "address"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "newWallet",
+    "type": "address"
+   }
+  ],
+  "name": "NodeWalletUpdated",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "from",
+    "type": "address"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   }
+  ],
+  "name": "OperatorTransferStarted",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "from",
+    "type": "address"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   }
+  ],
+  "name": "OperatorTransferred",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "OwedCredited",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "services",
+    "type": "uint16"
+   }
+  ],
+  "name": "ServicesUpdated",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "slashId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "track",
+    "type": "uint8"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "reason",
+    "type": "uint8"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stakeAfter",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "refId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "evidenceHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "Slashed",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "from",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "added",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stake",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "principal",
+    "type": "uint256"
+   }
+  ],
+  "name": "StakeAdded",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "termEnd",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stake",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "required",
+    "type": "uint256"
+   }
+  ],
+  "name": "TermRenewalFailed",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "termBase",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "termEnd",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "termLength",
+    "type": "uint32"
+   }
+  ],
+  "name": "TermStarted",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "pool",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "sent",
+    "type": "bool"
+   }
+  ],
+  "name": "ToPool",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "Withdrawn",
+  "type": "event"
+ },
+ {
+  "inputs": [],
+  "name": "BadIp",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "BadPgp",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "BadPorts",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "BadTerm",
+  "type": "error"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint64",
+    "name": "nextAt",
+    "type": "uint64"
+   }
+  ],
+  "name": "ClaimRateLimited",
+  "type": "error"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint64",
+    "name": "notBefore",
+    "type": "uint64"
+   }
+  ],
+  "name": "ClaimTooEarly",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "DuplicateSameBlock",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "EndpointTaken",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NoPrestake",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotFraud",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotReserved",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NothingToForfeit",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "PrestakeLocked",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "PrestakePayerMismatch",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "RegistrationClosed",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "RequestUsed",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ReservationClosed",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ReservedEndpoint",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "SeedAlreadyComplete",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "SeedBadBatch",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "SeedNotComplete",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "SponsorNotEligible",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "SponsorSameIp",
+  "type": "error"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reporterNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "kind",
+    "type": "uint8"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "forfeited",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "reward",
+    "type": "uint256"
+   }
+  ],
+  "name": "FraudReported",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "operator",
+    "type": "address"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "nodeType",
+    "type": "uint8"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes8",
+    "name": "keyId",
+    "type": "bytes8"
+   },
+   {
+    "indexed": false,
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "tcpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "udpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "services",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stake",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "sponsorNodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "NodeRegistered",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "PrestakeWithdrawn",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "payer",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "total",
+    "type": "uint256"
+   }
+  ],
+  "name": "Prestaked",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes8",
+    "name": "keyId",
+    "type": "bytes8"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "sponsorNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "sponsorPenalty",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "prestakeForfeited",
+    "type": "uint256"
+   }
+  ],
+  "name": "RegistrationRejectedDuplicate",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "index",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "acc",
+    "type": "bytes32"
+   }
+  ],
+  "name": "SeedBatchWritten",
+  "type": "event"
+ },
+ {
+  "inputs": [],
+  "name": "AlreadyOffline",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "AlreadyVoted",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "AnchorNotEligible",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "AnchorOperatorClash",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "AnchorSameIp",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "BadOnlineWindow",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "BadSequence",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "DailyOnlineCap",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "MarginNotReached",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "MinOpenNotPassed",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotAnchor",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotDeclaredOnline",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotReportable",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotVoter",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "RecoveryVoteRequired",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ReportExpired",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ReportNotOpen",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ReportNotResolved",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ReportOpenAlready",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ReporterNotEligible",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "StakeLocked",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "VoteCooldown",
+  "type": "error"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "beneficiary",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "LockedStakeReleased",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "offlineSeconds",
+    "type": "uint64"
+   }
+  ],
+  "name": "NodeBackOnline",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "since",
+    "type": "uint64"
+   }
+  ],
+  "name": "NodeMarkedOffline",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "onlineSeq",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "onlineUntil",
+    "type": "uint64"
+   }
+  ],
+  "name": "NodeOnlineExtended",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "effectiveAt",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "by",
+    "type": "address"
+   }
+  ],
+  "name": "NodeSelfOffline",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "mode",
+    "type": "uint8"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256[]",
+    "name": "anchorNodeIds",
+    "type": "uint256[]"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "servicesNow",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "onlineUntil",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "onlineSeq",
+    "type": "uint64"
+   }
+  ],
+  "name": "NodeSelfOnline",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "OfflineDeducted",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "targetNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reporterNodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "OfflineReported",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "pot",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "remainderToVoteReserve",
+    "type": "uint256"
+   }
+  ],
+  "name": "ReportClosed",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "executor",
+    "type": "address"
+   }
+  ],
+  "name": "ReportExecutor",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "toWinners",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "toVoteReserve",
+    "type": "uint256"
+   }
+  ],
+  "name": "ReportPotCredited",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "accepted",
+    "type": "bool"
+   }
+  ],
+  "name": "ReportResolved",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "voterNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "paid",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "fined",
+    "type": "uint256"
+   }
+  ],
+  "name": "ReportSettled",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "voterCursor",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "payCursor",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "done",
+    "type": "bool"
+   }
+  ],
+  "name": "ReportSettlementProgress",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   }
+  ],
+  "name": "ReportVoided",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "voterNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "agree",
+    "type": "bool"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "agreeCount",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "disagreeCount",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "signer",
+    "type": "address"
+   }
+  ],
+  "name": "ReportVoted",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "TcpNodeDeclaredOffline",
+  "type": "event"
+ },
+ {
+  "inputs": [],
+  "name": "AdmissionPending",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "AdmissionState",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotProposer",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "RecoveryNotNeeded",
+  "type": "error"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint64",
+    "name": "notBefore",
+    "type": "uint64"
+   }
+  ],
+  "name": "RecoveryTooSoon",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "SameBlockControlChange",
+  "type": "error"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "proposerNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes8",
+    "name": "keyId",
+    "type": "bytes8"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes20",
+    "name": "fingerprint",
+    "type": "bytes20"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "ipHash",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "tcpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "udpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "stake",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "deadline",
+    "type": "uint64"
+   }
+  ],
+  "name": "AdmissionApplied",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "proposerNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "voteExpiresAt",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "margin",
+    "type": "uint16"
+   }
+  ],
+  "name": "AdmissionProposed",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "AdmissionRefunded",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "state",
+    "type": "uint8"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "AdmissionResolved",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "voterNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "agree",
+    "type": "bool"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "agreeCount",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "disagreeCount",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "signer",
+    "type": "address"
+   }
+  ],
+  "name": "AdmissionVoted",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "tcpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "udpPort",
+    "type": "uint16"
+   }
+  ],
+  "name": "NodeEndpointUpdated",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "signer",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint48",
+    "name": "version",
+    "type": "uint48"
+   },
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "by",
+    "type": "address"
+   }
+  ],
+  "name": "ProbeSignerRevoked",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "signer",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "mainWallet",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint48",
+    "name": "version",
+    "type": "uint48"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint48",
+    "name": "validUntil",
+    "type": "uint48"
+   }
+  ],
+  "name": "ProbeSignerSet",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "version",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "ipHash",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "tcpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "udpPort",
+    "type": "uint16"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "endpointHash",
+    "type": "bytes32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint64",
+    "name": "expiresAt",
+    "type": "uint64"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint16",
+    "name": "margin",
+    "type": "uint16"
+   }
+  ],
+  "name": "RecoveryRequested",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint8",
+    "name": "state",
+    "type": "uint8"
+   }
+  ],
+  "name": "RecoveryResolved",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   },
+   {
+    "indexed": true,
+    "internalType": "uint256",
+    "name": "voterNodeId",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "agree",
+    "type": "bool"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "agreeCount",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint32",
+    "name": "disagreeCount",
+    "type": "uint32"
+   },
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "signer",
+    "type": "address"
+   }
+  ],
+  "name": "RecoveryVoted",
+  "type": "event"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   }
+  ],
+  "name": "admissionPgp",
+  "outputs": [
+   {
+    "internalType": "bytes",
+    "name": "",
+    "type": "bytes"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "admissionVoteOf",
+  "outputs": [
+   {
+    "internalType": "uint8",
+    "name": "",
+    "type": "uint8"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "uint256",
+      "name": "proposerNodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint64",
+      "name": "deadline",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "termLength",
+      "type": "uint64"
+     }
+    ],
+    "internalType": "struct AdmissionRequest",
+    "name": "r",
+    "type": "tuple"
+   },
+   {
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   },
+   {
+    "internalType": "bytes",
+    "name": "pgp",
+    "type": "bytes"
+   }
+  ],
+  "name": "applyAdmission",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "payable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "currentRecovery",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   }
+  ],
+  "name": "finalizeAdmission",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   }
+  ],
+  "name": "finalizeRecovery",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   }
+  ],
+  "name": "getAdmission",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "deadline",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint8",
+      "name": "state",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "services",
+      "type": "uint16"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "proposerId",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32",
+      "name": "termLength",
+      "type": "uint32"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "uint32",
+      "name": "agree",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint32",
+      "name": "disagree",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "margin",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "ipHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "pgpHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "bytes20",
+      "name": "fingerprint",
+      "type": "bytes20"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint128",
+      "name": "stake",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint64",
+      "name": "openedAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "voteExpiresAt",
+      "type": "uint64"
+     }
+    ],
+    "internalType": "struct Admission",
+    "name": "",
+    "type": "tuple"
+   },
+   {
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   }
+  ],
+  "name": "getRecovery",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "nodeWallet",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "nodeId",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint8",
+      "name": "state",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mode",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "servicesNow",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "ipHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "endpointHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "pgpHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint32",
+      "name": "version",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint32",
+      "name": "agree",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint32",
+      "name": "disagree",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "margin",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint64",
+      "name": "openedAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "expiresAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "ttl",
+      "type": "uint64"
+     }
+    ],
+    "internalType": "struct Recovery",
+    "name": "",
+    "type": "tuple"
+   },
+   {
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "lockCapacityOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "freeStake",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "finePerVote",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "slotsLeft",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "name": "markOnline",
+  "outputs": [],
+  "stateMutability": "pure",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256[]",
+    "name": "ids",
+    "type": "uint256[]"
+   }
+  ],
+  "name": "markUnderStaked",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "signer",
+    "type": "address"
+   }
+  ],
+  "name": "nodeOfProbeSigner",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "bool",
+    "name": "valid",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "nodeWallet",
+    "type": "address"
+   }
+  ],
+  "name": "pendingAdmissionOf",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "probeSignerOf",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "signer",
+    "type": "address"
+   },
+   {
+    "internalType": "uint48",
+    "name": "version",
+    "type": "uint48"
+   },
+   {
+    "internalType": "uint48",
+    "name": "validUntil",
+    "type": "uint48"
+   },
+   {
+    "internalType": "uint64",
+    "name": "setAt",
+    "type": "uint64"
+   },
+   {
+    "internalType": "bool",
+    "name": "valid",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   }
+  ],
+  "name": "proposeAdmission",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "recoveryThrottle",
+  "outputs": [
+   {
+    "internalType": "uint64",
+    "name": "notBefore",
+    "type": "uint64"
+   },
+   {
+    "internalType": "uint8",
+    "name": "rejects",
+    "type": "uint8"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "recoveryVoteOf",
+  "outputs": [
+   {
+    "internalType": "uint8",
+    "name": "",
+    "type": "uint8"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   }
+  ],
+  "name": "refundAdmission",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "length",
+    "type": "uint256"
+   }
+  ],
+  "name": "renewTerm",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "components": [
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "udpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "endpointHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mode",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "servicesNow",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint64",
+      "name": "ttl",
+      "type": "uint64"
+     }
+    ],
+    "internalType": "struct RecoveryRequest",
+    "name": "r",
+    "type": "tuple"
+   },
+   {
+    "internalType": "string",
+    "name": "ip",
+    "type": "string"
+   }
+  ],
+  "name": "requestRecovery",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "revokeProbeSigner",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "address",
+    "name": "signer",
+    "type": "address"
+   },
+   {
+    "internalType": "uint48",
+    "name": "validUntil",
+    "type": "uint48"
+   },
+   {
+    "internalType": "bytes",
+    "name": "acceptSig",
+    "type": "bytes"
+   }
+  ],
+  "name": "setProbeSigner",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256[]",
+    "name": "ids",
+    "type": "uint256[]"
+   }
+  ],
+  "name": "settleTerms",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "termOf",
+  "outputs": [
+   {
+    "internalType": "uint64",
+    "name": "termEnd",
+    "type": "uint64"
+   },
+   {
+    "internalType": "uint128",
+    "name": "termBase",
+    "type": "uint128"
+   },
+   {
+    "internalType": "uint32",
+    "name": "termLength",
+    "type": "uint32"
+   },
+   {
+    "internalType": "bool",
+    "name": "stakeStop",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "termStateOf",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "inTerm",
+    "type": "bool"
+   },
+   {
+    "internalType": "uint256",
+    "name": "termBase",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   },
+   {
+    "internalType": "string",
+    "name": "",
+    "type": "string"
+   },
+   {
+    "internalType": "uint16",
+    "name": "",
+    "type": "uint16"
+   },
+   {
+    "internalType": "uint16",
+    "name": "",
+    "type": "uint16"
+   }
+  ],
+  "name": "updateEndpoint",
+  "outputs": [],
+  "stateMutability": "pure",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "appId",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "bool",
+    "name": "agree",
+    "type": "bool"
+   }
+  ],
+  "name": "voteAdmission",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "voteEligibleAtOf",
+  "outputs": [
+   {
+    "internalType": "uint64",
+    "name": "",
+    "type": "uint64"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "recId",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "bool",
+    "name": "agree",
+    "type": "bool"
+   }
+  ],
+  "name": "voteRecovery",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ }
 ]

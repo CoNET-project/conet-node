@@ -11,6 +11,7 @@ fn voter(id: u64) -> VoterView {
         services: 0x29, // includes the maintenance bit
         stake: 5 * CNET,
         locked: 0,
+        term_base: 5 * CNET, // own fine at 20% = 1 CNET
         eligible_at: NOW - 1,
         open_report_id: 0,
     }
@@ -28,16 +29,83 @@ fn report(rid: u64, target: u64) -> ReportView {
         disagree: 0,
         margin: 20,
         state: REPORT_OPEN,
-        fine: CNET,
+        ratio_bps: NEW_REPORT_RATIO_BPS,
     }
 }
 
 #[test]
-fn fine_is_twenty_percent_of_threshold() {
-    assert_eq!(fine_now(5 * CNET), CNET);
-    assert_eq!(fine_now(1_000), 200);
-    // Rounding follows the contract: thr - floor(thr * 8000 / 10000).
-    assert_eq!(fine_now(7), 7 - 5);
+fn fine_is_the_ratio_times_the_voters_own_term_amount() {
+    assert_eq!(voter(1).fine_for(NEW_REPORT_RATIO_BPS), CNET);
+    let small = VoterView {
+        term_base: 1_000,
+        ..voter(1)
+    };
+    assert_eq!(small.fine_for(2_000), 200);
+    // Rounding follows the contract: floor(base * ratio / 10000).
+    let odd = VoterView {
+        term_base: 7,
+        ..voter(1)
+    };
+    assert_eq!(odd.fine_for(2_000), 1);
+}
+
+/// User decision 2026-11-08: same case, same ratio, different amounts. A voter approved at 10
+/// locks 2 per case and fits half as many cases as one approved at 5 with the same stake.
+#[test]
+fn each_voter_locks_its_own_fine() {
+    let r = report(1, 50);
+    let low = VoterView {
+        stake: 10 * CNET,
+        ..voter(1)
+    };
+    let high = VoterView {
+        stake: 10 * CNET,
+        term_base: 10 * CNET,
+        ..voter(2)
+    };
+    assert_eq!(low.capacity(NEW_REPORT_RATIO_BPS), 10);
+    assert_eq!(high.capacity(NEW_REPORT_RATIO_BPS), 5);
+    let high_full = VoterView {
+        locked: 9 * CNET,
+        ..high.clone()
+    };
+    assert_eq!(
+        can_vote(&high_full, &r, 0, NOW),
+        Err(Skip::NoLockCapacity {
+            available: CNET,
+            need: 2 * CNET
+        })
+    );
+    let low_same = VoterView {
+        locked: 9 * CNET,
+        ..low
+    };
+    assert_eq!(can_vote(&low_same, &r, 0, NOW), Ok(()));
+    // pick: the same open cases, different counts.
+    let many: Vec<ReportView> = (1..=12).map(|i| report(i, 100 + i)).collect();
+    assert_eq!(pick(&high, &many, &[0; 12], NOW).len(), 5);
+    assert_eq!(
+        pick(
+            &VoterView {
+                stake: 10 * CNET,
+                ..voter(1)
+            },
+            &many,
+            &[0; 12],
+            NOW
+        )
+        .len(),
+        10
+    );
+    // A term amount of 0 (no term yet) gives no capacity, never a division by zero.
+    assert_eq!(
+        VoterView {
+            term_base: 0,
+            ..voter(3)
+        }
+        .capacity(2_000),
+        0
+    );
 }
 
 #[test]
@@ -81,7 +149,7 @@ fn can_vote_follows_the_contract_order() {
 fn lock_capacity_is_stake_over_fine() {
     // 5 CNET stake, F = 1 CNET: five cases fit, the sixth reverts StakeLocked.
     let mut v = voter(1);
-    assert_eq!(v.capacity(CNET), 5);
+    assert_eq!(v.capacity(NEW_REPORT_RATIO_BPS), 5);
     for i in 0..5 {
         assert_eq!(
             can_vote(&v, &report(10 + i, 50), 0, NOW),
@@ -90,7 +158,7 @@ fn lock_capacity_is_stake_over_fine() {
         );
         v.locked += CNET;
     }
-    assert_eq!(v.capacity(CNET), 0);
+    assert_eq!(v.capacity(NEW_REPORT_RATIO_BPS), 0);
     assert_eq!(
         can_vote(&v, &report(20, 50), 0, NOW),
         Err(Skip::NoLockCapacity {
@@ -104,7 +172,7 @@ fn lock_capacity_is_stake_over_fine() {
         locked: CNET,
         ..voter(1)
     };
-    assert_eq!(cut.capacity(CNET), 3);
+    assert_eq!(cut.capacity(NEW_REPORT_RATIO_BPS), 3);
     // Locked above stake (stake cut after locking) never underflows.
     let over = VoterView {
         stake: CNET,
@@ -120,19 +188,18 @@ fn lock_capacity_is_stake_over_fine() {
 
 #[test]
 fn can_report_rules() {
-    let f = CNET;
-    assert_eq!(can_report(&voter(1), 50, true, None, f, NOW), Ok(()));
+    assert_eq!(can_report(&voter(1), 50, true, None, NOW), Ok(()));
     assert_eq!(
-        can_report(&voter(1), 1, true, None, f, NOW),
+        can_report(&voter(1), 1, true, None, NOW),
         Err(Skip::IsTarget)
     );
     assert_eq!(
-        can_report(&voter(1), 50, false, None, f, NOW),
+        can_report(&voter(1), 50, false, None, NOW),
         Err(Skip::TargetNotReportable)
     );
     let open = report(7, 50);
     assert_eq!(
-        can_report(&voter(1), 50, true, Some(&open), f, NOW),
+        can_report(&voter(1), 50, true, Some(&open), NOW),
         Err(Skip::ReportOpen { rid: 7 })
     );
     // An expired or closed earlier report does not block a new one.
@@ -140,22 +207,16 @@ fn can_report_rules() {
         expires_at: NOW,
         ..open.clone()
     };
-    assert_eq!(
-        can_report(&voter(1), 50, true, Some(&expired), f, NOW),
-        Ok(())
-    );
+    assert_eq!(can_report(&voter(1), 50, true, Some(&expired), NOW), Ok(()));
     let closed = ReportView { state: 3, ..open };
-    assert_eq!(
-        can_report(&voter(1), 50, true, Some(&closed), f, NOW),
-        Ok(())
-    );
+    assert_eq!(can_report(&voter(1), 50, true, Some(&closed), NOW), Ok(()));
     // Opening a report locks F like a vote.
     let full = VoterView {
         locked: 5 * CNET,
         ..voter(1)
     };
     assert!(matches!(
-        can_report(&full, 50, true, None, f, NOW),
+        can_report(&full, 50, true, None, NOW),
         Err(Skip::NoLockCapacity { .. })
     ));
     let cooling = VoterView {
@@ -163,7 +224,7 @@ fn can_report_rules() {
         ..voter(1)
     };
     assert!(matches!(
-        can_report(&cooling, 50, true, None, f, NOW),
+        can_report(&cooling, 50, true, None, NOW),
         Err(Skip::Cooldown { .. })
     ));
 }
@@ -203,7 +264,7 @@ fn pick_orders_by_urgency_then_margin_within_capacity() {
     // A case whose F does not fit stops the list (no skipping ahead to a cheaper one keeps the
     // order of urgency).
     let mut pricey = reports.clone();
-    pricey[3].fine = 4 * CNET;
+    pricey[3].ratio_bps = 8_000; // own fine 4 CNET
     assert!(pick(&v, &pricey, &[0; 6], NOW).is_empty());
 }
 
@@ -218,7 +279,7 @@ fn node_raw_decoding_checks_the_layout() {
     put(&mut raw, 27, 3);
     put(&mut raw, 36, NOW as u128);
     put(&mut raw, 37, 2 * CNET);
-    let v = decode_node_raw(&raw, 9, true).unwrap();
+    let v = decode_node_raw(&raw, 9, true, 5 * CNET).unwrap();
     assert_eq!(
         v,
         VoterView {
@@ -227,19 +288,20 @@ fn node_raw_decoding_checks_the_layout() {
             services: 0x29,
             stake: 5 * CNET,
             locked: 2 * CNET,
+            term_base: 5 * CNET,
             eligible_at: NOW,
             open_report_id: 3,
         }
     );
     // A different struct size is refused instead of misread.
-    assert!(decode_node_raw(&raw[..raw.len() - 32], 9, true).is_err());
+    assert!(decode_node_raw(&raw[..raw.len() - 32], 9, true, 0).is_err());
     let mut longer = raw.clone();
     longer.extend_from_slice(&[0u8; 32]);
-    assert!(decode_node_raw(&longer, 9, true).is_err());
+    assert!(decode_node_raw(&longer, 9, true, 0).is_err());
     // A value past its type is refused.
     let mut bad = raw.clone();
     bad[37 * 32] = 1;
-    assert!(decode_node_raw(&bad, 9, true).is_err());
+    assert!(decode_node_raw(&bad, 9, true, 0).is_err());
 }
 
 /// "可信集合免冷却" (2026-11-08): eligibility is the chain's voteEligibleAt word as decoded, with
@@ -259,12 +321,12 @@ fn eligibility_is_the_chain_word_not_a_local_cooldown() {
     };
     let r = report(1, 50);
     // Trusted 472, first registration: the contract wrote voteEligibleAt = registration time.
-    let trusted = decode_node_raw(&build(reg_time), 1, true).unwrap();
+    let trusted = decode_node_raw(&build(reg_time), 1, true, 5 * CNET).unwrap();
     assert_eq!(can_vote(&trusted, &r, 0, reg_time), Ok(()));
-    assert_eq!(can_report(&trusted, 77, true, None, CNET, reg_time), Ok(()));
+    assert_eq!(can_report(&trusted, 77, true, None, reg_time), Ok(()));
     // New node, or the trusted node after a wallet / operator change: the contract wrote +7 days.
     let week = 7 * 24 * 3600;
-    let cooling = decode_node_raw(&build(reg_time + week), 1, true).unwrap();
+    let cooling = decode_node_raw(&build(reg_time + week), 1, true, 5 * CNET).unwrap();
     assert_eq!(
         can_vote(&cooling, &r, 0, reg_time),
         Err(Skip::Cooldown {
@@ -272,7 +334,7 @@ fn eligibility_is_the_chain_word_not_a_local_cooldown() {
         })
     );
     assert_eq!(
-        can_report(&cooling, 77, true, None, CNET, reg_time),
+        can_report(&cooling, 77, true, None, reg_time),
         Err(Skip::Cooldown {
             until: reg_time + week
         })
