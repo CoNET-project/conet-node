@@ -1,21 +1,46 @@
-//! AUTO-TOPUP SignTx whitelist entry for the main wallet (PROTOTYPE, PLAN ONLY: needs approval).
+//! AUTO-TOPUP main-wallet SignTx entry (approved 2026-11-09). TEST keys only, no network.
+use si_crypto::eth::EthKey;
+use si_signer::keystore;
 use si_signer::probe_role::{self, Origin, ProbeRole, Refuse};
+use si_signer::proto::{Request, Response};
+use si_signer::server::{Signer, SignerConfig};
 use si_signer::topup_policy::*;
+use si_signer::tx1559::{parse_address, Tx1559};
+use zeroize::Zeroizing;
 
 const REG: &str = "0x00000000000000000000000000000000c0de0001";
 const C: u128 = 1_000_000_000_000_000_000;
+const GWEI: u128 = 1_000_000_000;
+/// First term end: 2030-03-17-ish; the window opens 7 days before.
 const END: u64 = 1_900_000_000;
+const IN_WINDOW: u64 = END - 3 * 86_400;
 
 fn cfg() -> TopUpConfig {
     TopUpConfig {
         registry: REG.into(),
+        chain_id: 224422,
         own_node_id: 573,
         per_tx_cap: 10 * C,
-        term_budget: 10 * C,
+        term_budget: 12 * C,
+        daily_count: 2,
+        daily_value: 10 * C,
         first_term_end: END,
         term_length: 15_768_000,
         window: 7 * 86_400,
         gas_reserve: C / 100,
+        max_gas_limit: 300_000,
+    }
+}
+fn req(nonce: u64, value: u128) -> TopUpRequest {
+    TopUpRequest {
+        nonce,
+        gas_limit: 200_000,
+        max_fee_wei: 4 * GWEI,
+        priority_fee_wei: GWEI / 10,
+        value,
+        stated_missing: 5 * C,
+        stated_wallet: 100 * C,
+        replaces_nonce: None,
     }
 }
 fn data(id: u64) -> Vec<u8> {
@@ -25,166 +50,344 @@ fn data(id: u64) -> Vec<u8> {
     d.extend_from_slice(&w);
     d
 }
-fn req(value: u128) -> TopUpRequest {
-    TopUpRequest {
-        tx_type: 2,
-        to: Some(REG.into()),
-        value,
-        data: data(573),
-        stated_missing: 5 * C,
-        stated_wallet: 100 * C,
-        replaces_nonce: None,
-    }
+fn fresh() -> LedgerState {
+    LedgerState::default()
 }
 
 #[test]
-fn minimal_entry_byte_checks_caps_window_and_gas() {
+fn builds_only_own_topup_to_the_registry() {
     let c = cfg();
-    let s = TermSpent::default();
-    let now = END - 3 * 86_400;
-    assert_eq!(check(&c, &req(5 * C), s, now), Ok(()));
-    // The stated missing amount only lowers: above it is refused.
+    assert_eq!(c.calldata(), data(573));
+    assert_eq!(check_tx_bytes(&c, 2, Some(REG), &data(573)), Ok(()));
+    // Another node, another contract, contract creation, another selector, extra bytes, type 0.
     assert_eq!(
-        check(&c, &req(5 * C + 1), s, now),
-        Err(TopUpRefuse::AboveMissing)
-    );
-    assert_eq!(check(&c, &req(0), s, now), Err(TopUpRefuse::ZeroValue));
-    assert_eq!(
-        check(
-            &c,
-            &TopUpRequest {
-                data: data(574),
-                ..req(C)
-            },
-            s,
-            now
-        ),
+        check_tx_bytes(&c, 2, Some(REG), &data(574)),
         Err(TopUpRefuse::NotOwnNode)
     );
     assert_eq!(
-        check(
+        check_tx_bytes(
             &c,
-            &TopUpRequest {
-                tx_type: 0,
-                ..req(C)
-            },
-            s,
-            now
-        ),
-        Err(TopUpRefuse::NotType2)
-    );
-    assert_eq!(
-        check(
-            &c,
-            &TopUpRequest {
-                to: Some("0x00000000000000000000000000000000000000bb".into()),
-                ..req(C)
-            },
-            s,
-            now
+            2,
+            Some("0x00000000000000000000000000000000000000bb"),
+            &data(573)
         ),
         Err(TopUpRefuse::WrongTo)
     );
-    let mut other = probe_role::selector("withdraw(uint256)").to_vec();
-    other.extend_from_slice(&data(573)[4..]);
     assert_eq!(
-        check(
-            &c,
-            &TopUpRequest {
-                data: other,
-                ..req(C)
-            },
-            s,
-            now
-        ),
+        check_tx_bytes(&c, 2, None, &data(573)),
+        Err(TopUpRefuse::Creation)
+    );
+    let mut w = probe_role::selector("withdraw(uint256)").to_vec();
+    w.extend_from_slice(&data(573)[4..]);
+    assert_eq!(
+        check_tx_bytes(&c, 2, Some(REG), &w),
         Err(TopUpRefuse::Selector)
     );
     let mut long = data(573);
     long.push(0);
     assert_eq!(
-        check(
-            &c,
-            &TopUpRequest {
-                data: long,
-                ..req(C)
-            },
-            s,
-            now
-        ),
+        check_tx_bytes(&c, 2, Some(REG), &long),
         Err(TopUpRefuse::BadCalldata)
     );
-    // Window from the signer's own clock + configured first end and length.
     assert_eq!(
-        check(&c, &req(C), s, END - 8 * 86_400),
-        Err(TopUpRefuse::OutsideWindow)
+        check_tx_bytes(&c, 0, Some(REG), &data(573)),
+        Err(TopUpRefuse::NotType2)
     );
-    let second_end = END + 15_768_000;
-    assert_eq!(c.current_term_end(END + 1), second_end);
-    assert_eq!(check(&c, &req(C), s, second_end - 86_400), Ok(())); // next term's window
+}
+
+#[test]
+fn amount_window_gas_rules() {
+    let c = cfg();
+    let l = fresh();
+    assert!(check(&c, &req(1, 5 * C), &l, IN_WINDOW).is_ok());
+    // Above the stated missing amount (it only lowers), above the per-tx cap, zero.
     assert_eq!(
-        check(&c, &req(C), s, END + 86_400),
-        Err(TopUpRefuse::OutsideWindow)
+        check(&c, &req(1, 5 * C + 1), &l, IN_WINDOW),
+        Err(TopUpRefuse::AboveMissing)
     );
-    // Caps.
     let big = TopUpRequest {
         stated_missing: 50 * C,
-        ..req(11 * C)
+        ..req(1, 11 * C)
     };
-    assert_eq!(check(&c, &big, s, now), Err(TopUpRefuse::AboveCap));
-    let spent = TermSpent {
-        term_end: END,
-        value: 9 * C,
-    };
+    assert_eq!(check(&c, &big, &l, IN_WINDOW), Err(TopUpRefuse::AboveCap));
     assert_eq!(
-        check(&c, &req(2 * C), spent, now),
-        Err(TopUpRefuse::AboveBudget)
+        check(&c, &req(1, 0), &l, IN_WINDOW),
+        Err(TopUpRefuse::ZeroValue)
     );
-    // Budget is per term: last term's spending does not count.
+    // Window: computed by the signer from its clock and the configured schedule.
     assert_eq!(
-        check(
-            &c,
-            &req(2 * C),
-            TermSpent {
-                term_end: END - 15_768_000,
-                value: 9 * C
-            },
-            now
-        ),
-        Ok(())
+        check(&c, &req(1, C), &l, END - 8 * 86_400),
+        Err(TopUpRefuse::OutsideWindow)
     );
-    // Gas left after signing.
+    assert_eq!(
+        check(&c, &req(1, C), &l, END),
+        Err(TopUpRefuse::OutsideWindow)
+    ); // next term, far
+    assert!(check(&c, &req(1, C), &l, END + 15_768_000 - 86_400).is_ok()); // next term's window
+                                                                           // Gas: wallet must keep value + gas_limit x maxFee + reserve.
+    let need = 5 * C + 200_000 * 4 * GWEI + C / 100;
+    assert!(check(
+        &c,
+        &TopUpRequest {
+            stated_wallet: need,
+            ..req(1, 5 * C)
+        },
+        &l,
+        IN_WINDOW
+    )
+    .is_ok());
     assert_eq!(
         check(
             &c,
             &TopUpRequest {
-                stated_wallet: 5 * C,
-                ..req(5 * C)
+                stated_wallet: need - 1,
+                ..req(1, 5 * C)
             },
-            s,
-            now
+            &l,
+            IN_WINDOW
         ),
         Err(TopUpRefuse::GasReserve)
     );
-    // A zero-value same-nonce replacement is allowed (retires our pending top-up).
     assert_eq!(
         check(
             &c,
             &TopUpRequest {
-                replaces_nonce: Some(10),
-                stated_missing: 0,
-                ..req(0)
+                gas_limit: 300_001,
+                ..req(1, C)
             },
-            s,
-            now
+            &l,
+            IN_WINDOW
         ),
-        Ok(())
+        Err(TopUpRefuse::GasLimit)
+    );
+    assert_eq!(
+        check(
+            &c,
+            &TopUpRequest {
+                priority_fee_wei: 5 * GWEI,
+                ..req(1, C)
+            },
+            &l,
+            IN_WINDOW
+        ),
+        Err(TopUpRefuse::BadFees)
+    );
+}
+
+#[test]
+fn daily_and_term_caps_and_replacement() {
+    let c = cfg();
+    let r = |n, v| TopUpRequest {
+        stated_missing: 10 * C,
+        ..req(n, v)
+    };
+    let l1 = check(&c, &r(1, 4 * C), &fresh(), IN_WINDOW).unwrap();
+    let l2 = check(&c, &r(2, 4 * C), &l1, IN_WINDOW).unwrap();
+    // Third transaction the same UTC day: refused.
+    assert_eq!(
+        check(&c, &r(3, C), &l2, IN_WINDOW),
+        Err(TopUpRefuse::DailyCount)
+    );
+    // Daily value: 4 + 7 > 10.
+    assert_eq!(
+        check(&c, &r(2, 7 * C), &l1, IN_WINDOW),
+        Err(TopUpRefuse::DailyValue)
+    );
+    // Next day: count resets, the term budget (12) still holds: 8 + 5 > 12.
+    let next_day = IN_WINDOW + 86_400;
+    assert_eq!(
+        check(&c, &r(3, 5 * C), &l2, next_day),
+        Err(TopUpRefuse::AboveBudget)
+    );
+    assert!(check(&c, &r(3, 4 * C), &l2, next_day).is_ok());
+    // A same-nonce replacement books only the difference and does not count as a new one.
+    let rep = TopUpRequest {
+        replaces_nonce: Some(2),
+        ..r(2, C)
+    };
+    let l3 = check(&c, &rep, &l2, IN_WINDOW).unwrap();
+    assert_eq!(
+        (l3.day_count, l3.day_value, l3.term_value),
+        (2, 8 * C, 5 * C)
+    );
+    // Zero-value replacement (the web deposit already covered the gap) is allowed.
+    let zero = TopUpRequest {
+        replaces_nonce: Some(2),
+        stated_missing: 0,
+        ..req(2, 0)
+    };
+    assert_eq!(check(&c, &zero, &l2, IN_WINDOW).unwrap().term_value, 4 * C);
+    // A different top-up reusing one of our nonces, or replacing an unknown one: refused.
+    assert_eq!(
+        check(&c, &r(2, C), &l2, next_day),
+        Err(TopUpRefuse::ReplaceUnknown)
+    );
+    assert_eq!(
+        check(
+            &c,
+            &TopUpRequest {
+                replaces_nonce: Some(9),
+                ..r(9, C)
+            },
+            &l2,
+            IN_WINDOW
+        ),
+        Err(TopUpRefuse::ReplaceUnknown)
+    );
+}
+
+#[test]
+fn ledger_persists_across_restart() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("topup.json");
+    let key = EthKey::from_hex(&format!("0x{}", "22".repeat(32))).unwrap();
+    let c = cfg();
+    let mut l = TopUpLedger::open(&path).unwrap();
+    l.sign(&c, &key, &req(1, 2 * C), IN_WINDOW).unwrap();
+    l.sign(&c, &key, &req(2, 2 * C), IN_WINDOW).unwrap();
+    drop(l);
+    // Restarted: the day's two are remembered, a third is refused.
+    let mut l = TopUpLedger::open(&path).unwrap();
+    assert_eq!(l.state.day_count, 2);
+    assert_eq!(
+        l.sign(&c, &key, &req(3, C), IN_WINDOW),
+        Err(TopUpRefuse::DailyCount)
+    );
+    // A refused request leaves the ledger as it was.
+    assert_eq!(TopUpLedger::open(&path).unwrap().state.day_count, 2);
+}
+
+fn signer(dir: &tempfile::TempDir, topup: bool) -> Signer {
+    let g: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../conformance/vectors/golden.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let kek = [7u8; 32];
+    let secrets = keystore::Secrets {
+        wallet_hex: g["wallets"]["nodeA"]["privateKey"].as_str().unwrap().into(),
+        pgp_armored: g["keys"]["nodeA"]["armoredPrivate"]
+            .as_str()
+            .unwrap()
+            .into(),
+        pgp_pass: g["keys"]["nodeA"]["passphrase"].as_str().unwrap().into(),
+        previous_pgp_armored: String::new(),
+        previous_pgp_pass: String::new(),
+    };
+    Signer::start(SignerConfig {
+        keystore_file: keystore::seal(&kek, &secrets).unwrap(),
+        kek: Zeroizing::new(kek),
+        verifying_contract: REG.into(),
+        allow_bind: false,
+        allow_uid: None,
+        anchor_node_id: None,
+        quota: None,
+        topup: topup.then(|| (cfg(), dir.path().join("topup.json"))),
+    })
+    .unwrap()
+}
+
+fn wire(nonce: u64, value: &str, wallet: &str) -> Request {
+    Request::SignTopUp {
+        nonce,
+        gas_limit: 200_000,
+        max_fee_wei: (4 * GWEI).to_string(),
+        priority_fee_wei: (GWEI / 10).to_string(),
+        value: value.into(),
+        stated_missing: (5 * C).to_string(),
+        stated_wallet: wallet.into(),
+        replaces_nonce: None,
+    }
+}
+
+/// Through the signer service: a valid request returns the raw transaction the signer built
+/// (own node, registry, type 2); everything outside the entry is refused by name.
+#[test]
+fn signer_service_end_to_end() {
+    let d = tempfile::tempdir().unwrap();
+    let s = signer(&d, true);
+    let g: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../conformance/vectors/golden.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let key = EthKey::from_hex(g["wallets"]["nodeA"]["privateKey"].as_str().unwrap()).unwrap();
+    let Response::Ok { value: raw } = s.handle_at(
+        wire(7, &(5 * C).to_string(), &(100 * C).to_string()),
+        IN_WINDOW as i64,
+    ) else {
+        panic!("refused")
+    };
+    let expect = Tx1559 {
+        chain_id: 224422,
+        nonce: 7,
+        max_priority_fee_per_gas: GWEI / 10,
+        max_fee_per_gas: 4 * GWEI,
+        gas_limit: 200_000,
+        to: parse_address(REG).unwrap(),
+        value: 5 * C,
+        data: data(573),
+    }
+    .sign(&key)
+    .unwrap()
+    .0;
+    assert_eq!(raw, format!("0x{}", hex::encode(expect)));
+    let refused = |r: Response| match r {
+        Response::Refused { reason } => reason,
+        Response::Ok { .. } => panic!("signed"),
+    };
+    // Above the gap, outside the window, gas short, daily count, malformed amount.
+    assert_eq!(
+        refused(s.handle_at(
+            wire(8, &(6 * C).to_string(), &(100 * C).to_string()),
+            IN_WINDOW as i64
+        )),
+        "topup:AboveMissing"
+    );
+    assert_eq!(
+        refused(s.handle_at(
+            wire(8, &C.to_string(), &(100 * C).to_string()),
+            (END - 8 * 86_400) as i64
+        )),
+        "topup:OutsideWindow"
+    );
+    assert_eq!(
+        refused(s.handle_at(wire(8, &C.to_string(), &C.to_string()), IN_WINDOW as i64)),
+        "topup:GasReserve"
+    );
+    let _ = s.handle_at(
+        wire(8, &C.to_string(), &(100 * C).to_string()),
+        IN_WINDOW as i64,
+    );
+    assert_eq!(
+        refused(s.handle_at(
+            wire(9, &C.to_string(), &(100 * C).to_string()),
+            IN_WINDOW as i64
+        )),
+        "topup:DailyCount"
+    );
+    assert_eq!(
+        refused(s.handle_at(wire(9, "1e18", "1"), IN_WINDOW as i64)),
+        "topup_fields"
+    );
+    // Not configured: refused.
+    let d2 = tempfile::tempdir().unwrap();
+    assert_eq!(
+        refused(signer(&d2, false).handle_at(wire(1, "1", "1"), IN_WINDOW as i64)),
+        "topup_disabled"
     );
 }
 
 /// The probe wallet never signs a top-up, whatever channel it comes from.
 #[test]
 fn probe_wallet_refuses_topup() {
-    let k = si_crypto::eth::EthKey::from_hex(&format!("0x{}", "22".repeat(32))).unwrap();
+    let k = EthKey::from_hex(&format!("0x{}", "22".repeat(32))).unwrap();
     let r = ProbeRole {
         key: &k,
         domain: si_core::probe::ProbeDomain::new(REG).unwrap(),
@@ -200,4 +403,17 @@ fn probe_wallet_refuses_topup() {
         r.handle(Origin::LocalVoteGate, probe_role::Request::SignVoteTx(tx)),
         Err(Refuse::HasValue) | Err(Refuse::Selector(_))
     ));
+}
+
+#[test]
+fn example_config_parses() {
+    let s = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/topup.example.json"))
+        .unwrap();
+    let c: TopUpConfig = serde_json::from_str(&s).unwrap();
+    assert_eq!(c.window, 7 * 86_400);
+    assert_eq!(c.daily_count, 2);
+    assert!(serde_json::from_str::<TopUpConfig>(
+        &s.replace("\"window\"", "\"extra\": 1, \"window\"")
+    )
+    .is_err());
 }

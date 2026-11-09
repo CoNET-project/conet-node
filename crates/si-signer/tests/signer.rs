@@ -57,6 +57,7 @@ impl Env {
             allow_uid,
             anchor_node_id: None,
             quota: None,
+            topup: None,
         }
     }
     /// Start a signer on a fresh socket; returns the client.
@@ -425,6 +426,7 @@ async fn generated_keys_serve_and_match_registration_values() {
             allow_uid: None,
             anchor_node_id: None,
             quota: None,
+            topup: None,
         })
         .unwrap_or_else(|e| panic!("{}", e.0)),
     );
@@ -475,6 +477,7 @@ async fn route_key_rotation_keeps_the_old_key_until_retired() {
                 allow_uid: None,
                 anchor_node_id: None,
                 quota: None,
+                topup: None,
             })
             .unwrap_or_else(|e| panic!("{}", e.0)),
         );

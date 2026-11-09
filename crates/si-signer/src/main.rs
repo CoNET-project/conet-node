@@ -9,6 +9,8 @@
 //! serve: open the keystore and answer the network process on a Unix socket.
 //!        `--quota-state <file>` (required with `--anchor-node-id`) keeps the daily quota ledger;
 //!        `--quota-config <json>` overrides the defaults (see quota.example.json).
+//!        `--topup-config <json>` with `--topup-state <file>` enables the approved main-wallet
+//!        topUp entry for AUTO-TOPUP (see topup.example.json); both or neither.
 //! The KEK comes from systemd-creds (`$CREDENTIALS_DIRECTORY/conet-node-kek`); `--insecure-kek-file`
 //! exists for tests and local networks only.
 use si_signer::{kek, keystore, server};
@@ -122,6 +124,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         };
                         Some((qc, PathBuf::from(state)))
                     }
+                },
+                // AUTO-TOPUP entry (approved 2026-11-09): both flags or neither.
+                topup: match (arg("--topup-config"), arg("--topup-state")) {
+                    (None, None) => None,
+                    (Some(c), Some(st)) => Some((
+                        serde_json::from_str(&std::fs::read_to_string(c)?)?,
+                        PathBuf::from(st),
+                    )),
+                    _ => return Err("--topup-config and --topup-state go together".into()),
                 },
             };
             let signer = Arc::new(server::Signer::start(cfg).map_err(|e| e.0)?);

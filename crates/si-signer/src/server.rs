@@ -1,6 +1,7 @@
 //! Signer service: policy checks, then the operation. Logs never contain payloads.
 use crate::proto::{self, Request, Response};
 use crate::quota::{Intent, Quota, QuotaConfig, A_ANCHOR_RECEIPT};
+use crate::topup_policy::{TopUpConfig, TopUpLedger, TopUpRequest};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use si_core::statement::{AnchorReceipt, BindNode, Domain};
 use si_crypto::{eip712 as e7, eth, opgp};
@@ -26,6 +27,8 @@ pub struct Signer {
     pub anchor_node_id: Option<String>,
     /// Quota ledger (§31); required when anchor receipts are enabled.
     quota: Option<Mutex<Quota>>,
+    /// AUTO-TOPUP entry (approved 2026-11-09): config and its ledger; None = refused.
+    topup: Option<(TopUpConfig, Mutex<TopUpLedger>)>,
 }
 
 /// Contract ceiling for an online window (`ONLINE_TTL_CEIL`, 7 days): a receipt never covers more.
@@ -42,6 +45,8 @@ pub struct SignerConfig {
     /// `--quota-state <file>` (and optional `--quota-config <json>`): the quota ledger.
     /// Required with `--anchor-node-id` (anchor receipts are capped per day, H8-7).
     pub quota: Option<(QuotaConfig, std::path::PathBuf)>,
+    /// `--topup-config <json>` and `--topup-state <file>`: the approved main-wallet topUp entry.
+    pub topup: Option<(TopUpConfig, std::path::PathBuf)>,
 }
 
 #[derive(Debug)]
@@ -98,6 +103,18 @@ impl Signer {
                 Some(Mutex::new(q))
             }
         };
+        let topup = match cfg.topup {
+            None => None,
+            Some((tc, path)) => {
+                if !tc.registry.eq_ignore_ascii_case(&cfg.verifying_contract) {
+                    return Err(StartError(
+                        "topup registry differs from --verifying-contract".into(),
+                    ));
+                }
+                let l = TopUpLedger::open(path).map_err(StartError)?;
+                Some((tc, Mutex::new(l)))
+            }
+        };
         Ok(Self {
             wallet,
             route,
@@ -108,6 +125,7 @@ impl Signer {
             allow_uid: cfg.allow_uid,
             anchor_node_id: cfg.anchor_node_id,
             quota,
+            topup,
         })
     }
 
@@ -353,6 +371,50 @@ impl Signer {
                     .sign_digest(&r.digest(&self.domain))
                     .map(ok)
                     .unwrap_or_else(|_| refused("sign"))
+            }
+            Request::SignTopUp {
+                nonce,
+                gas_limit,
+                max_fee_wei,
+                priority_fee_wei,
+                value,
+                stated_missing,
+                stated_wallet,
+                replaces_nonce,
+            } => {
+                let Some((tc, ledger)) = &self.topup else {
+                    return refused("topup_disabled");
+                };
+                let p = |s: &str| s.parse::<u128>().ok();
+                let (Some(max_fee_wei), Some(priority_fee_wei), Some(value), Some(sm), Some(sw)) = (
+                    p(&max_fee_wei),
+                    p(&priority_fee_wei),
+                    p(&value),
+                    p(&stated_missing),
+                    p(&stated_wallet),
+                ) else {
+                    return refused("topup_fields");
+                };
+                let req = TopUpRequest {
+                    nonce,
+                    gas_limit,
+                    max_fee_wei,
+                    priority_fee_wei,
+                    value,
+                    stated_missing: sm,
+                    stated_wallet: sw,
+                    replaces_nonce,
+                };
+                let Ok(mut l) = ledger.lock() else {
+                    return refused("topup_state_broken");
+                };
+                match l.sign(tc, &self.wallet, &req, clock.max(0) as u64) {
+                    Ok((raw, _hash)) => ok(format!("0x{}", hex::encode(raw))),
+                    Err(e) => {
+                        warn!(refusal = %e, "topup refused");
+                        refused(&e.to_string())
+                    }
+                }
             }
         }
     }

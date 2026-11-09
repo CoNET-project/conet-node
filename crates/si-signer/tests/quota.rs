@@ -868,6 +868,7 @@ mod anchor {
             allow_uid: None,
             anchor_node_id: Some("5".into()),
             quota: quota.then(|| (QuotaConfig::default(), dir.path().join("quota.json"))),
+            topup: None,
         }
     }
 

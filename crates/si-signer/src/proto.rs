@@ -90,6 +90,28 @@ pub enum Request {
         #[serde(rename = "onlineUntil")]
         online_until: u64,
     },
+    /// AUTO-TOPUP (approved 2026-11-09): the main wallet's `topUp(own nodeId)` as a signed type-2
+    /// transaction. The signer builds `to` and `data` itself; refused unless it runs with
+    /// `--topup-config` and `--topup-state`. Amounts in wei as decimal strings. Returns the raw
+    /// transaction (hex).
+    SignTopUp {
+        nonce: u64,
+        #[serde(rename = "gasLimit")]
+        gas_limit: u64,
+        #[serde(rename = "maxFeePerGas")]
+        max_fee_wei: String,
+        #[serde(rename = "maxPriorityFeePerGas")]
+        priority_fee_wei: String,
+        value: String,
+        /// `minStakeAt(termEnd) - stakeOf(nodeId)` as conet-node read it.
+        #[serde(rename = "statedMissing")]
+        stated_missing: String,
+        /// Wallet balance as conet-node read it.
+        #[serde(rename = "statedWallet")]
+        stated_wallet: String,
+        #[serde(rename = "replacesNonce", default)]
+        replaces_nonce: Option<u64>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]

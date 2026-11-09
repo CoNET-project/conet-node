@@ -16,6 +16,7 @@ pub mod proto;
 pub mod quota;
 pub mod server;
 pub mod topup_policy;
+pub mod tx1559;
 
 /// Derive a purpose key from the KEK (HMAC-SHA256(KEK, label)).
 pub fn subkey(kek: &[u8; 32], label: &str) -> [u8; 32] {

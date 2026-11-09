@@ -1,0 +1,14 @@
+{
+  "registry": "0x00000000000000000000000000000000c0de0001",
+  "chain_id": 224422,
+  "own_node_id": 573,
+  "per_tx_cap": "10000000000000000000",
+  "term_budget": "20000000000000000000",
+  "daily_count": 2,
+  "daily_value": "10000000000000000000",
+  "first_term_end": 1900000000,
+  "term_length": 15768000,
+  "window": 604800,
+  "gas_reserve": "10000000000000000",
+  "max_gas_limit": 300000
+}
