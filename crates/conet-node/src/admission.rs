@@ -70,9 +70,9 @@ pub enum Observed {
     /// From the voter's own WebRTC stack (getStats selected candidate pair + remote
     /// certificate): never from the candidate's SDP or signaling.
     WebRtc {
-        /// Path identifier from the voter's own stats: ICE local ufrag (changes on ICE restart)
-        /// + selected-pair change count + candidate pair id. The pair id alone can survive an
-        /// ICE restart when addresses stay the same.
+        /// Path identifier from the voter's own stats: the ICE local ufrag (changes on ICE
+        /// restart), the selected-pair change count and the candidate pair id. The pair id alone
+        /// can survive an ICE restart when addresses stay the same.
         pair_id: String,
         remote_ip: String,
         remote_port: u16,

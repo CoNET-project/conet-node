@@ -21,6 +21,7 @@ pub mod server;
 pub mod store;
 pub mod tls;
 pub mod voice;
+pub mod vote_book;
 pub mod vote_gate;
 pub mod vote_price;
 pub mod watcher;
