@@ -85,9 +85,9 @@ pub struct ReportView {
     /// Penalty RATIO of this case in BPS, fixed when it opened (`Report.fine`); each voter's
     /// amount is this ratio times its own term amount.
     pub ratio_bps: u128,
-    /// Eligible nodes when the report opened (turnout denominator, project decision 2026-11-09);
-    /// None until the node line's read exists.
-    pub eligible_snapshot: Option<u32>,
+    /// `Report.population`: nodes registered (not withdrawn) when the report opened, the majority
+    /// base. The reported node is in it (`subject` = 1).
+    pub population: Option<u32>,
 }
 
 impl ReportView {
@@ -243,7 +243,7 @@ pub fn pick(v: &VoterView, reports: &[ReportView], my_choices: &[u8], now: u64) 
 // ---- chain reads ----
 
 /// Words in `getNodeRaw`'s `Node` struct (all static members; `uint32[3] anchors` takes three).
-/// Pinned to the node line's contract source set `a1a13d46` (v0.4.2; abi/README.md): 41 members,
+/// Pinned to the node line's contract source set `df24b755` (after v0.4.2; abi/README.md): 41 members,
 /// the stake-term fields and `offlineSince` appended at the end (earlier word positions unchanged).
 pub const NODE_RAW_WORDS: usize = 43;
 /// `offlineSince`: chain moment the node's current offline state took effect (recovery cooldown
@@ -407,7 +407,7 @@ impl VoteReader {
             margin: r.margin,
             state: r.state,
             ratio_bps: r.fine,
-            eligible_snapshot: None, // pending the node line's read
+            population: Some(r.population),
         })
     }
 
@@ -444,14 +444,19 @@ impl VoteReader {
 /// Would this vote (`agree`) decide the report at `now`: its side reaches the margin, the
 /// observation time (`minOpen`, 600 s) has passed and voting has not ended (`expiresAt`, opening +
 /// 7,200 s). Both times come from the chain's report record, so the gate follows the contract.
-pub fn would_decide_report(r: &ReportView, agree: bool, now: u64) -> bool {
-    let (mine, other) = if agree {
+pub fn would_decide_report(
+    r: &ReportView,
+    agree: bool,
+    now: u64,
+    rule: &crate::online_gate::MajorityRule,
+) -> bool {
+    let (a, d) = if agree {
         (r.agree + 1, r.disagree)
     } else {
-        (r.disagree + 1, r.agree)
+        (r.agree, r.disagree + 1)
     };
-    let early =
-        crate::online_gate::turnout_over_half(r.agree + r.disagree + 1, r.eligible_snapshot);
+    let (mine, other) = if agree { (a, d) } else { (d, a) };
+    let early = crate::online_gate::majority_early(a, d, r.population, 1, rule);
     r.state == REPORT_OPEN
         && mine >= other + r.margin as u32
         && (now >= r.decidable_at() || early)
@@ -477,7 +482,7 @@ pub fn report_vote_timing(r: &ReportView, now: u64) -> crate::online_gate::VoteT
 pub fn report_seal_ready(r: &ReportView, now: u64, s: &crate::online_gate::SealStrategy) -> bool {
     let met = r.agree >= r.disagree + r.margin as u32 || r.disagree >= r.agree + r.margin as u32;
     let time_or_turnout = now >= r.decidable_at()
-        || crate::online_gate::turnout_over_half(r.agree + r.disagree, r.eligible_snapshot);
+        || crate::online_gate::majority_early(r.agree, r.disagree, r.population, 1, &s.majority);
     r.state == REPORT_OPEN && met && time_or_turnout && (s.seal_after_window || now < r.expires_at)
 }
 

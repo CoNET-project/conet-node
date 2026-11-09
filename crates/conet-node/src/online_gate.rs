@@ -249,9 +249,13 @@ pub struct Tally {
     pub agree: u32,
     pub disagree: u32,
     pub margin: u32,
-    /// Eligible nodes when the case opened (the turnout denominator; project decision 2026-11-09).
-    /// None until the node line's read exists: then only the 600 s rule applies.
-    pub eligible_snapshot: Option<u32>,
+    /// `population`: nodes registered (not withdrawn) when the case opened, the majority base the
+    /// contract stores per case (`s.listed.length` snapshot). Not "eligible" nodes. None = not read
+    /// (then only the 600 s rule applies).
+    pub population: Option<u32>,
+    /// The case's own node in that base: 0 for a first admission, 1 for a recovery (the contract's
+    /// `subject`). Only matters with `MajorityRule::exclude_subject`.
+    pub subject: u32,
 }
 
 /// Participating nodes: agree + disagree. The contract takes one vote per node (a second one
@@ -268,10 +272,48 @@ pub fn count_participants(voters: &[u64]) -> u32 {
         .len() as u32
 }
 
-/// More than half participated: participants x 2 > eligible snapshot (exactly half is not enough).
-/// Turnout never replaces the margin.
-pub fn turnout_over_half(participants: u32, eligible_snapshot: Option<u32>) -> bool {
-    eligible_snapshot.is_some_and(|e| (participants as u64) * 2 > e as u64)
+/// The contract's pending switches for the early (before 600 s) majority seal, mirrored here (all
+/// off by default, as in the contract; the node reads them once exposed).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MajorityRule {
+    /// `mjExcludeSubject` (pending project decision): take the case's own node out of the base.
+    pub exclude_subject: bool,
+    /// `mjMinBase` (pending, N6): no early seal below this base; 0 = off.
+    pub min_base: u32,
+    /// `mjIrreversible` (pending, N6): early only if the remaining voters cannot turn the lead.
+    pub irreversible: bool,
+}
+
+/// The contract's `majorityEarly`: more than half of the base voted (exactly half is not enough),
+/// with the pending switches. Turnout never replaces the margin (checked separately).
+pub fn majority_early(
+    agree: u32,
+    disagree: u32,
+    population: Option<u32>,
+    subject: u32,
+    rule: &MajorityRule,
+) -> bool {
+    let Some(mut base) = population.map(u64::from) else {
+        return false;
+    };
+    if rule.exclude_subject && base >= subject as u64 {
+        base -= subject as u64;
+    }
+    if rule.min_base != 0 && base < rule.min_base as u64 {
+        return false;
+    }
+    let voted = agree as u64 + disagree as u64;
+    if voted * 2 <= base {
+        return false;
+    }
+    if rule.irreversible {
+        let diff = (agree as u64).abs_diff(disagree as u64);
+        let left = base.saturating_sub(voted);
+        if diff <= left {
+            return false;
+        }
+    }
+    true
 }
 
 /// Voting still open at `now` (before opening + 7,200 s).
@@ -280,16 +322,17 @@ pub fn voting_open(t: &Tally, now: u64) -> bool {
 }
 
 /// Would this node's vote (`agree`) be the deciding one at `now`: with it, its side reaches the
-/// margin and either 600 s have passed or more than half of the eligible nodes have now voted
-/// (early seal, admission / recovery / report only), and voting has not ended. Then the same
-/// transaction is expected to seal.
-pub fn would_decide(t: &Tally, agree: bool, now: u64) -> bool {
-    let (mine, other) = if agree {
+/// margin and either 600 s have passed or more than half of the base has now voted (early seal,
+/// admission / recovery / report only), and voting has not ended. Then the same transaction is
+/// expected to seal.
+pub fn would_decide(t: &Tally, agree: bool, now: u64, rule: &MajorityRule) -> bool {
+    let (a, d) = if agree {
         (t.agree + 1, t.disagree)
     } else {
-        (t.disagree + 1, t.agree)
+        (t.agree, t.disagree + 1)
     };
-    let early = turnout_over_half(participants(t.agree, t.disagree) + 1, t.eligible_snapshot);
+    let (mine, other) = if agree { (a, d) } else { (d, a) };
+    let early = majority_early(a, d, t.population, t.subject, rule);
     mine >= other + t.margin && (now >= t.opened_at + MIN_OPEN || early) && voting_open(t, now)
 }
 
@@ -328,6 +371,8 @@ pub struct SealStrategy {
     /// frozen; anyone may call the unified entry: frozen votes meeting the margin seal (executor
     /// reward paid), otherwise the same entry closes the case as void. Default on.
     pub seal_after_window: bool,
+    /// The contract's pending early-majority switches (mirrored; default all off).
+    pub majority: MajorityRule,
     /// Strategy choice: do not seal a case this node proposed. Default true.
     pub skip_own_proposal: bool,
     /// Strategy choice: after a lost race (someone else sealed first), do not retry. Default true.
@@ -345,6 +390,7 @@ impl Default for SealStrategy {
         Self {
             enabled: false,
             seal_after_window: true,
+            majority: MajorityRule::default(),
             skip_own_proposal: true,
             no_retry_after_race_loss: true,
             online_reward: EXECUTOR_REWARD,
@@ -362,7 +408,7 @@ pub fn threshold_met(t: &Tally) -> bool {
 /// more than half of the eligible nodes voted; after 7,200 s (frozen votes) only with late sealing.
 pub fn seal_ready(t: &Tally, now: u64, s: &SealStrategy) -> bool {
     let time_or_turnout = now >= t.opened_at + MIN_OPEN
-        || turnout_over_half(participants(t.agree, t.disagree), t.eligible_snapshot);
+        || majority_early(t.agree, t.disagree, t.population, t.subject, &s.majority);
     threshold_met(t) && time_or_turnout && (s.seal_after_window || voting_open(t, now))
 }
 

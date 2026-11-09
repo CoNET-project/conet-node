@@ -768,6 +768,11 @@
       "type": "address"
      },
      {
+      "internalType": "uint32",
+      "name": "population",
+      "type": "uint32"
+     },
+     {
       "internalType": "uint128",
       "name": "reporterPaid",
       "type": "uint128"
@@ -1671,6 +1676,21 @@
       "internalType": "uint16",
       "name": "ovMaxPaidVoters",
       "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mjIrreversible",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "mjMinBase",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mjExcludeSubject",
+      "type": "uint8"
      }
     ],
     "internalType": "struct Params",
@@ -4920,6 +4940,19 @@
     "internalType": "bytes32",
     "name": "id",
     "type": "bytes32"
+   }
+  ],
+  "name": "OnlineCaseLapsed",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "bytes32",
+    "name": "id",
+    "type": "bytes32"
    },
    {
     "indexed": false,
@@ -5665,6 +5698,11 @@
       "internalType": "uint64",
       "name": "voteExpiresAt",
       "type": "uint64"
+     },
+     {
+      "internalType": "uint32",
+      "name": "population",
+      "type": "uint32"
      }
     ],
     "internalType": "struct Admission",
@@ -5781,6 +5819,11 @@
       "internalType": "uint64",
       "name": "proposerId",
       "type": "uint64"
+     },
+     {
+      "internalType": "uint32",
+      "name": "population",
+      "type": "uint32"
      }
     ],
     "internalType": "struct Recovery",

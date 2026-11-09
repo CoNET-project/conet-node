@@ -48,7 +48,7 @@ fn seal_window_matches_all_three_finalize_entries() {
                     margin: n(&c["margin"]) as u16,
                     state: REPORT_OPEN,
                     ratio_bps: 2_000,
-                    eligible_snapshot: None,
+                    population: None,
                 };
                 report_seal_ready(&r, now, &st)
             }
@@ -58,7 +58,8 @@ fn seal_window_matches_all_three_finalize_entries() {
                     agree: n(&c["agree"]) as u32,
                     disagree: n(&c["disagree"]) as u32,
                     margin: n(&c["margin"]) as u32,
-                    eligible_snapshot: None,
+                    population: None,
+                    subject: 0,
                 };
                 seal_ready(&t, now, &st)
             }

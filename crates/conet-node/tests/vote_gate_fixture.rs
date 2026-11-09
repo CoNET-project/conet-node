@@ -35,7 +35,7 @@ fn report(r: &Value) -> ReportView {
         margin: n(&r["margin"]) as u16,
         state: n(&r["state"]) as u8,
         ratio_bps: n(&r["fine"]),
-        eligible_snapshot: None,
+        population: None,
     }
 }
 

@@ -30,7 +30,7 @@ fn report(rid: u64, target: u64) -> ReportView {
         margin: 20,
         state: REPORT_OPEN,
         ratio_bps: NEW_REPORT_RATIO_BPS,
-        eligible_snapshot: None,
+        population: None,
     }
 }
 
@@ -361,10 +361,30 @@ fn report_window_600_to_7200() {
         disagree: 0,
         ..report(1, 50)
     };
-    assert!(!would_decide_report(&r, true, t0 + 599));
-    assert!(would_decide_report(&r, true, t0 + 600));
-    assert!(would_decide_report(&r, true, t0 + 7_199));
-    assert!(!would_decide_report(&r, true, t0 + 7_200));
+    assert!(!would_decide_report(
+        &r,
+        true,
+        t0 + 599,
+        &conet_node::online_gate::MajorityRule::default()
+    ));
+    assert!(would_decide_report(
+        &r,
+        true,
+        t0 + 600,
+        &conet_node::online_gate::MajorityRule::default()
+    ));
+    assert!(would_decide_report(
+        &r,
+        true,
+        t0 + 7_199,
+        &conet_node::online_gate::MajorityRule::default()
+    ));
+    assert!(!would_decide_report(
+        &r,
+        true,
+        t0 + 7_200,
+        &conet_node::online_gate::MajorityRule::default()
+    ));
     // Votes go out at once while open (no holding); none after the end; sealable from 600 s.
     assert_eq!(report_vote_timing(&r, t0 + 100), VoteTiming::Now);
     assert_eq!(report_vote_timing(&r, t0 + 7_200), VoteTiming::Closed);
@@ -383,8 +403,18 @@ fn report_window_600_to_7200() {
         disagree: 20,
         ..r.clone()
     };
-    assert!(!would_decide_report(&d, false, t0 + 599));
-    assert!(would_decide_report(&d, false, t0 + 600));
+    assert!(!would_decide_report(
+        &d,
+        false,
+        t0 + 599,
+        &conet_node::online_gate::MajorityRule::default()
+    ));
+    assert!(would_decide_report(
+        &d,
+        false,
+        t0 + 600,
+        &conet_node::online_gate::MajorityRule::default()
+    ));
     // Not at the margin: vote at once; the case is also not open after expiry for can_vote.
     let few = ReportView {
         agree: 3,
@@ -415,7 +445,7 @@ fn report_turnout_and_late_seal() {
         expires_at: t0 + 7_200,
         agree: 21,
         disagree: 0,
-        eligible_snapshot: Some(40),
+        population: Some(40),
         ..report(1, 50)
     };
     assert!(report_seal_ready(&r, t0 + 60, &st)); // 21 of 40 > half, margin met
@@ -424,7 +454,12 @@ fn report_turnout_and_late_seal() {
         ..r.clone()
     };
     assert!(!report_seal_ready(&half, t0 + 60, &st)); // exactly half
-    assert!(would_decide_report(&half, true, t0 + 60)); // the 21st vote decides
+    assert!(would_decide_report(
+        &half,
+        true,
+        t0 + 60,
+        &conet_node::online_gate::MajorityRule::default()
+    )); // the 21st vote decides
     let short = ReportView {
         agree: 15,
         disagree: 10,

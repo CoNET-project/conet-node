@@ -2,9 +2,10 @@
 
 Compiled from the node line's NodeRegistryV2 sources (not yet committed upstream), in a scratch
 copy so the node line's tree is not touched, with its `hardhat.node-registry.config.ts` (solc
-0.8.35, cancun). Refreshed 2026-11-09 to the node line's v0.4.2 snapshot (unified seal entries,
-600 s / 7,200 s window, dueBreakdown, offlineSince). Source fingerprint with the node line's
-algorithm (`shasum -a 256 *.sol | sort -k2 | shasum -a 256`, first 16 hex): `a1a13d465f4380fc`.
+0.8.35, cancun). Refreshed 2026-11-09 to the node line's tree after v0.4.2 (per-case `population`
+and the early-majority seal switches on top of v0.4.2's seal entries, window, dueBreakdown,
+offlineSince). Source fingerprint with the node line's algorithm (`shasum -a 256 *.sol | sort -k2 |
+shasum -a 256`, first 16 hex): `df24b75518707ee7` (v0.4.2 was `a1a13d465f4380fc`).
 Earlier pins used another algorithm (sha256 of all `.sol` concatenated in sorted path order:
 `a18191abf5c80d05`, `12123775fbd4e434`). Refresh: `tools/abi-refresh.py
 <copy>/artifacts/node-registry/src/b-unit/node-registry-v2`.

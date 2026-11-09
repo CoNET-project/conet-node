@@ -187,20 +187,27 @@ fn online_vote_window_600_to_7200() {
         agree: 19,
         disagree: 0,
         margin: 20,
-        eligible_snapshot: None,
+        population: None,
+        subject: 0,
     };
     let no19 = Tally {
         opened_at: t0,
         agree: 1,
         disagree: 20,
         margin: 20,
-        eligible_snapshot: None,
+        population: None,
+        subject: 0,
     };
     for (t, side) in [(yes19, true), (no19, false)] {
-        assert!(!would_decide(&t, side, t0 + 599));
-        assert!(would_decide(&t, side, t0 + 600));
-        assert!(would_decide(&t, side, t0 + 7_199));
-        assert!(!would_decide(&t, side, t0 + 7_200)); // voting ended
+        assert!(!would_decide(&t, side, t0 + 599, &MajorityRule::default()));
+        assert!(would_decide(&t, side, t0 + 600, &MajorityRule::default()));
+        assert!(would_decide(&t, side, t0 + 7_199, &MajorityRule::default()));
+        assert!(!would_decide(
+            &t,
+            side,
+            t0 + 7_200,
+            &MajorityRule::default()
+        )); // voting ended
         assert_eq!(decidable_from(&t, side), t0 + 600);
     }
     assert!(voting_open(&yes19, t0 + 7_199));
@@ -209,7 +216,8 @@ fn online_vote_window_600_to_7200() {
     assert!(!would_decide(
         &Tally { agree: 10, ..yes19 },
         true,
-        t0 + 3_600
+        t0 + 3_600,
+        &MajorityRule::default()
     ));
 }
 
@@ -292,7 +300,8 @@ fn vote_at_once_and_optional_seal_strategy() {
         agree: 19,
         disagree: 0,
         margin: 20,
-        eligible_snapshot: None,
+        population: None,
+        subject: 0,
     };
     assert_eq!(vote_timing(&yes19, true, t0 + 120), VoteTiming::Now);
     assert_eq!(vote_timing(&yes19, true, t0 + 7_199), VoteTiming::Now);
@@ -316,7 +325,8 @@ fn vote_at_once_and_optional_seal_strategy() {
         agree: 1,
         disagree: 21,
         margin: 20,
-        eligible_snapshot: None,
+        population: None,
+        subject: 0,
     };
     assert!(seal_ready(&no20, t0 + 600, &st));
     // Seal strategy: default off; proposer skip and no-retry are strategy choices (switchable).
@@ -437,7 +447,8 @@ fn turnout_over_half_allows_early_seal() {
         agree: 21,
         disagree: 0,
         margin: 20,
-        eligible_snapshot: Some(40),
+        population: Some(40),
+        subject: 0,
     };
     assert!(seal_ready(&over, t0 + 60, &st));
     // Exactly half (20 of 40) with the margin met: not early.
@@ -450,26 +461,38 @@ fn turnout_over_half_allows_early_seal() {
         disagree: 10,
         ..over
     };
-    assert!(turnout_over_half(participants(15, 10), Some(40)));
+    assert!(majority_early(
+        15,
+        10,
+        Some(40),
+        0,
+        &MajorityRule::default()
+    ));
     assert!(!seal_ready(&short, t0 + 60, &st));
     assert!(!seal_ready(&short, t0 + 3_600, &st));
     // 599 / 600 without turnout data (denominator pending): only the 600 s rule.
     let unknown = Tally {
-        eligible_snapshot: None,
+        population: None,
         ..over
     };
     assert!(!seal_ready(&unknown, t0 + 599, &st));
     assert!(seal_ready(&unknown, t0 + 600, &st));
     // The vote that makes it over half and meets the margin decides in the same transaction.
     let before = Tally { agree: 20, ..over };
-    assert!(would_decide(&before, true, t0 + 60));
+    assert!(would_decide(
+        &before,
+        true,
+        t0 + 60,
+        &MajorityRule::default()
+    ));
     assert!(!would_decide(
         &Tally {
-            eligible_snapshot: Some(42),
+            population: Some(42),
             ..before
         },
         true,
-        t0 + 60
+        t0 + 60,
+        &MajorityRule::default()
     )); // 21 of 42 = half
         // Repeated votes of the same node count once.
     assert_eq!(count_participants(&[7, 8, 7, 9, 8]), 3);
@@ -492,7 +515,8 @@ fn after_the_window_seal_or_void_close() {
         agree: 20,
         disagree: 0,
         margin: 20,
-        eligible_snapshot: None,
+        population: None,
+        subject: 0,
     };
     let not_met = Tally {
         agree: 12,
@@ -506,4 +530,61 @@ fn after_the_window_seal_or_void_close() {
     assert_eq!(vote_timing(&met, true, t0 + 7_200), VoteTiming::Closed);
     assert!(seal_ready(&met, t0 + 9_000, &SealStrategy::default()));
     assert!(!seal_ready(&not_met, t0 + 9_000, &SealStrategy::default()));
+}
+
+/// The contract's pending early-majority switches, mirrored (all off by default, as on chain):
+/// base = population (minus the case's own node if `exclude_subject`); `min_base`; `irreversible`.
+#[test]
+fn majority_rule_switches_mirror_the_contract() {
+    let off = MajorityRule::default();
+    // Over half vs exactly half; no population read means never early.
+    assert!(majority_early(21, 0, Some(41), 1, &off)); // 42 > 41
+    assert!(!majority_early(20, 0, Some(40), 1, &off)); // 40 = 40
+    assert!(!majority_early(21, 0, None, 1, &off));
+    // exclude_subject: base 42 -> 41 for a recovery / report (subject 1), not for an admission.
+    let ex = MajorityRule {
+        exclude_subject: true,
+        ..off
+    };
+    assert!(!majority_early(21, 0, Some(42), 1, &off)); // 42 = 42
+    assert!(majority_early(21, 0, Some(42), 1, &ex)); // 42 > 41
+    assert!(!majority_early(21, 0, Some(42), 0, &ex)); // admission: subject 0, base stays 42
+                                                       // min_base: a tiny base cannot seal early.
+    assert!(majority_early(6, 0, Some(10), 0, &off));
+    assert!(!majority_early(
+        6,
+        0,
+        Some(10),
+        0,
+        &MajorityRule {
+            min_base: 20,
+            ..off
+        }
+    ));
+    // irreversible: early only if the lead exceeds the votes still outstanding.
+    let irr = MajorityRule {
+        irreversible: true,
+        ..off
+    };
+    assert!(majority_early(11, 10, Some(40), 0, &off));
+    assert!(!majority_early(11, 10, Some(40), 0, &irr)); // lead 1 <= 19 left
+    assert!(majority_early(21, 0, Some(40), 0, &irr)); // lead 21 > 19 left
+                                                       // The switches flow through seal_ready via SealStrategy.majority.
+    let t = Tally {
+        opened_at: 0,
+        agree: 21,
+        disagree: 0,
+        margin: 20,
+        population: Some(42),
+        subject: 1,
+    };
+    assert!(!seal_ready(&t, 60, &SealStrategy::default()));
+    assert!(seal_ready(
+        &t,
+        60,
+        &SealStrategy {
+            majority: ex,
+            ..SealStrategy::default()
+        }
+    ));
 }
