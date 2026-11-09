@@ -105,8 +105,8 @@ ABIs live in `crates/conet-node/abi/` (compiled from the node line's sources; se
   The ledger also has entries for the registry-wallet transactions (6,000,000 gas floor for
   `voteReport` / `finalizeReport`, daily spend for upkeep and anchor calls, in-flight lanes;
   `voteReport` and `reportOffline` have no daily count and no spend cap, operator and user
-  decisions 2026-11-08; votes also ignore the fixed maxFee cap and follow `vote_fee`: uncapped or
-  base-fee multiple, type 2 only, tip capped, pending user confirmation), but the signer has no
+  decisions 2026-11-08; votes are never refused for their price either: type 2 only, a tip above
+  `vote_fee.priority_cap_wei` is lowered to the cap; values pending user confirmation), but the signer has no
   transaction role yet. All defaults are proposals pending user approval.
 - **Registration data**: `conet-register` prints typed data, digests and calldata for
   `registerFor`, `registerReserved` and `setEgressPolicy`. It never sends a transaction.
