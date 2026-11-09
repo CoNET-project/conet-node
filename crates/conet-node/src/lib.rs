@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod acme_dns;
+pub mod admission;
 pub mod chain;
 pub mod commands;
 pub mod deliver;
