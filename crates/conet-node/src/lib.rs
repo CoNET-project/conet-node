@@ -18,6 +18,7 @@ pub mod recovery;
 pub mod register;
 pub mod route;
 pub mod server;
+pub mod stake_term;
 pub mod store;
 pub mod tls;
 pub mod voice;
