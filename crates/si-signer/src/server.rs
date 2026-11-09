@@ -112,6 +112,11 @@ impl Signer {
                         "topup registry differs from --verifying-contract".into(),
                     ));
                 }
+                // N6 fifth review: a maxFee cap below the tip cap is a broken configuration
+                // (every request at the tip cap would fail BadFees); refuse to start.
+                if tc.max_fee_cap < tc.tip_cap {
+                    return Err(StartError("topup max_fee_cap is below tip_cap".into()));
+                }
                 let l = TopUpLedger::open(path).map(Mutex::new).map_err(|e| {
                     warn!(refusal = %e, "topup ledger unusable: topUp refused until the operator recreates it");
                     e.to_string()

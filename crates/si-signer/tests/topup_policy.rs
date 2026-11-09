@@ -494,3 +494,40 @@ fn fee_caps_are_absolute() {
     };
     assert_eq!(check(&c, &bump, &l1, IN_WINDOW), Err(TopUpRefuse::FeeCap));
 }
+
+/// N6 fifth review: the signer refuses to start when the maxFee cap is below the tip cap.
+#[test]
+fn start_refused_when_max_fee_cap_below_tip_cap() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("topup.json");
+    TopUpLedger::create(&p).unwrap();
+    let kek = [7u8; 32];
+    let (secrets, _) = golden_key();
+    let start = |c: TopUpConfig| {
+        Signer::start(SignerConfig {
+            keystore_file: keystore::seal(&kek, &secrets).unwrap(),
+            kek: Zeroizing::new(kek),
+            verifying_contract: REG.into(),
+            allow_bind: false,
+            allow_uid: None,
+            anchor_node_id: None,
+            quota: None,
+            topup: Some((c, p.clone())),
+        })
+    };
+    let bad = TopUpConfig {
+        max_fee_cap: 1_000,
+        tip_cap: 1_001,
+        ..cfg()
+    };
+    match start(bad) {
+        Err(e) => assert!(e.0.contains("max_fee_cap is below tip_cap"), "{}", e.0),
+        Ok(_) => panic!("started with max_fee_cap < tip_cap"),
+    }
+    assert!(start(TopUpConfig {
+        max_fee_cap: 1_000,
+        tip_cap: 1_000,
+        ..cfg()
+    })
+    .is_ok());
+}
