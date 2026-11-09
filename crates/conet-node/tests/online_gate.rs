@@ -299,3 +299,45 @@ fn finalize_own_decided_rejection_early() {
     };
     assert!(!should_finalize_own_rejection(true, &open, t0 + 50_000)); // not decided
 }
+
+/// First admission rejected: the same applicant waits 12 hours from the seal; changing the
+/// endpoint or the proposer does not help (they are not part of the applicant key).
+#[test]
+fn admission_reapply_after_rejection_twelve_hours() {
+    let sealed = 1_900_000_000;
+    assert_eq!(
+        admission_reapply_at(sealed, sealed + 43_199),
+        Some(sealed + 43_200)
+    );
+    assert_eq!(admission_reapply_at(sealed, sealed + 43_200), None);
+    assert_eq!(admission_reapply_at(0, sealed), None); // never rejected
+    let mut book = RejectionBook::default();
+    // Rejected with endpoint E1 proposed by node 9.
+    book.rejected("applicant-wallet-A", sealed);
+    // Re-applying with endpoint E2 through proposer 11: same applicant key, still blocked.
+    assert_eq!(
+        book.reapply_at("applicant-wallet-A", sealed + 43_199),
+        Some(sealed + 43_200)
+    );
+    assert_eq!(book.reapply_at("applicant-wallet-A", sealed + 43_200), None);
+    assert_eq!(book.reapply_at("applicant-wallet-B", sealed + 10), None);
+    // A later rejection restarts from its own seal, fixed 12 hours (no doubling).
+    book.rejected("applicant-wallet-A", sealed + 50_000);
+    assert_eq!(
+        book.reapply_at("applicant-wallet-A", sealed + 50_001),
+        Some(sealed + 50_000 + 43_200)
+    );
+    // The proposer does not propose while the applicant waits, even if its own challenge passed.
+    let agree = Ballot::Agree;
+    assert_eq!(
+        review_admission(
+            &agree,
+            C,
+            book.reapply_at("applicant-wallet-A", sealed + 60_000)
+        ),
+        ProposeDecision::ApplicantWaiting {
+            until: sealed + 50_000 + 43_200
+        }
+    );
+    assert_eq!(review_admission(&agree, C, None), ProposeDecision::Propose);
+}

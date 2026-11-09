@@ -128,6 +128,8 @@ pub enum ProposeDecision {
     Refuse,
     /// Do not: this node cannot carry the possible 0.001 fine.
     CannotCoverFine { missing: u128 },
+    /// Do not: the applicant of a first admission is still in its 12-hour wait after a rejection.
+    ApplicantWaiting { until: u64 },
 }
 
 /// Review standard = the agree standard of [`crate::ballot::decide`], on this node's OWN challenge
@@ -276,4 +278,51 @@ pub fn decidable_from(t: &Tally, agree: bool) -> u64 {
 /// itself, so the fixed 12-hour wait to re-apply (from the seal) starts as early as possible.
 pub fn should_finalize_own_rejection(own_case: bool, t: &Tally, now: u64) -> bool {
     own_case && t.disagree >= t.agree + t.margin && now >= t.opened_at + REJECT_MIN_OPEN
+}
+
+// ---- first admission after a rejection (project decision 2026-11-09) ----
+
+/// Who "the same applicant" is: pending the node line (main wallet, PGP fingerprint, ...). The
+/// endpoint, the request version and the proposer are deliberately NOT part of it, so changing
+/// them never bypasses the wait.
+pub type ApplicantKey = String;
+
+/// After a valid rejection of a first admission, the same applicant waits a fixed 12 hours from
+/// the chain moment the rejection sealed its votes. Returns the time it may apply again, if it
+/// still has to wait.
+pub fn admission_reapply_at(last_rejected_at: u64, now: u64) -> Option<u64> {
+    let at = last_rejected_at.checked_add(OFFLINE_COOLDOWN)?;
+    (last_rejected_at != 0 && now < at).then_some(at)
+}
+
+/// Rejections seen on chain, by applicant (fed from the contract's events or reads once the node
+/// line publishes them).
+#[derive(Debug, Clone, Default)]
+pub struct RejectionBook {
+    last: std::collections::BTreeMap<ApplicantKey, u64>,
+}
+
+impl RejectionBook {
+    /// Record a rejection sealed at `sealed_at` for this applicant, whatever endpoint, version or
+    /// proposer that case had.
+    pub fn rejected(&mut self, applicant: &str, sealed_at: u64) {
+        let e = self.last.entry(applicant.to_string()).or_insert(0);
+        *e = (*e).max(sealed_at);
+    }
+    pub fn reapply_at(&self, applicant: &str, now: u64) -> Option<u64> {
+        admission_reapply_at(*self.last.get(applicant).unwrap_or(&0), now)
+    }
+}
+
+/// The proposer's review of a first admission: the agree standard, plus no proposal while the
+/// applicant is still in its 12-hour wait after a rejection.
+pub fn review_admission(
+    ballot: &Ballot,
+    free_balance: u128,
+    applicant_reapply_at: Option<u64>,
+) -> ProposeDecision {
+    if let Some(until) = applicant_reapply_at {
+        return ProposeDecision::ApplicantWaiting { until };
+    }
+    review(ballot, free_balance)
 }
