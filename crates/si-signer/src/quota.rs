@@ -48,6 +48,15 @@ const DAY: u64 = 86_400;
 /// Actions the ledger knows. Anything else is refused as `unknown_selector`.
 pub const A_VOTE_AGREE: &str = "voteReport.agree";
 pub const A_VOTE_DISAGREE: &str = "voteReport.disagree";
+/// Admission and recovery votes (contract `voteAdmission`, `voteRecovery`; Q117: main or probe
+/// wallet, one vote per node). Same rules as report votes: no daily count, no spend cap.
+pub const A_VOTE_ADMISSION: &str = "voteAdmission";
+pub const A_VOTE_RECOVERY: &str = "voteRecovery";
+/// voteAdmission default gas ceiling: a deciding vote creates the node in the same transaction,
+/// about 1,253,200 gas (node line, local) x 1.5. Re-measure on a CoNET fork before deployment.
+pub const VOTE_ADMISSION_GAS_DEFAULT: u64 = 1_900_000;
+/// voteRecovery default gas ceiling: deciding vote 285,521 gas (node line, local) x 1.5.
+pub const VOTE_RECOVERY_GAS_DEFAULT: u64 = 430_000;
 pub const A_MARK_ONLINE: &str = "markOnline";
 pub const A_FINALIZE: &str = "finalizeReport";
 pub const A_SET_ONLINE: &str = "setOnline";
@@ -89,7 +98,7 @@ fn action(name: &str) -> Option<Action> {
     let a = |buckets, class| Some(Action { buckets, class });
     match name {
         // No bucket: votes have no daily count (H812B).
-        A_VOTE_AGREE | A_VOTE_DISAGREE => a(&[], Some(Ballot)),
+        A_VOTE_AGREE | A_VOTE_DISAGREE | A_VOTE_ADMISSION | A_VOTE_RECOVERY => a(&[], Some(Ballot)),
         A_MARK_ONLINE => a(&[B_MARK_ONLINE], Some(Upkeep)),
         A_FINALIZE => a(&[B_FINALIZE], Some(Upkeep)),
         A_SET_ONLINE | A_EXTEND_ONLINE => a(&[B_ANCHOR_TX], Some(Anchor)),
@@ -177,6 +186,8 @@ impl Default for QuotaConfig {
             (A_VOTE_DISAGREE, DECIDING_VOTE_GAS_FLOOR),
             (A_FINALIZE, DECIDING_VOTE_GAS_FLOOR),
             (A_REPORT, REPORT_OFFLINE_GAS_DEFAULT),
+            (A_VOTE_ADMISSION, VOTE_ADMISSION_GAS_DEFAULT),
+            (A_VOTE_RECOVERY, VOTE_RECOVERY_GAS_DEFAULT),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))

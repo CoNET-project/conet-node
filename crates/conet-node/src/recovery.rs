@@ -230,6 +230,13 @@ impl Node {
         Err(Refused::RecoveryVoteRequired)
     }
 
+    /// The node declares itself offline (maintenance, before leaving the mailbox role): takes
+    /// effect at once, no vote (project decision 2026-11-08); sent by the main wallet or the
+    /// operator, never by the probe wallet. Coming back still needs a recovery vote.
+    pub fn declare_offline(&mut self) {
+        self.go_offline_because(OfflineReason::SelfDeclared);
+    }
+
     pub fn go_offline(&mut self) {
         self.go_offline_because(OfflineReason::Other);
     }

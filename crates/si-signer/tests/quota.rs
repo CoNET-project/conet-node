@@ -924,3 +924,41 @@ mod anchor {
         ));
     }
 }
+
+#[test]
+fn quota_admission_and_recovery_votes() {
+    let d = tempfile::tempdir().unwrap();
+    let mut q = ledger(&d, defaults());
+    // Same rules as report votes: no daily count, uncapped price, tip lowered to the cap.
+    for (a, ceiling) in [
+        (A_VOTE_ADMISSION, VOTE_ADMISSION_GAS_DEFAULT),
+        (A_VOTE_RECOVERY, VOTE_RECOVERY_GAS_DEFAULT),
+    ] {
+        for _ in 0..300 {
+            let g = q
+                .reserve(&Intent::tx(a, ceiling, 1_000 * GWEI), T0)
+                .unwrap();
+            q.settle(g.ticket.unwrap(), ceiling / 2, GWEI, T0).unwrap();
+        }
+        assert_eq!(
+            q.reserve(&Intent::tx(a, ceiling + 1, GWEI), T0)
+                .unwrap_err(),
+            QuotaError::GasAboveCeiling {
+                action: a.into(),
+                ceiling
+            }
+        );
+        assert_eq!(
+            q.reserve(&Intent::tx(a, ceiling, GWEI).legacy(), T0)
+                .unwrap_err(),
+            QuotaError::VoteNotType2
+        );
+    }
+    // declareOffline is never a ledger action: a probe wallet cannot send it (main wallet or
+    // operator only, outside this ledger's vote lane).
+    assert_eq!(
+        q.reserve(&Intent::tx("declareOffline", 80_000, 1), T0)
+            .unwrap_err(),
+        QuotaError::UnknownSelector
+    );
+}

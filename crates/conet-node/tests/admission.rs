@@ -5,7 +5,7 @@ use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use serde_json::Value;
 use si_crypto::eth::EthKey;
-use si_crypto::opgp::{PublicCert, SecretCert};
+use si_crypto::opgp::SecretCert;
 use std::collections::HashSet;
 
 const NOW: u64 = 1_800_000_000;
@@ -21,8 +21,9 @@ fn g() -> Value {
 
 struct Party {
     key: SecretCert,
-    public: PublicCert,
-    armor: String,
+    public: ChainKey,
+    field: String,
+    hash: [u8; 32],
     wallet: EthKey,
 }
 
@@ -36,12 +37,15 @@ fn party(g: &Value, key: &str, wallet: &str) -> Party {
     .unlock()
     .unwrap();
     let armor = k["armoredPublic"].as_str().unwrap().to_string();
-    let public = PublicCert::from_armor(&armor).unwrap();
+    let field = si_core::statement::pgp_field(&armor);
+    let hash = si_core::statement::pgp_hash(&armor);
+    let public = ChainKey::from_chain(&field, &hash).unwrap();
     let wallet = EthKey::from_hex(g["wallets"][wallet]["privateKey"].as_str().unwrap()).unwrap();
     Party {
         key,
         public,
-        armor,
+        field,
+        hash,
         wallet,
     }
 }
@@ -81,10 +85,12 @@ fn world(kind: Kind) -> World {
         kind,
         node_id: if kind == Kind::Recovery { 573 } else { 0 },
         applicant_wallet: applicant.wallet.address(),
-        pgp_fingerprint: applicant.public.fingerprint(),
+        pgp_fingerprint: applicant.public.fingerprint.clone(),
+        pgp_hash: applicant.hash,
         endpoint: Endpoint::Tcp {
             ip: "203.0.113.9".into(),
-            port: 80,
+            tcp_port: 80,
+            udp_port: 0,
         },
         endpoint_version: 1,
         proposer_node_id: VOTER_ID,
@@ -123,7 +129,7 @@ impl World {
         seen: &mut HashSet<String>,
         now: u64,
     ) -> Result<String, Fail> {
-        let voter = self.voter.armor.clone();
+        let (vf, vh) = (self.voter.field.clone(), self.voter.hash);
         answer(
             &mut self.rng,
             &self.ctx,
@@ -132,7 +138,7 @@ impl World {
             Some(&self.applicant.wallet),
             armored,
             None,
-            move |id| (id == VOTER_ID).then(|| PublicCert::from_armor(&voter).unwrap()),
+            move |id| (id == VOTER_ID).then(|| ChainKey::from_chain(&vf, &vh).unwrap()),
             seen,
             now,
         )
@@ -155,17 +161,8 @@ impl World {
 #[test]
 fn admission_round_trip_ok() {
     let mut w = world(Kind::First);
-    // Proposer side: the application is signed by the applicant main wallet; the presented
-    // PGP key matches the FULL fingerprint.
-    let sig = w
-        .applicant
-        .wallet
-        .sign_digest(&application_digest(&w.ctx, &w.app).unwrap())
-        .unwrap();
-    assert_eq!(
-        check_application(&w.ctx, &w.app, &sig, &w.applicant.public, NOW),
-        Ok(())
-    );
+    // The application is the main wallet's own chain transaction (applyAdmission), so there is
+    // no separate off-chain application signature; the key comes from the chain field.
     let (o, armored) = w.challenge();
     let mut seen = HashSet::new();
     let reply = w.answer(&armored, &mut seen, NOW + 1).unwrap();
@@ -217,7 +214,8 @@ fn impersonation_refused() {
         &here(),
         NOW + 2,
     );
-    assert_eq!(wrong_key, Err(Fail::Fingerprint));
+    // Another key's chain field fails the application's pgpHash first.
+    assert_eq!(wrong_key, Err(Fail::PgpHash));
     // The applicant's PGP key but another wallet: the wallet signature does not recover.
     let mut stolen = w.app.clone();
     stolen.applicant_wallet = w.attacker.wallet.address();
@@ -232,7 +230,7 @@ fn impersonation_refused() {
         NOW,
     )
     .unwrap();
-    let voter = w.voter.armor.clone();
+    let (vf, vh) = (w.voter.field.clone(), w.voter.hash);
     let r2 = answer(
         &mut w.rng,
         &w.ctx,
@@ -241,7 +239,7 @@ fn impersonation_refused() {
         Some(&w.attacker.wallet),
         &armored2,
         None,
-        move |id| (id == VOTER_ID).then(|| PublicCert::from_armor(&voter).unwrap()),
+        move |id| (id == VOTER_ID).then(|| ChainKey::from_chain(&vf, &vh).unwrap()),
         &mut HashSet::new(),
         NOW,
     )
@@ -331,7 +329,8 @@ fn wrong_endpoint_refused() {
     let mut moved = w.app.clone();
     moved.endpoint = Endpoint::Tcp {
         ip: "198.51.100.4".into(),
-        port: 80,
+        tcp_port: 80,
+        udp_port: 0,
     };
     let (_, armored2) = make_challenge(
         &mut w.rng,
@@ -380,20 +379,60 @@ fn expired_or_version_changed_refused() {
 }
 
 #[test]
-fn full_fingerprint_not_key_id() {
-    let w = world(Kind::First);
-    // The application names a different full fingerprint than the presented key's.
-    let mut a = w.app.clone();
-    a.pgp_fingerprint = "00".repeat(20);
-    let sig = w
-        .applicant
-        .wallet
-        .sign_digest(&application_digest(&w.ctx, &a).unwrap())
-        .unwrap();
-    assert_eq!(
-        check_application(&w.ctx, &a, &sig, &w.applicant.public, NOW),
-        Err(Fail::Fingerprint)
+fn chain_pgp_hash_and_route_fingerprint() {
+    let g = g();
+    let k = &g["keys"]["nodeB"];
+    let armor = k["armoredPublic"].as_str().unwrap();
+    let field = si_core::statement::pgp_field(armor);
+    let hash = si_core::statement::pgp_hash(armor);
+    // The key is built only from the chain field whose hash is the chain's pgpHash.
+    let ck = ChainKey::from_chain(&field, &hash).unwrap();
+    let mut wrong = hash;
+    wrong[0] ^= 1;
+    assert!(matches!(
+        ChainKey::from_chain(&field, &wrong),
+        Err(Fail::PgpHash)
+    ));
+    // The fingerprint is the ROUTE SUBKEY's (as the contract computes it); its low 64 bits are
+    // the key ID; it is not the primary key's fingerprint.
+    let key_id = k["encKeyId"].as_str().unwrap().to_uppercase();
+    assert!(
+        ck.fingerprint.ends_with(&key_id),
+        "{} / {}",
+        ck.fingerprint,
+        key_id
     );
+    assert_ne!(
+        ck.fingerprint,
+        k["fingerprint"].as_str().unwrap().to_uppercase()
+    );
+    // An application naming another fingerprint, or another pgpHash, is refused.
+    let mut w = world(Kind::First);
+    w.app.pgp_fingerprint = "00".repeat(20);
+    let r = make_challenge(
+        &mut w.rng,
+        &w.ctx,
+        &w.app,
+        &here(),
+        VOTER_ID,
+        &w.voter.key,
+        &w.applicant.public,
+        NOW,
+    );
+    assert!(matches!(r, Err(Fail::Fingerprint)));
+    let mut w = world(Kind::First);
+    w.app.pgp_hash = wrong;
+    let r = make_challenge(
+        &mut w.rng,
+        &w.ctx,
+        &w.app,
+        &here(),
+        VOTER_ID,
+        &w.voter.key,
+        &w.applicant.public,
+        NOW,
+    );
+    assert!(matches!(r, Err(Fail::PgpHash)));
 }
 
 #[test]

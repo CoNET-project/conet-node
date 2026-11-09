@@ -47,6 +47,14 @@ impl PublicCert {
     pub fn fingerprint(&self) -> String {
         format!("{:X}", self.cert.primary_key.fingerprint())
     }
+    /// v4 fingerprint of the first subkey (the route / ECDH key): what NodeRegistryV2 stores as
+    /// `fingerprint` (its low 64 bits are the key ID).
+    pub fn enc_fingerprint(&self) -> Option<String> {
+        self.cert
+            .public_subkeys
+            .first()
+            .map(|s| format!("{:X}", s.fingerprint()))
+    }
 }
 
 /// A secret key plus its passphrase. Prototype only: in the product the key lives

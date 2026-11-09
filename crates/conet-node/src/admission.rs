@@ -27,6 +27,13 @@
 //!
 //! The main wallet signs (registry role), not the probe key: admission and recovery are not
 //! among the probe key's four message types, so they get their own domain.
+//!
+//! Aligned with the node line's contract (interface assumptions, 2026-11-08): the application
+//! ID (`appId` / `recId`) is the chain's, not computed here, and the application itself is the
+//! main wallet's own transaction (no separate off-chain application signature); the full
+//! fingerprint is the v4 fingerprint of the first PGP subkey (the route key); every PGP key used
+//! is taken from the chain field and checked against the chain's `pgpHash` (`ChainKey`); a
+//! Linux endpoint is the chain's `ipHash`, `tcpPort` and `udpPort`.
 use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use si_crypto::eip712 as e7;
@@ -40,8 +47,7 @@ pub const CHALLENGE_TTL_SEC: u64 = 60;
 /// Allowed clock difference (suggested, pending).
 pub const CLOCK_SKEW_SEC: u64 = 30;
 
-const RESPONSE_TYPE: &str = "AdmissionResponse(bytes32 appId,uint8 kind,uint256 nodeId,address applicantWallet,bytes20 pgpFingerprint,bytes32 endpointHash,uint64 endpointVersion,uint256 voterNodeId,bytes32 observationHash,bytes32 challengeHash,uint64 expiresAt)";
-const APPLICATION_TYPE: &str = "AdmissionApplication(bytes32 appId,uint8 kind,uint256 nodeId,address applicantWallet,bytes20 pgpFingerprint,bytes32 endpointHash,uint64 endpointVersion,uint256 proposerNodeId,uint64 expiresAt)";
+const RESPONSE_TYPE: &str = "AdmissionResponse(bytes32 appId,uint8 kind,uint256 nodeId,address applicantWallet,bytes20 pgpFingerprint,bytes32 pgpHash,bytes32 ipHash,uint16 tcpPort,uint16 udpPort,bytes32 endpointHash,uint64 endpointVersion,uint256 voterNodeId,bytes32 observationHash,bytes32 challengeHash,uint64 expiresAt)";
 
 /// First admission of a new node, or recovery (offline -> online) of a registered one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,8 +60,13 @@ pub enum Kind {
 /// The candidate endpoint the main wallet authorizes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endpoint {
-    /// Linux node: canonical IP text and TCP port; voters POST straight to it.
-    Tcp { ip: String, port: u16 },
+    /// Linux node: canonical IP text, TCP port (voters POST straight to it) and UDP port (bound,
+    /// not probed). On chain: `ipHash`, `tcpPort`, `udpPort`, `endpointHash = 0`.
+    Tcp {
+        ip: String,
+        tcp_port: u16,
+        udp_port: u16,
+    },
     /// Browser node: no listening port. Identified by its WebRTC DTLS certificate fingerprint;
     /// `relay` = None authorizes a direct ICE path, Some(id) a path through that relay (TURN
     /// server or anchor node, by identity).
@@ -117,10 +128,28 @@ fn fp_norm(s: &str) -> String {
 }
 
 impl Endpoint {
-    /// Hash bound into every signed structure; the type byte keeps TCP and browser apart.
-    pub fn hash(&self) -> Result<[u8; 32], Fail> {
+    /// The chain's `ipHash`: keccak256 of the canonical IP text for a Linux node, zero for a
+    /// browser.
+    pub fn ip_hash(&self) -> Result<[u8; 32], Fail> {
+        match self {
+            Endpoint::Tcp { ip, .. } => ip_hash_word(ip),
+            Endpoint::Browser { .. } => Ok([0; 32]),
+        }
+    }
+    /// The chain's `tcpPort` and `udpPort` (zero for a browser).
+    pub fn ports(&self) -> (u16, u16) {
+        match self {
+            Endpoint::Tcp {
+                tcp_port, udp_port, ..
+            } => (*tcp_port, *udp_port),
+            Endpoint::Browser { .. } => (0, 0),
+        }
+    }
+    /// The chain's `endpointHash`: zero for a Linux node; for a browser our definition (type
+    /// byte 2, DTLS fingerprint, direct or relay, relay identity), proposed to the node line.
+    pub fn endpoint_hash(&self) -> Result<[u8; 32], Fail> {
         Ok(match self {
-            Endpoint::Tcp { ip, port } => h(&[&[1], &ip_hash_word(ip)?, &port.to_be_bytes()]),
+            Endpoint::Tcp { .. } => [0; 32],
             Endpoint::Browser {
                 dtls_fingerprint,
                 relay,
@@ -192,7 +221,9 @@ pub struct SessionView {
 /// Does what the voter sees match the authorized endpoint? Returns the class it proves.
 pub fn classify(endpoint: &Endpoint, seen: &Observed) -> Result<EndpointClass, Fail> {
     match (endpoint, seen) {
-        (Endpoint::Tcp { ip, port }, Observed::Tcp { ip: i, port: p }) if ip == i && port == p => {
+        (Endpoint::Tcp { ip, tcp_port, .. }, Observed::Tcp { ip: i, port: p })
+            if ip == i && tcp_port == p =>
+        {
             Ok(EndpointClass::Direct {
                 ip: i.clone(),
                 port: *p,
@@ -238,6 +269,50 @@ pub fn classify(endpoint: &Endpoint, seen: &Observed) -> Result<EndpointClass, F
     }
 }
 
+/// A PGP public key as the chain holds it: built only from the chain's PGP field (canonical
+/// base64 of the armored key) whose keccak256 equals the chain's `pgpHash`. Every key the
+/// protocol uses (applicant's, voter's) goes through this check.
+pub struct ChainKey {
+    key: PublicCert,
+    pub pgp_hash: [u8; 32],
+    /// v4 fingerprint of the first subkey (the route key), normalized.
+    pub fingerprint: String,
+}
+
+impl ChainKey {
+    pub fn from_chain(field: &str, pgp_hash: &[u8; 32]) -> Result<Self, Fail> {
+        use base64::Engine;
+        if keccak256(field.as_bytes()) != *pgp_hash {
+            return Err(Fail::PgpHash);
+        }
+        let armor = base64::engine::general_purpose::STANDARD
+            .decode(field)
+            .map_err(|_| Fail::BadField)?;
+        let key = PublicCert::from_armor(std::str::from_utf8(&armor).map_err(|_| Fail::BadField)?)
+            .map_err(|_| Fail::BadField)?;
+        let fingerprint = key
+            .enc_fingerprint()
+            .map(|f| fp_norm(&f))
+            .ok_or(Fail::Fingerprint)?;
+        Ok(Self {
+            key,
+            pgp_hash: *pgp_hash,
+            fingerprint,
+        })
+    }
+    pub fn key(&self) -> &PublicCert {
+        &self.key
+    }
+}
+
+/// Route-key fingerprint of one of our own secret keys.
+fn own_fp(k: &SecretCert) -> Result<String, Fail> {
+    k.public()
+        .enc_fingerprint()
+        .map(|f| fp_norm(&f))
+        .ok_or(Fail::Fingerprint)
+}
+
 /// Chain context, bound into every signed structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ctx {
@@ -252,8 +327,9 @@ impl Ctx {
     }
 }
 
-/// The application as the chain records it. `node_id` is 0 for a first admission;
-/// `pgp_fingerprint` is the full v4 fingerprint (40 hex).
+/// The application as the chain records it (`getAdmission` / `getRecovery`). `app_id` is the
+/// chain's `appId` / `recId`; `node_id` is 0 for a first admission; `pgp_fingerprint` is the
+/// route subkey's full v4 fingerprint (40 hex); `pgp_hash` the chain's `pgpHash`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Application {
     pub app_id: [u8; 32],
@@ -261,6 +337,7 @@ pub struct Application {
     pub node_id: u64,
     pub applicant_wallet: String,
     pub pgp_fingerprint: String,
+    pub pgp_hash: [u8; 32],
     pub endpoint: Endpoint,
     pub endpoint_version: u64,
     pub proposer_node_id: u64,
@@ -276,6 +353,9 @@ pub struct Challenge {
     pub kind: Kind,
     pub node_id: u64,
     pub endpoint_version: u64,
+    pub ip_hash: String,
+    pub tcp_port: u16,
+    pub udp_port: u16,
     pub endpoint_hash: String,
     pub observation_hash: String,
     /// For a browser candidate: the DTLS fingerprint the voter's session sees (the applicant
@@ -345,6 +425,8 @@ pub enum Fail {
     /// Recovery: the signer is not the node's current main wallet, the key is not the one the
     /// registry binds, or the node is not offline.
     NotRegistryBound,
+    /// The PGP field does not hash to the chain's `pgpHash`.
+    PgpHash,
 }
 
 fn word_fp(fp: &str) -> Result<e7::Word, Fail> {
@@ -353,24 +435,6 @@ fn word_fp(fp: &str) -> Result<e7::Word, Fail> {
 
 fn ip_hash_word(ip: &str) -> Result<e7::Word, Fail> {
     si_core::statement::ip_hash(ip).map_err(|_| Fail::BadField)
-}
-
-pub fn application_digest(ctx: &Ctx, a: &Application) -> Result<[u8; 32], Fail> {
-    let s = e7::hash_words(
-        APPLICATION_TYPE,
-        &[
-            a.app_id,
-            e7::u64_word(a.kind as u64),
-            e7::u64_word(a.node_id),
-            e7::address_word(&a.applicant_wallet).map_err(|_| Fail::BadField)?,
-            word_fp(&a.pgp_fingerprint)?,
-            a.endpoint.hash()?,
-            e7::u64_word(a.endpoint_version),
-            e7::u64_word(a.proposer_node_id),
-            e7::u64_word(a.expires_at),
-        ],
-    );
-    Ok(e7::digest(&ctx.domain()?, &s))
 }
 
 pub fn response_digest(
@@ -388,7 +452,11 @@ pub fn response_digest(
             e7::u64_word(a.node_id),
             e7::address_word(&a.applicant_wallet).map_err(|_| Fail::BadField)?,
             word_fp(&a.pgp_fingerprint)?,
-            a.endpoint.hash()?,
+            a.pgp_hash,
+            a.endpoint.ip_hash()?,
+            e7::u64_word(a.endpoint.ports().0 as u64),
+            e7::u64_word(a.endpoint.ports().1 as u64),
+            a.endpoint.endpoint_hash()?,
             e7::u64_word(a.endpoint_version),
             e7::u64_word(c.voter_node_id),
             obs,
@@ -399,49 +467,25 @@ pub fn response_digest(
     Ok(e7::digest(&ctx.domain()?, &s))
 }
 
-/// Proposer side (first admission): main wallet signature, full fingerprint, not expired.
-pub fn check_application(
-    ctx: &Ctx,
-    a: &Application,
-    main_sig: &str,
-    applicant_key: &PublicCert,
-    now: u64,
-) -> Result<(), Fail> {
-    if fp_norm(&applicant_key.fingerprint()) != fp_norm(&a.pgp_fingerprint) {
-        return Err(Fail::Fingerprint);
-    }
-    if now > a.expires_at {
-        return Err(Fail::Expired);
-    }
-    match eth::recover_digest(&application_digest(ctx, a)?, main_sig) {
-        Ok(w) if w.eq_ignore_ascii_case(&a.applicant_wallet) => Ok(()),
-        _ => Err(Fail::WalletSig),
-    }
-}
-
 /// What the registry says about a registered node (recovery checks it against this).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegistryView {
     pub node_id: u64,
     pub node_wallet: String,
     pub pgp_fingerprint: String,
+    pub pgp_hash: [u8; 32],
     /// The node is offline now (only an offline node can recover).
     pub offline: bool,
 }
 
-/// Recovery: the existing main wallet authorizes this candidate endpoint, the PGP identity is
-/// the one the registry binds, and the node is offline.
-pub fn check_recovery(
-    ctx: &Ctx,
-    a: &Application,
-    main_sig: &str,
-    reg: &RegistryView,
-    now: u64,
-) -> Result<(), Fail> {
+/// Recovery: the application (`requestRecovery`, sent by the main wallet itself) belongs to
+/// the node's current main wallet and registry-bound PGP key, and the node is offline.
+pub fn check_recovery(a: &Application, reg: &RegistryView, now: u64) -> Result<(), Fail> {
     if a.kind != Kind::Recovery
         || a.node_id != reg.node_id
         || !a.applicant_wallet.eq_ignore_ascii_case(&reg.node_wallet)
         || fp_norm(&a.pgp_fingerprint) != fp_norm(&reg.pgp_fingerprint)
+        || a.pgp_hash != reg.pgp_hash
         || !reg.offline
     {
         return Err(Fail::NotRegistryBound);
@@ -449,10 +493,18 @@ pub fn check_recovery(
     if now > a.expires_at {
         return Err(Fail::Expired);
     }
-    match eth::recover_digest(&application_digest(ctx, a)?, main_sig) {
-        Ok(w) if w.eq_ignore_ascii_case(&reg.node_wallet) => Ok(()),
-        _ => Err(Fail::WalletSig),
+    Ok(())
+}
+
+/// The applicant key must be the application's: same `pgpHash` and route-key fingerprint.
+fn applicant_matches(a: &Application, k: &ChainKey) -> Result<(), Fail> {
+    if k.pgp_hash != a.pgp_hash {
+        return Err(Fail::PgpHash);
     }
+    if k.fingerprint != fp_norm(&a.pgp_fingerprint) {
+        return Err(Fail::Fingerprint);
+    }
+    Ok(())
 }
 
 /// Voter: a fresh one-time challenge made on what it observes now.
@@ -464,12 +516,10 @@ pub fn make_challenge<R: RngCore + CryptoRng>(
     observed: &Observed,
     voter_node_id: u64,
     voter_key: &SecretCert,
-    applicant_key: &PublicCert,
+    applicant: &ChainKey,
     now: u64,
 ) -> Result<(Outstanding, String), Fail> {
-    if fp_norm(&applicant_key.fingerprint()) != fp_norm(&a.pgp_fingerprint) {
-        return Err(Fail::Fingerprint);
-    }
+    applicant_matches(a, applicant)?;
     classify(&a.endpoint, observed)?;
     let mut nonce = [0u8; 32];
     rng.fill_bytes(&mut nonce);
@@ -490,12 +540,15 @@ pub fn make_challenge<R: RngCore + CryptoRng>(
         kind: a.kind,
         node_id: a.node_id,
         endpoint_version: a.endpoint_version,
-        endpoint_hash: hex::encode(a.endpoint.hash()?),
+        ip_hash: hex::encode(a.endpoint.ip_hash()?),
+        tcp_port: a.endpoint.ports().0,
+        udp_port: a.endpoint.ports().1,
+        endpoint_hash: hex::encode(a.endpoint.endpoint_hash()?),
         observation_hash: hex::encode(observed.hash()?),
         seen_dtls,
         voter_dtls,
         voter_node_id,
-        voter_fingerprint: fp_norm(&voter_key.public().fingerprint()),
+        voter_fingerprint: own_fp(voter_key)?,
         applicant_wallet: a.applicant_wallet.to_lowercase(),
         applicant_fingerprint: fp_norm(&a.pgp_fingerprint),
         chain_id: ctx.chain_id,
@@ -511,7 +564,7 @@ pub fn make_challenge<R: RngCore + CryptoRng>(
     let armored = opgp::encrypt(
         &mut rng,
         &body,
-        applicant_key,
+        applicant.key(),
         EncryptOpts {
             text: false,
             zlib: false,
@@ -543,18 +596,19 @@ pub fn answer<R: RngCore + CryptoRng>(
     my_wallet: Option<&EthKey>,
     armored: &str,
     session: Option<&SessionView>,
-    voter_key_of: impl Fn(u64) -> Option<PublicCert>,
+    voter_key_of: impl Fn(u64) -> Option<ChainKey>,
     seen: &mut std::collections::HashSet<String>,
     now: u64,
 ) -> Result<String, Fail> {
     let plain = opgp::decrypt(armored, my_key, None).map_err(|_| Fail::Decrypt)?;
     let c: Challenge = serde_json::from_slice(strip_prefix(CHALLENGE_PREFIX, &plain.data)?)
         .map_err(|_| Fail::BadField)?;
-    let voter = voter_key_of(c.voter_node_id).ok_or(Fail::VoterSig)?;
-    if fp_norm(&voter.fingerprint()) != c.voter_fingerprint {
+    let voter_ck = voter_key_of(c.voter_node_id).ok_or(Fail::VoterSig)?;
+    if voter_ck.fingerprint != c.voter_fingerprint {
         return Err(Fail::VoterSig);
     }
-    let checked = opgp::decrypt(armored, my_key, Some(&voter)).map_err(|_| Fail::Decrypt)?;
+    let voter = voter_ck.key();
+    let checked = opgp::decrypt(armored, my_key, Some(voter)).map_err(|_| Fail::Decrypt)?;
     if checked.verified != Some(true) || checked.data != plain.data {
         return Err(Fail::VoterSig);
     }
@@ -569,11 +623,14 @@ pub fn answer<R: RngCore + CryptoRng>(
             .applicant_wallet
             .eq_ignore_ascii_case(&me.applicant_wallet)
         || c.applicant_fingerprint != fp_norm(&me.pgp_fingerprint)
-        || fp_norm(&my_key.public().fingerprint()) != fp_norm(&me.pgp_fingerprint)
+        || own_fp(my_key)? != fp_norm(&me.pgp_fingerprint)
     {
         return Err(Fail::WrongApplication);
     }
-    if c.endpoint_hash != hex::encode(me.endpoint.hash()?) {
+    if c.ip_hash != hex::encode(me.endpoint.ip_hash()?)
+        || (c.tcp_port, c.udp_port) != me.endpoint.ports()
+        || c.endpoint_hash != hex::encode(me.endpoint.endpoint_hash()?)
+    {
         return Err(Fail::WrongEndpoint);
     }
     // A browser only answers on a session where both sides see the same two certificates:
@@ -627,7 +684,7 @@ pub fn answer<R: RngCore + CryptoRng>(
     opgp::encrypt(
         &mut rng,
         &body,
-        &voter,
+        voter,
         EncryptOpts {
             text: false,
             zlib: false,
@@ -645,14 +702,12 @@ pub fn verify(
     a: &Application,
     outstanding: &Outstanding,
     voter_key: &SecretCert,
-    applicant_key: &PublicCert,
+    applicant: &ChainKey,
     armored_reply: &str,
     observed_now: &Observed,
     now: u64,
 ) -> Result<EndpointClass, Fail> {
-    if fp_norm(&applicant_key.fingerprint()) != fp_norm(&a.pgp_fingerprint) {
-        return Err(Fail::Fingerprint);
-    }
+    applicant_matches(a, applicant)?;
     // ICE restart or a new selected pair (or another TCP peer) voids the challenge.
     if *observed_now != outstanding.observed {
         return Err(Fail::PathChanged);
@@ -661,8 +716,8 @@ pub fn verify(
     if now > outstanding.challenge.expires_at + CLOCK_SKEW_SEC {
         return Err(Fail::Expired);
     }
-    let d =
-        opgp::decrypt(armored_reply, voter_key, Some(applicant_key)).map_err(|_| Fail::Decrypt)?;
+    let d = opgp::decrypt(armored_reply, voter_key, Some(applicant.key()))
+        .map_err(|_| Fail::Decrypt)?;
     if d.verified != Some(true) {
         return Err(Fail::ApplicantPgpSig);
     }
@@ -678,7 +733,9 @@ pub fn verify(
         || c.endpoint_version != a.endpoint_version
         || !c.applicant_wallet.eq_ignore_ascii_case(&a.applicant_wallet)
         || c.applicant_fingerprint != fp_norm(&a.pgp_fingerprint)
-        || c.endpoint_hash != hex::encode(a.endpoint.hash()?)
+        || c.ip_hash != hex::encode(a.endpoint.ip_hash()?)
+        || (c.tcp_port, c.udp_port) != a.endpoint.ports()
+        || c.endpoint_hash != hex::encode(a.endpoint.endpoint_hash()?)
         || c.observation_hash != hex::encode(observed_now.hash()?)
     {
         return Err(Fail::WrongApplication);

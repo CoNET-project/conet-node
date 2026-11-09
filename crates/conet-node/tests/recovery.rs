@@ -7,7 +7,7 @@ use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use serde_json::Value;
 use si_crypto::eth::EthKey;
-use si_crypto::opgp::{PublicCert, SecretCert};
+use si_crypto::opgp::SecretCert;
 use std::collections::HashSet;
 
 const NOW: u64 = 1_800_000_000;
@@ -27,14 +27,17 @@ fn g() -> Value {
 
 struct P {
     key: SecretCert,
-    public: PublicCert,
-    armor: String,
+    public: ChainKey,
+    field: String,
+    hash: [u8; 32],
     wallet: EthKey,
 }
 
 fn p(g: &Value, key: &str, wallet: &str) -> P {
     let k = &g["keys"][key];
     let armor = k["armoredPublic"].as_str().unwrap().to_string();
+    let field = si_core::statement::pgp_field(&armor);
+    let hash = si_core::statement::pgp_hash(&armor);
     P {
         key: SecretCert::from_armor(
             k["armoredPrivate"].as_str().unwrap(),
@@ -43,8 +46,9 @@ fn p(g: &Value, key: &str, wallet: &str) -> P {
         .unwrap()
         .unlock()
         .unwrap(),
-        public: PublicCert::from_armor(&armor).unwrap(),
-        armor,
+        public: ChainKey::from_chain(&field, &hash).unwrap(),
+        field,
+        hash,
         wallet: EthKey::from_hex(g["wallets"][wallet]["privateKey"].as_str().unwrap()).unwrap(),
     }
 }
@@ -78,7 +82,8 @@ impl W {
             kind: Kind::Recovery,
             node_id: NODE,
             applicant_wallet: self.node.wallet.address(),
-            pgp_fingerprint: self.node.public.fingerprint(),
+            pgp_fingerprint: self.node.public.fingerprint.clone(),
+            pgp_hash: self.node.hash,
             endpoint,
             endpoint_version: version,
             proposer_node_id: 0,
@@ -89,7 +94,8 @@ impl W {
         RegistryView {
             node_id: NODE,
             node_wallet: self.node.wallet.address(),
-            pgp_fingerprint: self.node.public.fingerprint(),
+            pgp_fingerprint: self.node.public.fingerprint.clone(),
+            pgp_hash: self.node.hash,
             offline,
         }
     }
@@ -118,7 +124,7 @@ impl W {
         armored: &str,
         s: Option<&SessionView>,
     ) -> Result<String, Fail> {
-        let v = self.voter.armor.clone();
+        let (vf, vh) = (self.voter.field.clone(), self.voter.hash);
         let session = match a.endpoint {
             Endpoint::Browser { .. } => s,
             Endpoint::Tcp { .. } => None,
@@ -131,7 +137,7 @@ impl W {
             None, // recovery: PGP-only replies
             armored,
             session,
-            move |id| (id == VOTER).then(|| PublicCert::from_armor(&v).unwrap()),
+            move |id| (id == VOTER).then(|| ChainKey::from_chain(&vf, &vh).unwrap()),
             &mut HashSet::new(),
             NOW + 1,
         )
@@ -185,47 +191,43 @@ fn browser(relay: Option<&str>) -> Endpoint {
 #[test]
 fn recovery_needs_registry_bound_identity() {
     let w = w();
+    // requestRecovery is the main wallet's own transaction; the node side checks that the
+    // chain's recovery record belongs to the node's current main wallet and bound key.
     let a = w.app(
         Endpoint::Tcp {
             ip: "203.0.113.9".into(),
-            port: 80,
+            tcp_port: 80,
+            udp_port: 0,
         },
         1,
     );
-    let sig = w
-        .node
-        .wallet
-        .sign_digest(&application_digest(&w.ctx, &a).unwrap())
-        .unwrap();
-    assert_eq!(check_recovery(&w.ctx, &a, &sig, &w.reg(true), NOW), Ok(()));
+    assert_eq!(check_recovery(&a, &w.reg(true), NOW), Ok(()));
     // Not offline (already online): no recovery.
     assert_eq!(
-        check_recovery(&w.ctx, &a, &sig, &w.reg(false), NOW),
+        check_recovery(&a, &w.reg(false), NOW),
         Err(Fail::NotRegistryBound)
     );
-    // The registry's main wallet changed: the old one cannot authorize the endpoint.
+    // The registry's main wallet changed.
     let mut moved = w.reg(true);
     moved.node_wallet = w.relay.wallet.address();
-    assert_eq!(
-        check_recovery(&w.ctx, &a, &sig, &moved, NOW),
-        Err(Fail::NotRegistryBound)
-    );
-    // A PGP key other than the one the registry binds.
+    assert_eq!(check_recovery(&a, &moved, NOW), Err(Fail::NotRegistryBound));
+    // Another route key, or another PGP field (pgpHash), than the registry binds.
     let mut other_key = w.reg(true);
-    other_key.pgp_fingerprint = w.relay.public.fingerprint();
+    other_key.pgp_fingerprint = w.relay.public.fingerprint.clone();
     assert_eq!(
-        check_recovery(&w.ctx, &a, &sig, &other_key, NOW),
+        check_recovery(&a, &other_key, NOW),
         Err(Fail::NotRegistryBound)
     );
-    // A signature by someone else over the right application.
-    let bad = w
-        .relay
-        .wallet
-        .sign_digest(&application_digest(&w.ctx, &a).unwrap())
-        .unwrap();
+    let mut other_field = w.reg(true);
+    other_field.pgp_hash = w.relay.hash;
     assert_eq!(
-        check_recovery(&w.ctx, &a, &bad, &w.reg(true), NOW),
-        Err(Fail::WalletSig)
+        check_recovery(&a, &other_field, NOW),
+        Err(Fail::NotRegistryBound)
+    );
+    // Expired application.
+    assert_eq!(
+        check_recovery(&a, &w.reg(true), NOW + 3_601),
+        Err(Fail::Expired)
     );
 }
 
@@ -305,7 +307,7 @@ fn relay_cannot_answer_for_the_browser() {
     );
     let (o, ch) = w.challenge(&a, &seen).unwrap();
     // The relay forwards ciphertext only: it cannot read the challenge ...
-    let v = w.voter.armor.clone();
+    let (vf, vh) = (w.voter.field.clone(), w.voter.hash);
     let try_answer = answer(
         &mut w.rng,
         &w.ctx,
@@ -314,7 +316,7 @@ fn relay_cannot_answer_for_the_browser() {
         None,
         &ch,
         None,
-        move |id| (id == VOTER).then(|| PublicCert::from_armor(&v).unwrap()),
+        move |id| (id == VOTER).then(|| ChainKey::from_chain(&vf, &vh).unwrap()),
         &mut HashSet::new(),
         NOW + 1,
     );
@@ -487,7 +489,8 @@ fn recovery_reply_is_pgp_only_with_fixed_prefix() {
     let a = w.app(
         Endpoint::Tcp {
             ip: "203.0.113.9".into(),
-            port: 80,
+            tcp_port: 80,
+            udp_port: 0,
         },
         1,
     );
@@ -498,7 +501,7 @@ fn recovery_reply_is_pgp_only_with_fixed_prefix() {
     let (o, ch) = w.challenge(&a, &seen).unwrap();
     let reply = w.answer(&a, &ch).unwrap();
     // The decrypted reply starts with the fixed prefix and carries no wallet signature.
-    let d = si_crypto::opgp::decrypt(&reply, &w.voter.key, Some(&w.node.public)).unwrap();
+    let d = si_crypto::opgp::decrypt(&reply, &w.voter.key, Some(w.node.public.key())).unwrap();
     assert_eq!(d.verified, Some(true));
     assert!(d.data.starts_with(REPLY_PREFIX));
     let r: Reply = serde_json::from_slice(&d.data[REPLY_PREFIX.len()..]).unwrap();
@@ -520,7 +523,7 @@ fn recovery_reply_is_pgp_only_with_fixed_prefix() {
     let forged = si_crypto::opgp::encrypt(
         &mut w.rng,
         &bare,
-        &w.voter.public,
+        w.voter.public.key(),
         si_crypto::opgp::EncryptOpts {
             text: false,
             zlib: false,
@@ -632,4 +635,35 @@ fn other_offline_reasons_may_apply_right_away() {
         assert!(n.open([0x44; 32], [1; 32]).is_ok(), "{r:?}");
         assert_eq!(n.state, State::Offline, "applying does not bring it online");
     }
+}
+
+#[test]
+fn declare_offline_is_immediate_recovery_still_votes() {
+    use conet_node::recovery::OfflineReason;
+    let t = Threshold {
+        min_approve: 2,
+        veto_on_evidence: true,
+        relay_only_allowed: true,
+    };
+    let direct = EndpointClass::Direct {
+        ip: "203.0.113.9".into(),
+        port: 80,
+    };
+    let app = [0x55; 32];
+    // Bring a node online, then it declares itself offline: effective at once, no vote.
+    let mut n = Node::offline();
+    let v = n.open(app, [1; 32]).unwrap();
+    n.vote(app, v, 1, Verdict::Approve(direct.clone())).unwrap();
+    n.vote(app, v, 2, Verdict::Approve(direct.clone())).unwrap();
+    assert_eq!(n.resolve(t).unwrap(), Outcome::Online);
+    n.declare_offline();
+    assert_eq!(n.state, State::Offline);
+    assert_eq!(n.reason(), Some(OfflineReason::SelfDeclared));
+    assert_eq!(n.routable(), None);
+    // Coming back: not automatic, not by marking online; a recovery application and a vote.
+    assert_eq!(n.mark_online_direct(), Err(Refused::RecoveryVoteRequired));
+    let v = n.open(app, [2; 32]).unwrap();
+    n.vote(app, v, 3, Verdict::Approve(direct.clone())).unwrap();
+    n.vote(app, v, 4, Verdict::Approve(direct)).unwrap();
+    assert_eq!(n.resolve(t).unwrap(), Outcome::Online);
 }
