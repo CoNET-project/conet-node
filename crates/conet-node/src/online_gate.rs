@@ -1,0 +1,196 @@
+//! Online votes (first admission, offline recovery), node side, project decisions 2026-11-08/09
+//! ("上线表决防刷" and the reward / proposer decisions that followed):
+//!
+//! - after the node actually goes offline on chain, no coming back for 12 hours (43,200 s) from the
+//!   moment the offline state took effect (self offline, report verdict, expired declaration,
+//!   stake stop; wallet or endpoint changes do not reset it; trusted nodes too);
+//! - each successful online (first, every recovery) costs the applicant 0.01 CNET: locked when the
+//!   case opens, charged once on success, returned on failure or expiry;
+//! - the applicant asks ANOTHER node to propose; that proposer reviews (the same challenge checks
+//!   as an agree vote) and only then opens the case; the proposal is its agree vote (1:0); it may
+//!   not vote again in that case (any of its wallets) and is not the case's executor; a valid
+//!   rejection fines the proposer 0.001 once;
+//! - voters: winning side +0.001, losing side -0.001 (0.001 locked at the vote), timeout neither;
+//!   the node casting the deciding last vote and executing the settlement gets 0.005; one node,
+//!   one case: only the highest reward.
+//!
+//! Lock sources and fee interfaces are not published by the node line yet: the amounts are
+//! parameters and the balances are passed in.
+use crate::ballot::{Ballot, Why};
+
+pub const OFFLINE_COOLDOWN: u64 = 43_200;
+const MILLI: u128 = 1_000_000_000_000_000; // 0.001 CNET
+pub const ONLINE_FEE: u128 = 10 * MILLI; // 0.01
+pub const VOTE_STAKE: u128 = MILLI; // +0.001 / -0.001, locked at the vote
+pub const PROPOSER_FINE: u128 = MILLI; // on a valid rejection
+pub const EXECUTOR_REWARD: u128 = 5 * MILLI; // deciding vote + settlement
+pub const PROPOSER_REWARD: u128 = 10 * MILLI; // on approval
+
+/// When the current offline period started, as the contract counts it: `outOfServiceSince`, or
+/// the end of an expired browser / mobile declaration, whichever is earlier (OnlineVoteLib
+/// `checkCooldown`).
+pub fn offline_since(out_of_service_since: u64, expired_declaration_end: Option<u64>) -> u64 {
+    match (out_of_service_since, expired_declaration_end) {
+        (0, Some(e)) => e,
+        (s, Some(e)) if e < s => e,
+        (s, _) => s,
+    }
+}
+
+/// What stops this node from asking for recovery now. Empty = may ask.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecoveryBlockers {
+    /// Seconds still to wait in the 12-hour cooldown.
+    pub wait: Option<u64>,
+    /// Stake still missing (stake - locked must reach the latest full threshold).
+    pub stake_missing: Option<u128>,
+    /// Online fee still missing in the balance it is paid from (source pending).
+    pub fee_missing: Option<u128>,
+}
+
+impl RecoveryBlockers {
+    pub fn clear(&self) -> bool {
+        self.wait.is_none() && self.stake_missing.is_none() && self.fee_missing.is_none()
+    }
+}
+
+/// Inputs from one confirmed block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryView {
+    pub now: u64,
+    /// [`offline_since`]; 0 = not offline.
+    pub offline_since: u64,
+    pub stake: u128,
+    pub locked: u128,
+    pub latest_threshold: u128,
+    /// Balance the online fee is locked from (interface pending).
+    pub fee_balance: u128,
+}
+
+/// Recovery precheck: all three must hold before asking a proposer; otherwise tell the operator
+/// how long to wait and how much is missing. Note for the operator: if the request is rejected,
+/// the PROPOSER (another node) is fined 0.001, so proposers will only take honest requests.
+pub fn precheck_recovery(v: &RecoveryView) -> RecoveryBlockers {
+    let mut b = RecoveryBlockers::default();
+    if v.offline_since != 0 && v.now < v.offline_since + OFFLINE_COOLDOWN {
+        b.wait = Some(v.offline_since + OFFLINE_COOLDOWN - v.now);
+    }
+    let free = v.stake.saturating_sub(v.locked);
+    if free < v.latest_threshold {
+        b.stake_missing = Some(v.latest_threshold - free);
+    }
+    if v.fee_balance < ONLINE_FEE {
+        b.fee_missing = Some(ONLINE_FEE - v.fee_balance);
+    }
+    b
+}
+
+/// Shown before a self-declared offline: the node cannot come back before this time.
+pub fn offline_warning(now: u64) -> u64 {
+    now + OFFLINE_COOLDOWN
+}
+
+// ---- this node as the proposer ----
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposeDecision {
+    /// Open the case (the proposal is this node's agree vote).
+    Propose,
+    /// Do not: the review did not reach the agree standard.
+    Decline(Why),
+    /// Do not: the applicant's signed reply contradicts the request (keep the evidence).
+    Refuse,
+    /// Do not: this node cannot carry the possible 0.001 fine.
+    CannotCoverFine { missing: u128 },
+}
+
+/// Review standard = the agree standard of [`crate::ballot::decide`]: only a verified challenge
+/// (direct, or relay where the policy allows) leads to a proposal. The proposer keeps 0.001 free
+/// for the fine of a valid rejection (lock interface pending).
+pub fn review(ballot: &Ballot, free_balance: u128) -> ProposeDecision {
+    match ballot {
+        Ballot::Agree if free_balance < PROPOSER_FINE => ProposeDecision::CannotCoverFine {
+            missing: PROPOSER_FINE - free_balance,
+        },
+        Ballot::Agree => ProposeDecision::Propose,
+        Ballot::Disagree(_) => ProposeDecision::Refuse,
+        Ballot::NoVote(w) => ProposeDecision::Decline(*w),
+    }
+}
+
+// ---- this node as a voter in someone else's case ----
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaseView {
+    /// The case's proposer node id (contract record).
+    pub proposer: u64,
+    /// The applicant node id (0 for a first admission with no node yet).
+    pub applicant: u64,
+    pub voted: bool,
+    pub open: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnlineSkip {
+    /// This node proposed the case: no vote from any of its wallets, no execution.
+    OwnProposal,
+    /// This node is the applicant.
+    OwnApplication,
+    AlreadyVoted,
+    NotOpen,
+    /// Not 0.001 free to lock for the vote.
+    NoLock {
+        missing: u128,
+    },
+}
+
+/// May this node vote in an online case at all (before the ballot table)?
+pub fn may_vote_online(me: u64, c: &CaseView, free_balance: u128) -> Result<(), OnlineSkip> {
+    if !c.open {
+        return Err(OnlineSkip::NotOpen);
+    }
+    if c.proposer == me {
+        return Err(OnlineSkip::OwnProposal);
+    }
+    if c.applicant == me {
+        return Err(OnlineSkip::OwnApplication);
+    }
+    if c.voted {
+        return Err(OnlineSkip::AlreadyVoted);
+    }
+    if free_balance < VOTE_STAKE {
+        return Err(OnlineSkip::NoLock {
+            missing: VOTE_STAKE - free_balance,
+        });
+    }
+    Ok(())
+}
+
+/// Optional strategy, OFF by default: cast the deciding last vote and execute the settlement for
+/// 0.005. Worth it only if the extra reward over a plain winning vote (0.005 - 0.001, rewards do
+/// not stack) beats the extra gas of the deciding vote plus settlement, AND the node is not the
+/// proposer (never executes its own case). Races with other nodes: a losing racer's transaction
+/// reverts and still pays gas, so `race_loss_rate` discounts the gain.
+pub fn executor_worth_it(
+    enabled: bool,
+    is_proposer: bool,
+    extra_gas: u128,
+    gas_price_wei: u128,
+    race_loss_rate_bps: u128,
+) -> bool {
+    if !enabled || is_proposer {
+        return false;
+    }
+    let extra_reward = EXECUTOR_REWARD - VOTE_STAKE;
+    let expected = extra_reward * (10_000 - race_loss_rate_bps.min(10_000)) / 10_000;
+    let cost = extra_gas.saturating_mul(gas_price_wei);
+    expected > cost
+}
+
+/// Expected value of one vote in wei-scale CNET for a given confidence (bps) of being on the
+/// winning side: +0.001 x p - 0.001 x (1 - p). Below 50% it is negative; with gas it needs more.
+pub fn vote_expectation(win_bps: u128, gas_cost: u128) -> i128 {
+    let p = win_bps.min(10_000) as i128;
+    let s = VOTE_STAKE as i128;
+    s * p / 10_000 - s * (10_000 - p) / 10_000 - gas_cost as i128
+}

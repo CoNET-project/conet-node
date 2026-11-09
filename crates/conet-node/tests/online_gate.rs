@@ -1,0 +1,151 @@
+//! Online votes: 12-hour cooldown, online fee, proposer review, own-case exclusion, rewards.
+use conet_node::admission::{EndpointClass, Fail};
+use conet_node::ballot::*;
+use conet_node::online_gate::*;
+
+const C: u128 = 1_000_000_000_000_000_000;
+const T: u64 = 1_900_000_000;
+
+fn rv(now: u64, since: u64, stake: u128, fee: u128) -> RecoveryView {
+    RecoveryView {
+        now,
+        offline_since: since,
+        stake,
+        locked: 0,
+        latest_threshold: 10 * C,
+        fee_balance: fee,
+    }
+}
+
+#[test]
+fn cooldown_counts_from_the_chain_offline_moment() {
+    // Self offline / report / stake stop: outOfServiceSince. Browser: the expired declaration's
+    // end if earlier. Later events in the same period do not move it.
+    assert_eq!(offline_since(T, None), T);
+    assert_eq!(offline_since(T, Some(T - 100)), T - 100);
+    assert_eq!(offline_since(T, Some(T + 100)), T);
+    assert_eq!(offline_since(0, Some(T)), T);
+    // 1 second before 12 h: wait 1 s; at 12 h: may ask.
+    let b = precheck_recovery(&rv(T + OFFLINE_COOLDOWN - 1, T, 10 * C, ONLINE_FEE));
+    assert_eq!(b.wait, Some(1));
+    assert!(precheck_recovery(&rv(T + OFFLINE_COOLDOWN, T, 10 * C, ONLINE_FEE)).clear());
+    // Warning before a declared offline.
+    assert_eq!(offline_warning(T), T + 43_200);
+}
+
+#[test]
+fn precheck_lists_every_blocker_with_amounts() {
+    let b = precheck_recovery(&RecoveryView {
+        locked: 2 * C,
+        ..rv(T + 3_600, T, 11 * C, ONLINE_FEE / 2)
+    });
+    assert_eq!(b.wait, Some(OFFLINE_COOLDOWN - 3_600));
+    assert_eq!(b.stake_missing, Some(C)); // 11 - 2 locked < 10 by 1
+    assert_eq!(b.fee_missing, Some(ONLINE_FEE / 2));
+    assert!(!b.clear());
+}
+
+fn direct() -> Attempt {
+    Attempt {
+        challenge: [1; 32],
+        via_anchor: None,
+        outcome: Outcome::Verified(EndpointClass::Direct {
+            ip: "203.0.113.9".into(),
+            port: 443,
+        }),
+        evidence: None,
+    }
+}
+const P: Policy = Policy {
+    node_is_browser: false,
+    browser_relay_ok: false,
+};
+
+#[test]
+fn proposer_reviews_with_the_agree_standard_and_keeps_its_fine() {
+    let agree = decide(&[direct()], P);
+    assert_eq!(review(&agree, PROPOSER_FINE), ProposeDecision::Propose);
+    assert_eq!(
+        review(&agree, 0),
+        ProposeDecision::CannotCoverFine {
+            missing: PROPOSER_FINE
+        }
+    );
+    let unsure = decide(
+        &[Attempt {
+            outcome: Outcome::Failed(Fail::Expired),
+            ..direct()
+        }],
+        P,
+    );
+    assert_eq!(review(&unsure, C), ProposeDecision::Decline(Why::Unsure));
+    let ev = Evidence {
+        challenge: "c".into(),
+        reply: "r".into(),
+        observed: "o".into(),
+    };
+    assert_eq!(
+        review(&Ballot::Disagree(vec![ev.clone(), ev]), C),
+        ProposeDecision::Refuse
+    );
+}
+
+/// Own proposal: no vote from this node (the probe wallet votes for the same node id, so it is
+/// covered by the same check), no execution.
+#[test]
+fn own_cases_are_skipped() {
+    let me = 42;
+    let own = CaseView {
+        proposer: me,
+        applicant: 7,
+        voted: false,
+        open: true,
+    };
+    assert_eq!(may_vote_online(me, &own, C), Err(OnlineSkip::OwnProposal));
+    let mine = CaseView {
+        proposer: 9,
+        applicant: me,
+        voted: false,
+        open: true,
+    };
+    assert_eq!(
+        may_vote_online(me, &mine, C),
+        Err(OnlineSkip::OwnApplication)
+    );
+    let other = CaseView {
+        proposer: 9,
+        applicant: 7,
+        voted: false,
+        open: true,
+    };
+    assert_eq!(may_vote_online(me, &other, C), Ok(()));
+    assert_eq!(
+        may_vote_online(me, &other, VOTE_STAKE - 1),
+        Err(OnlineSkip::NoLock { missing: 1 })
+    );
+    assert_eq!(
+        may_vote_online(
+            me,
+            &CaseView {
+                voted: true,
+                ..other
+            },
+            C
+        ),
+        Err(OnlineSkip::AlreadyVoted)
+    );
+    assert!(!executor_worth_it(true, true, 0, 0, 0)); // never executes its own case
+}
+
+#[test]
+fn economics_win_plus_lose_minus_one_milli() {
+    // +0.001 / -0.001: zero at 50%, gas makes even 60% confidence barely positive.
+    assert_eq!(vote_expectation(5_000, 0), 0);
+    assert!(vote_expectation(6_000, 0) > 0);
+    assert!(vote_expectation(6_000, VOTE_STAKE) < 0);
+    // Executor strategy (off by default): extra reward 0.004 vs extra gas.
+    assert!(!executor_worth_it(false, false, 0, 0, 0));
+    let gwei = 1_000_000_000u128;
+    assert!(executor_worth_it(true, false, 200_000, gwei, 5_000)); // 0.002 expected vs 0.0002 gas
+    assert!(!executor_worth_it(true, false, 1_900_000, 10 * gwei, 5_000)); // 0.019 gas > 0.002
+}
