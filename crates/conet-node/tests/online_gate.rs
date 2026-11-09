@@ -10,6 +10,7 @@ fn rv(now: u64, since: u64, stake: u128, fee: u128) -> RecoveryView {
     RecoveryView {
         now,
         offline_since: since,
+        last_rejected_at: 0,
         stake,
         locked: 0,
         latest_threshold: 10 * C,
@@ -209,4 +210,36 @@ fn approve_five_minutes_reject_twelve_hours() {
     ));
     assert_eq!(decidable_from(&ahead_yes, true), t0 + 300);
     assert_eq!(decidable_from(&ahead_no, false), t0 + 43_200);
+}
+
+/// Re-applying after a rejection: a fixed 12 hours from the rejection's sealing moment, however
+/// many rejections came before (no doubling).
+#[test]
+fn after_rejections_always_twelve_hours_from_the_last_seal() {
+    let base = rv(0, T, 10 * C, ONLINE_FEE);
+    let mut rejected = T + OFFLINE_COOLDOWN + 600;
+    for _ in 0..5 {
+        let v = RecoveryView {
+            now: rejected + 60,
+            last_rejected_at: rejected,
+            ..base.clone()
+        };
+        assert_eq!(precheck_recovery(&v).wait, Some(OFFLINE_COOLDOWN - 60));
+        let v = RecoveryView {
+            now: rejected + OFFLINE_COOLDOWN,
+            last_rejected_at: rejected,
+            ..base.clone()
+        };
+        assert!(precheck_recovery(&v).clear());
+        rejected += OFFLINE_COOLDOWN + 900; // next rejection, later
+    }
+    // First offline still counts from the offline moment when there was no rejection.
+    assert_eq!(
+        precheck_recovery(&RecoveryView {
+            now: T + 100,
+            ..base
+        })
+        .wait,
+        Some(OFFLINE_COOLDOWN - 100)
+    );
 }

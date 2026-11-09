@@ -60,6 +60,9 @@ pub struct RecoveryView {
     pub now: u64,
     /// [`offline_since`]; 0 = not offline.
     pub offline_since: u64,
+    /// Chain time at which the latest valid rejection of this node's recovery sealed its votes;
+    /// 0 = never rejected (user decision 2026-11-09). Contract field pending the node line.
+    pub last_rejected_at: u64,
     pub stake: u128,
     pub locked: u128,
     pub latest_threshold: u128,
@@ -72,8 +75,12 @@ pub struct RecoveryView {
 /// the PROPOSER (another node) is fined 0.001, so proposers will only take honest requests.
 pub fn precheck_recovery(v: &RecoveryView) -> RecoveryBlockers {
     let mut b = RecoveryBlockers::default();
-    if v.offline_since != 0 && v.now < v.offline_since + OFFLINE_COOLDOWN {
-        b.wait = Some(v.offline_since + OFFLINE_COOLDOWN - v.now);
+    // Always a fixed 12 hours (project correction "重新申请上线都是 12h"; the doubling C17 rule is
+    // void): from the actual offline moment, or after a rejection from the moment its verdict
+    // sealed the votes. Rejections never add up.
+    let start = v.offline_since.max(v.last_rejected_at);
+    if start != 0 && v.now < start + OFFLINE_COOLDOWN {
+        b.wait = Some(start + OFFLINE_COOLDOWN - v.now);
     }
     let free = v.stake.saturating_sub(v.locked);
     if free < v.latest_threshold {

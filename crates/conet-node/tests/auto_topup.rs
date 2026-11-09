@@ -319,6 +319,7 @@ fn recovery_precheck_matches_the_contract() {
             // eth_call runs in the next block (latest + 1).
             now: n(&c["now"]) as u64 + 1,
             offline_since: offline_since(n(&c["outOfServiceSince"]) as u64, None),
+            last_rejected_at: 0,
             stake: n(&c["stake"]),
             locked: n(&c["locked"]),
             latest_threshold: n(&c["minStakeNow"]),
@@ -341,6 +342,7 @@ fn recovery_precheck_matches_the_contract() {
     let b = precheck_recovery(&RecoveryView {
         now: n(&early["now"]) as u64 + 1,
         offline_since: n(&early["outOfServiceSince"]) as u64,
+        last_rejected_at: 0,
         stake: n(&early["stake"]),
         locked: n(&early["locked"]),
         latest_threshold: n(&early["minStakeNow"]),
