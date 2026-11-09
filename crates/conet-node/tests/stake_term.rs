@@ -17,39 +17,44 @@ fn term(stake: u128, cur: u128, renewal: Renewal) -> TermView {
 }
 
 #[test]
-fn reminders_say_what_to_top_up_to() {
+fn reminders_30_7_1_days_only_when_renewal_would_fail() {
     let r = Reminders::default();
-    let t = term(100 * C, 100 * C, Renewal::Pending);
-    assert_eq!(advise(&t, END - 60 * DAY, &r), Advice::Fine);
-    // Enough stake: a notice only (renewal is automatic), never urgent.
-    assert_eq!(
-        advise(&t, END - 5 * DAY, &r),
-        Advice::Remind {
-            left: 5 * DAY,
-            top_up_to: 100 * C,
-            shortfall: 0,
-            urgent: false
-        }
-    );
-    // A DAO raise inside the term: top up to the latest full threshold; urgent in the last 7 days.
+    // Enough stake: no reminder at all.
+    let ok = term(100 * C, 100 * C, Renewal::Pending);
+    assert_eq!(advise(&ok, END - 5 * DAY, &r), Advice::Fine);
+    // A DAO raise: "will fail at the current threshold", top up to 150, at 30 / 7 / 1 days.
     let raised = term(100 * C, 150 * C, Renewal::Pending);
+    assert_eq!(advise(&raised, END - 31 * DAY, &r), Advice::Fine);
+    for (left, bucket) in [
+        (25 * DAY, 30 * DAY),
+        (7 * DAY, 7 * DAY),
+        (2 * DAY, 7 * DAY),
+        (DAY / 2, DAY),
+    ] {
+        assert_eq!(
+            advise(&raised, END - left, &r),
+            Advice::Remind {
+                left,
+                top_up_to: 150 * C,
+                shortfall: 50 * C,
+                bucket
+            }
+        );
+    }
+}
+
+/// Renewal counts the whole stake; recovery counts stake minus locked.
+#[test]
+fn renewal_ignores_locks_recovery_deducts_them() {
+    let r = Reminders::default();
+    // Stake 150 with 30 locked by open cases: renews at threshold 150.
+    assert!(renews(150 * C, 150 * C));
+    // The same node stopped: recovery needs free stake 150, so 30 more.
+    assert_eq!(precheck_recovery(150 * C, 30 * C, 150 * C), Err(30 * C));
+    assert_eq!(precheck_recovery(180 * C, 30 * C, 150 * C), Ok(()));
     assert_eq!(
-        advise(&raised, END - 25 * DAY, &r),
-        Advice::Remind {
-            left: 25 * DAY,
-            top_up_to: 150 * C,
-            shortfall: 50 * C,
-            urgent: false
-        }
-    );
-    assert_eq!(
-        advise(&raised, END - 2 * DAY, &r),
-        Advice::Remind {
-            left: 2 * DAY,
-            top_up_to: 150 * C,
-            shortfall: 50 * C,
-            urgent: true
-        }
+        advise(&term(150 * C, 150 * C, Renewal::Pending), END - DAY, &r),
+        Advice::Fine
     );
 }
 
@@ -111,7 +116,7 @@ fn failed_renewal_maps_to_stake_shortfall_and_needs_a_vote() {
     }
     let mut n = Node::offline_because(OfflineReason::StakeShortfall { topped_up: false });
     assert_eq!(n.open([1; 32], [2; 32]), Err(Refused::StakeShort));
-    assert!(precheck_recovery(150 * C, 150 * C).is_ok());
+    assert!(precheck_recovery(150 * C, 0, 150 * C).is_ok());
     n.stake_topped_up();
     assert!(n.open([1; 32], [2; 32]).is_ok()); // only the right to apply; the vote still decides
 }
@@ -177,9 +182,9 @@ fn slashed_below_term_floor_tops_up_to_the_latest_full_threshold() {
         }
     );
     // Topping up to 5 or 9.99 does not allow a recovery request; 10 does (and only that).
-    assert_eq!(precheck_recovery(5 * C, 10 * C), Err(5 * C));
-    assert!(precheck_recovery(10 * C - 1, 10 * C).is_err());
-    assert_eq!(precheck_recovery(10 * C, 10 * C), Ok(()));
+    assert_eq!(precheck_recovery(5 * C, 0, 10 * C), Err(5 * C));
+    assert!(precheck_recovery(10 * C - 1, 0, 10 * C).is_err());
+    assert_eq!(precheck_recovery(10 * C, 0, 10 * C), Ok(()));
     let reason = reason_for_stop(Stop::SlashedInsideTerm, 39 * C / 10, 10 * C);
     assert_eq!(reason, OfflineReason::StakeShortfall { topped_up: false });
     let mut n = Node::offline_because(reason);

@@ -47,18 +47,17 @@ pub enum Renewal {
 /// Local reminder settings (operator UX only, never chain state).
 #[derive(Debug, Clone)]
 pub struct Reminders {
-    /// Lead times before the term end, longest first, in seconds.
+    /// Lead times before the term end, longest first, in seconds. Each is sent once (the caller
+    /// keeps which `bucket` it already sent for this term end).
     pub lead: Vec<u64>,
-    /// From here on a shortfall is urgent (a top-up must still land before the end).
-    pub last_safe: u64,
 }
 
 impl Default for Reminders {
     fn default() -> Self {
         const DAY: u64 = 86_400;
         Self {
-            lead: vec![30 * DAY, 14 * DAY, 7 * DAY, 3 * DAY, DAY],
-            last_safe: 7 * DAY,
+            // N6 §H.8.24: 30 days, 7 days, 1 day before the end.
+            lead: vec![30 * DAY, 7 * DAY, DAY],
         }
     }
 }
@@ -69,13 +68,14 @@ pub enum Advice {
     Fine,
     /// Renewed: the term continues without a gap.
     Renewed { next_term_ends_at: u64 },
-    /// Remind the operator: top up to `top_up_to` (absolute), `shortfall` missing. A reminder
-    /// with no shortfall only says the term ends soon and renewal will be automatic.
+    /// "At the current threshold the renewal will fail": top up to `top_up_to` (absolute),
+    /// `shortfall` missing. Only a top-up mined before the term end counts. `bucket` = the lead
+    /// time reached (send once per bucket).
     Remind {
         left: u64,
         top_up_to: u128,
         shortfall: u128,
-        urgent: bool,
+        bucket: u64,
     },
     /// The term ended, the stake meets the latest threshold, the chain has not written the
     /// renewal yet: nothing to send (permissionless write), keep watching.
@@ -105,19 +105,24 @@ pub fn advise(v: &TermView, chain_now: u64, r: &Reminders) -> Advice {
         };
     }
     let left = v.term_ends_at - chain_now;
+    // Renewal looks at the whole stake (locks are not deducted).
     let shortfall = v.current_threshold.saturating_sub(v.stake);
-    if r.lead.iter().any(|&l| left <= l) {
+    if shortfall == 0 {
+        return Advice::Fine;
+    }
+    if let Some(bucket) = r.lead.iter().copied().filter(|&l| left <= l).min() {
         return Advice::Remind {
             left,
             top_up_to: v.current_threshold,
             shortfall,
-            urgent: shortfall > 0 && left <= r.last_safe,
+            bucket,
         };
     }
     Advice::Fine
 }
 
-/// The automatic renewal rule: locked effective stake >= latest full threshold (equal renews).
+/// The automatic renewal rule: the whole stake (locks not deducted, N6 §H.8.24) >= latest full
+/// threshold (equal renews).
 pub fn renews(stake: u128, latest_threshold: u128) -> bool {
     stake >= latest_threshold
 }
@@ -213,14 +218,16 @@ pub fn top_up(v: &TermView, chain_now: u64) -> TopUp {
     }
 }
 
-/// Before sending `requestRecovery`: the stake read from the chain must meet the latest full
-/// threshold, read from the chain in the same confirmed block. Otherwise do not send (the
+/// Before sending `requestRecovery`: stake minus locked, read from the chain, must meet the
+/// latest full threshold, read from the chain in the same confirmed block. Otherwise do not send (the
 /// contract would refuse it or the vote could not lead anywhere).
-pub fn precheck_recovery(stake: u128, latest_threshold: u128) -> Result<(), u128> {
-    if stake >= latest_threshold {
+pub fn precheck_recovery(stake: u128, locked: u128, latest_threshold: u128) -> Result<(), u128> {
+    // Recovery eligibility (N6 §H.8.24): stake minus what is locked by open cases.
+    let free = stake.saturating_sub(locked);
+    if free >= latest_threshold {
         Ok(())
     } else {
-        Err(latest_threshold - stake)
+        Err(latest_threshold - free)
     }
 }
 
@@ -231,8 +238,8 @@ pub fn reason_for_stop(_why: Stop, stake: u128, latest_threshold: u128) -> Offli
     }
 }
 
-/// Fine per node (project decision 2026-11-08): one ratio per case, the amount follows each
-/// node's own term threshold. Today's ratio is threshold - 80% = 20% (2,000 bps); the case fixes
+/// Fine per node (project decision 2026-11-08; N6 §H.8.24): lock = ratio x the voter's own term
+/// threshold, fixed when the vote is cast. Today's ratio is threshold - 80% = 20% (2,000 bps); the case fixes
 /// its ratio when it opens (field pending the node line).
 pub fn fine_for(term_threshold: u128, ratio_bps: u128) -> u128 {
     term_threshold * ratio_bps / 10_000
