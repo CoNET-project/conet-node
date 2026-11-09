@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod node;
+pub mod probe;
 pub mod statement;
 pub mod voice;
 

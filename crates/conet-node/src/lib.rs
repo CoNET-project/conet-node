@@ -12,6 +12,7 @@ pub mod http;
 pub mod limits;
 pub mod mailbox;
 pub mod nr2;
+pub mod probe_logic;
 pub mod push;
 pub mod register;
 pub mod route;
