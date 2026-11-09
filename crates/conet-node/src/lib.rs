@@ -3,6 +3,7 @@
 
 pub mod acme_dns;
 pub mod admission;
+pub mod auto_topup;
 pub mod ballot;
 pub mod chain;
 pub mod commands;
