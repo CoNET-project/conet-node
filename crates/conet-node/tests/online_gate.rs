@@ -177,40 +177,38 @@ fn closed_case_or_existing_vote_means_no_send() {
     assert!(!executor_race_lost("StakeLocked"));
 }
 
-/// Approval decidable after 5 minutes, rejection only after 12 hours from the opening (user
-/// decisions 2026-11-09).
+/// Online votes: nothing seals in the first 600 s; voting ends at 7,200 s (project correction
+/// 2026-11-09, replacing 5 min / 12 h). Boundaries 599 / 600 / 7,199 / 7,200.
 #[test]
-fn approve_five_minutes_reject_twelve_hours() {
+fn online_vote_window_600_to_7200() {
     let t0 = 1_900_000_000;
-    let ahead_yes = Tally {
+    let yes19 = Tally {
         opened_at: t0,
         agree: 19,
         disagree: 0,
         margin: 20,
     };
-    assert!(!would_decide(&ahead_yes, true, t0 + 299));
-    assert!(would_decide(&ahead_yes, true, t0 + 300));
-    let ahead_no = Tally {
+    let no19 = Tally {
         opened_at: t0,
         agree: 1,
         disagree: 20,
         margin: 20,
     };
-    assert!(!would_decide(&ahead_no, false, t0 + 300));
-    assert!(!would_decide(&ahead_no, false, t0 + 1_800)); // the old 30 minutes no longer suffice
-    assert!(!would_decide(&ahead_no, false, t0 + 43_199));
-    assert!(would_decide(&ahead_no, false, t0 + 43_200));
-    // Not at the margin: never deciding, whatever the time.
+    for (t, side) in [(yes19, true), (no19, false)] {
+        assert!(!would_decide(&t, side, t0 + 599));
+        assert!(would_decide(&t, side, t0 + 600));
+        assert!(would_decide(&t, side, t0 + 7_199));
+        assert!(!would_decide(&t, side, t0 + 7_200)); // voting ended
+        assert_eq!(decidable_from(&t, side), t0 + 600);
+    }
+    assert!(voting_open(&yes19, t0 + 7_199));
+    assert!(!voting_open(&yes19, t0 + 7_200));
+    // Not at the margin: never deciding.
     assert!(!would_decide(
-        &Tally {
-            agree: 10,
-            ..ahead_yes
-        },
+        &Tally { agree: 10, ..yes19 },
         true,
         t0 + 3_600
     ));
-    assert_eq!(decidable_from(&ahead_yes, true), t0 + 300);
-    assert_eq!(decidable_from(&ahead_no, false), t0 + 43_200);
 }
 
 /// Re-applying after a rejection: a fixed 12 hours from the rejection's sealing moment, however
@@ -281,10 +279,10 @@ fn open_case_replaceable_only_after_twelve_hours() {
     assert_eq!((b.replace_at, b.wait), (None, Some(OFFLINE_COOLDOWN - 10)));
 }
 
-/// CANDIDATE: hold a vote that would reach the margin too early, submit it when the side's minimum
-/// open time is up (it becomes the deciding vote); otherwise vote at once.
+/// CANDIDATE: hold a vote that would reach the margin before 600 s, submit it between 600 s and
+/// 7,200 s (it becomes the deciding vote); otherwise vote at once; never after 7,200 s.
 #[test]
-fn hold_the_reaching_vote_until_the_side_can_decide() {
+fn hold_the_reaching_vote_until_600s_never_after_7200() {
     let t0 = 1_900_000_000;
     let yes19 = Tally {
         opened_at: t0,
@@ -292,14 +290,18 @@ fn hold_the_reaching_vote_until_the_side_can_decide() {
         disagree: 0,
         margin: 20,
     };
-    // Agree side would reach 20 at minute 2: hold until minute 5 (+ stagger).
     assert_eq!(
         vote_timing(&yes19, true, t0 + 120, 7),
-        VoteTiming::HoldUntil(t0 + 300 + 7)
+        VoteTiming::HoldUntil(t0 + 607)
     );
-    // At minute 5 the same vote decides: submit now.
-    assert_eq!(vote_timing(&yes19, true, t0 + 300, 7), VoteTiming::Now);
-    // Disagree side reaching its margin early: hold until 12 hours.
+    assert_eq!(
+        vote_timing(&yes19, true, t0 + 599, 0),
+        VoteTiming::HoldUntil(t0 + 600)
+    );
+    assert_eq!(vote_timing(&yes19, true, t0 + 600, 7), VoteTiming::Now);
+    assert_eq!(vote_timing(&yes19, true, t0 + 7_199, 7), VoteTiming::Now);
+    assert_eq!(vote_timing(&yes19, true, t0 + 7_200, 7), VoteTiming::Closed);
+    // Same window for the disagree side.
     let no19 = Tally {
         opened_at: t0,
         agree: 1,
@@ -307,13 +309,18 @@ fn hold_the_reaching_vote_until_the_side_can_decide() {
         margin: 20,
     };
     assert_eq!(
-        vote_timing(&no19, false, t0 + 600, 0),
-        VoteTiming::HoldUntil(t0 + 43_200)
+        vote_timing(&no19, false, t0 + 300, 0),
+        VoteTiming::HoldUntil(t0 + 600)
     );
-    assert_eq!(vote_timing(&no19, false, t0 + 43_200, 0), VoteTiming::Now);
-    // A vote that does not reach the margin goes at once (it helps get there).
+    assert_eq!(vote_timing(&no19, false, t0 + 600, 0), VoteTiming::Now);
+    // A huge stagger is clamped inside the window.
+    assert!(
+        matches!(vote_timing(&yes19, true, t0, 1_000_000), VoteTiming::HoldUntil(x) if x < t0 + 7_200)
+    );
+    // A vote that does not reach the margin goes at once; after 7,200 s nothing.
     let yes5 = Tally { agree: 5, ..yes19 };
     assert_eq!(vote_timing(&yes5, true, t0 + 60, 0), VoteTiming::Now);
+    assert_eq!(vote_timing(&yes5, true, t0 + 7_200, 0), VoteTiming::Closed);
     // Stagger: deterministic, within the spread, differs between nodes.
     let case = [9u8; 32];
     let s1 = stagger(&case, 101, 60);
@@ -326,7 +333,6 @@ fn hold_the_reaching_vote_until_the_side_can_decide() {
             .len()
             > 10
     );
-    // The losers of the deadline race revert: expected, not an error.
     assert!(executor_race_lost("AdmissionState"));
 }
 

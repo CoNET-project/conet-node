@@ -235,12 +235,12 @@ pub fn executor_race_lost(revert_name: &str) -> bool {
     matches!(revert_name, "AdmissionState" | "AlreadyVoted")
 }
 
-/// Minimum open time before a verdict, counted from the case opening (user decisions 2026-11-09;
-/// the earlier "30 minutes" was corrected to 12 hours): an approval may be decided after 5
-/// minutes, a rejection only after 12 hours. Offline reports are unchanged. Independent of the
-/// 12-hour recovery cooldown after going offline (different starting event).
-pub const APPROVE_MIN_OPEN: u64 = 300;
-pub const REJECT_MIN_OPEN: u64 = 43_200;
+/// Online votes (first admission, recovery), project correction 2026-11-09 (replaces approve 5
+/// min / reject 12 h): for the first 600 s votes are taken but nothing seals, even at the margin;
+/// voting ends 7,200 s after opening; no verdict by then = void (no reward, no fine, locks freed).
+/// Re-applying after a rejection still waits 12 hours; offline reports are unchanged.
+pub const MIN_OPEN: u64 = 600;
+pub const MAX_OPEN: u64 = 7_200;
 
 /// Tally of an online case as the chain reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,44 +251,49 @@ pub struct Tally {
     pub margin: u32,
 }
 
-/// Would this node's vote (`agree`) be the deciding one at `now`: it brings its side to the
-/// margin and that side's minimum open time has passed. The contract's exact rule is pending the
-/// node line; this follows the decision.
-pub fn would_decide(t: &Tally, agree: bool, now: u64) -> bool {
-    let (mine, other, min) = if agree {
-        (t.agree + 1, t.disagree, APPROVE_MIN_OPEN)
-    } else {
-        (t.disagree + 1, t.agree, REJECT_MIN_OPEN)
-    };
-    mine >= other + t.margin && now >= t.opened_at + min
+/// Voting still open at `now` (before opening + 7,200 s).
+pub fn voting_open(t: &Tally, now: u64) -> bool {
+    now < t.opened_at + MAX_OPEN
 }
 
-/// Earliest time a vote for `agree` could decide the case (for the executor strategy's timing).
-pub fn decidable_from(t: &Tally, agree: bool) -> u64 {
-    t.opened_at
-        + if agree {
-            APPROVE_MIN_OPEN
-        } else {
-            REJECT_MIN_OPEN
-        }
+/// Would this node's vote (`agree`) be the deciding one at `now`: it brings its side to the
+/// margin, at least 600 s have passed, and voting has not ended. The contract's exact rule is
+/// pending the node line; this follows the decision.
+pub fn would_decide(t: &Tally, agree: bool, now: u64) -> bool {
+    let (mine, other) = if agree {
+        (t.agree + 1, t.disagree)
+    } else {
+        (t.disagree + 1, t.agree)
+    };
+    mine >= other + t.margin && now >= t.opened_at + MIN_OPEN && voting_open(t, now)
+}
+
+/// Earliest time any vote could decide the case (same for both sides).
+pub fn decidable_from(t: &Tally, _agree: bool) -> u64 {
+    t.opened_at + MIN_OPEN
 }
 
 /// CANDIDATE (project principle 2026-11-09, not decided): online cases have no separate finalize;
 /// the first vote that meets every verdict condition seals the case and runs the first settlement
-/// batch in the same transaction. Votes before the minimum open time (approve 5 min, reject 12 h)
-/// cannot decide, so a case whose margin was reached early would stall if nobody votes later.
-/// Candidate answer: a node whose vote would bring its side to the margin BEFORE that side's
-/// minimum open time holds the vote and submits it when the time is up (it then decides); a node
-/// whose vote does not reach the margin votes at once (it helps get there).
+/// batch in the same transaction. Votes in the first 600 s cannot decide, so a case whose margin
+/// was reached early would end void at 7,200 s if nobody votes in between. Candidate answer: a node
+/// whose vote would bring its side to the margin before 600 s holds the vote and submits it
+/// between 600 s and 7,200 s (it then decides); a node whose vote does not reach the margin votes
+/// at once (it helps get there); after 7,200 s nobody votes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VoteTiming {
     /// Submit now (it decides, or it only adds to the count).
     Now,
-    /// Hold: submit at this chain time (the side's minimum open time plus a per-node stagger).
+    /// Hold: submit at this chain time (opening + 600 s plus a per-node stagger, before 7,200 s).
     HoldUntil(u64),
+    /// Voting ended (7,200 s): do not vote.
+    Closed,
 }
 
 pub fn vote_timing(t: &Tally, agree: bool, now: u64, stagger: u64) -> VoteTiming {
+    if !voting_open(t, now) {
+        return VoteTiming::Closed;
+    }
     if would_decide(t, agree, now) {
         return VoteTiming::Now;
     }
@@ -298,8 +303,10 @@ pub fn vote_timing(t: &Tally, agree: bool, now: u64, stagger: u64) -> VoteTiming
         (t.disagree + 1, t.agree)
     };
     if mine >= other + t.margin {
-        // Would reach the margin, but too early to decide: hold until the side's time.
-        VoteTiming::HoldUntil(decidable_from(t, agree) + stagger)
+        // Would reach the margin, but too early to decide: hold until 600 s (+ stagger, kept well
+        // inside the 7,200 s window).
+        let at = decidable_from(t, agree) + stagger.min(MAX_OPEN - MIN_OPEN - 1);
+        VoteTiming::HoldUntil(at)
     } else {
         VoteTiming::Now
     }
