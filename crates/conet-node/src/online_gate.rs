@@ -273,11 +273,49 @@ pub fn decidable_from(t: &Tally, agree: bool) -> u64 {
         }
 }
 
-/// N6 second review: when a rejection of this node's own recovery case is already decided
-/// (disagree side at the margin and the 12-hour minimum open time passed), the node finalizes it
-/// itself, so the fixed 12-hour wait to re-apply (from the seal) starts as early as possible.
-pub fn should_finalize_own_rejection(own_case: bool, t: &Tally, now: u64) -> bool {
-    own_case && t.disagree >= t.agree + t.margin && now >= t.opened_at + REJECT_MIN_OPEN
+/// CANDIDATE (project principle 2026-11-09, not decided): online cases have no separate finalize;
+/// the first vote that meets every verdict condition seals the case and runs the first settlement
+/// batch in the same transaction. Votes before the minimum open time (approve 5 min, reject 12 h)
+/// cannot decide, so a case whose margin was reached early would stall if nobody votes later.
+/// Candidate answer: a node whose vote would bring its side to the margin BEFORE that side's
+/// minimum open time holds the vote and submits it when the time is up (it then decides); a node
+/// whose vote does not reach the margin votes at once (it helps get there).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoteTiming {
+    /// Submit now (it decides, or it only adds to the count).
+    Now,
+    /// Hold: submit at this chain time (the side's minimum open time plus a per-node stagger).
+    HoldUntil(u64),
+}
+
+pub fn vote_timing(t: &Tally, agree: bool, now: u64, stagger: u64) -> VoteTiming {
+    if would_decide(t, agree, now) {
+        return VoteTiming::Now;
+    }
+    let (mine, other) = if agree {
+        (t.agree + 1, t.disagree)
+    } else {
+        (t.disagree + 1, t.agree)
+    };
+    if mine >= other + t.margin {
+        // Would reach the margin, but too early to decide: hold until the side's time.
+        VoteTiming::HoldUntil(decidable_from(t, agree) + stagger)
+    } else {
+        VoteTiming::Now
+    }
+}
+
+/// Deterministic per-node stagger in [0, spread) seconds for one case, so the holders of one case
+/// do not all submit in the same block (only the first one succeeds; the rest revert and count as
+/// a lost race: `executor_race_lost`). Derived from the case id and the node id.
+pub fn stagger(case_id: &[u8; 32], node_id: u64, spread: u64) -> u64 {
+    if spread == 0 {
+        return 0;
+    }
+    let mut b = case_id.to_vec();
+    b.extend_from_slice(&node_id.to_be_bytes());
+    let h = si_crypto::eth::keccak256(&b);
+    u64::from_be_bytes(h[..8].try_into().expect("8 bytes")) % spread
 }
 
 // ---- first admission after a rejection (project decision 2026-11-09) ----

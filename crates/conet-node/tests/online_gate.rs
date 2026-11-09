@@ -281,23 +281,53 @@ fn open_case_replaceable_only_after_twelve_hours() {
     assert_eq!((b.replace_at, b.wait), (None, Some(OFFLINE_COOLDOWN - 10)));
 }
 
+/// CANDIDATE: hold a vote that would reach the margin too early, submit it when the side's minimum
+/// open time is up (it becomes the deciding vote); otherwise vote at once.
 #[test]
-fn finalize_own_decided_rejection_early() {
+fn hold_the_reaching_vote_until_the_side_can_decide() {
     let t0 = 1_900_000_000;
-    let lost = Tally {
+    let yes19 = Tally {
         opened_at: t0,
-        agree: 1,
-        disagree: 21,
+        agree: 19,
+        disagree: 0,
         margin: 20,
     };
-    assert!(!should_finalize_own_rejection(true, &lost, t0 + 43_199));
-    assert!(should_finalize_own_rejection(true, &lost, t0 + 43_200));
-    assert!(!should_finalize_own_rejection(false, &lost, t0 + 43_200)); // someone else's case
-    let open = Tally {
-        disagree: 15,
-        ..lost
+    // Agree side would reach 20 at minute 2: hold until minute 5 (+ stagger).
+    assert_eq!(
+        vote_timing(&yes19, true, t0 + 120, 7),
+        VoteTiming::HoldUntil(t0 + 300 + 7)
+    );
+    // At minute 5 the same vote decides: submit now.
+    assert_eq!(vote_timing(&yes19, true, t0 + 300, 7), VoteTiming::Now);
+    // Disagree side reaching its margin early: hold until 12 hours.
+    let no19 = Tally {
+        opened_at: t0,
+        agree: 1,
+        disagree: 20,
+        margin: 20,
     };
-    assert!(!should_finalize_own_rejection(true, &open, t0 + 50_000)); // not decided
+    assert_eq!(
+        vote_timing(&no19, false, t0 + 600, 0),
+        VoteTiming::HoldUntil(t0 + 43_200)
+    );
+    assert_eq!(vote_timing(&no19, false, t0 + 43_200, 0), VoteTiming::Now);
+    // A vote that does not reach the margin goes at once (it helps get there).
+    let yes5 = Tally { agree: 5, ..yes19 };
+    assert_eq!(vote_timing(&yes5, true, t0 + 60, 0), VoteTiming::Now);
+    // Stagger: deterministic, within the spread, differs between nodes.
+    let case = [9u8; 32];
+    let s1 = stagger(&case, 101, 60);
+    assert!(s1 < 60);
+    assert_eq!(s1, stagger(&case, 101, 60));
+    assert!(
+        (100..140)
+            .map(|n| stagger(&case, n, 60))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            > 10
+    );
+    // The losers of the deadline race revert: expected, not an error.
+    assert!(executor_race_lost("AdmissionState"));
 }
 
 /// First admission rejected: the same applicant waits 12 hours from the seal; changing the
