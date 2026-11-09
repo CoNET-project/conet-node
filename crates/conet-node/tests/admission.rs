@@ -57,6 +57,20 @@ struct World {
 
 const VOTER_ID: u64 = 7;
 
+fn here() -> Observed {
+    Observed::Tcp {
+        ip: "203.0.113.9".into(),
+        port: 80,
+    }
+}
+
+fn at(ip: &str) -> Observed {
+    Observed::Tcp {
+        ip: ip.into(),
+        port: 80,
+    }
+}
+
 fn world(kind: Kind) -> World {
     let g = g();
     let applicant = party(&g, "nodeB", "nodeB");
@@ -68,8 +82,10 @@ fn world(kind: Kind) -> World {
         node_id: if kind == Kind::Recovery { 573 } else { 0 },
         applicant_wallet: applicant.wallet.address(),
         pgp_fingerprint: applicant.public.fingerprint(),
-        ip: "203.0.113.9".into(),
-        tcp_port: 80,
+        endpoint: Endpoint::Tcp {
+            ip: "203.0.113.9".into(),
+            port: 80,
+        },
         endpoint_version: 1,
         proposer_node_id: VOTER_ID,
         expires_at: NOW + 3_600,
@@ -93,6 +109,7 @@ impl World {
             &mut self.rng,
             &self.ctx,
             &self.app,
+            &here(),
             VOTER_ID,
             &self.voter.key,
             &self.applicant.public,
@@ -127,9 +144,10 @@ impl World {
             &self.voter.key,
             &self.applicant.public,
             reply,
-            ("203.0.113.9", 80),
+            &here(),
             now,
         )
+        .map(|_| ())
     }
 }
 
@@ -194,7 +212,7 @@ fn impersonation_refused() {
         &w.voter.key,
         &w.attacker.public,
         &reply,
-        ("203.0.113.9", 80),
+        &here(),
         NOW + 2,
     );
     assert_eq!(wrong_key, Err(Fail::Fingerprint));
@@ -205,6 +223,7 @@ fn impersonation_refused() {
         &mut w.rng,
         &w.ctx,
         &stolen,
+        &here(),
         VOTER_ID,
         &w.voter.key,
         &w.applicant.public,
@@ -233,7 +252,7 @@ fn impersonation_refused() {
             &w.voter.key,
             &w.applicant.public,
             &r2,
-            ("203.0.113.9", 80),
+            &here(),
             NOW
         ),
         Err(Fail::WrongApplication)
@@ -252,6 +271,7 @@ fn reply_for_another_voter_or_relay_refused() {
         )
         .unwrap(),
         hash: [0; 32],
+        observed: here(),
     };
     assert_eq!(
         verify(
@@ -261,7 +281,7 @@ fn reply_for_another_voter_or_relay_refused() {
             &w.attacker.key,
             &w.applicant.public,
             &reply,
-            ("203.0.113.9", 80),
+            &here(),
             NOW + 2
         ),
         Err(Fail::Decrypt)
@@ -271,6 +291,7 @@ fn reply_for_another_voter_or_relay_refused() {
         &mut w.rng,
         &w.ctx,
         &w.app,
+        &here(),
         VOTER_ID,
         &w.attacker.key,
         &w.applicant.public,
@@ -288,7 +309,8 @@ fn wrong_endpoint_refused() {
     let mut w = world(Kind::First);
     let (o, armored) = w.challenge();
     let reply = w.answer(&armored, &mut HashSet::new(), NOW + 1).unwrap();
-    // The voter got the reply from somewhere else than the declared address.
+    // The voter got the reply over another connection than the one it challenged on (a
+    // different peer): the challenge is void.
     assert_eq!(
         verify(
             &w.ctx,
@@ -297,18 +319,22 @@ fn wrong_endpoint_refused() {
             &w.voter.key,
             &w.applicant.public,
             &reply,
-            ("198.51.100.4", 80),
+            &at("198.51.100.4"),
             NOW + 2
         ),
-        Err(Fail::WrongEndpoint)
+        Err(Fail::PathChanged)
     );
     // The applicant refuses a challenge for another endpoint (address reuse, stale data).
     let mut moved = w.app.clone();
-    moved.ip = "198.51.100.4".into();
+    moved.endpoint = Endpoint::Tcp {
+        ip: "198.51.100.4".into(),
+        port: 80,
+    };
     let (_, armored2) = make_challenge(
         &mut w.rng,
         &w.ctx,
         &moved,
+        &at("198.51.100.4"),
         VOTER_ID,
         &w.voter.key,
         &w.applicant.public,
@@ -343,7 +369,7 @@ fn expired_or_version_changed_refused() {
             &w.voter.key,
             &w.applicant.public,
             &reply,
-            ("203.0.113.9", 80),
+            &here(),
             NOW + 2
         ),
         Err(Fail::WrongApplication)
@@ -386,7 +412,7 @@ fn first_and_recovery_do_not_mix() {
             &first.voter.key,
             &first.applicant.public,
             &reply,
-            ("203.0.113.9", 80),
+            &here(),
             NOW + 2
         ),
         Err(Fail::WrongApplication)
