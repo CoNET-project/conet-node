@@ -667,3 +667,74 @@ fn declare_offline_is_immediate_recovery_still_votes() {
     n.vote(app, v, 4, Verdict::Approve(direct)).unwrap();
     assert_eq!(n.resolve(t).unwrap(), Outcome::Online);
 }
+
+/// Re-sign a modified body with a key, encrypted to a recipient (test forgery helper).
+fn reseal(w: &mut W, body: &[u8], to_voter: bool) -> String {
+    let opts = |k| si_crypto::opgp::EncryptOpts {
+        text: false,
+        zlib: false,
+        sign_with: Some(k),
+    };
+    if to_voter {
+        si_crypto::opgp::encrypt(&mut w.rng, body, w.voter.public.key(), opts(&w.node.key))
+    } else {
+        si_crypto::opgp::encrypt(&mut w.rng, body, w.node.public.key(), opts(&w.voter.key))
+    }
+    .unwrap()
+}
+
+/// N6 §H.8.25: a version mismatch is no answer / no vote; a reply missing its DTLS fields is a
+/// field error; only present-but-different signed DTLS is a contradiction.
+#[test]
+fn version_and_missing_dtls_are_not_contradictions() {
+    let mut w = w();
+    let a = w.app(browser(None), 1);
+    let seen = webrtc("u|1|p", "198.51.100.7", 51_234, "srflx", None, DTLS);
+    let (o, ch) = w.challenge(&a, &seen).unwrap();
+    // Challenge from another protocol version: the applicant does not answer.
+    let d = si_crypto::opgp::decrypt(&ch, &w.node.key, Some(w.voter.public.key())).unwrap();
+    let mut c: Challenge = serde_json::from_slice(&d.data[CHALLENGE_PREFIX.len()..]).unwrap();
+    c.v = PROTOCOL_VERSION + 1;
+    let body = [CHALLENGE_PREFIX, &serde_json::to_vec(&c).unwrap()].concat();
+    let other = reseal(&mut w, &body, false);
+    assert_eq!(w.answer(&a, &other), Err(Fail::ProtocolVersion));
+    // Replies: start from the honest one and change one field at a time.
+    let honest = w.answer(&a, &ch).unwrap();
+    assert!(w.verify(&a, &o, &honest, &seen).is_ok());
+    let d = si_crypto::opgp::decrypt(&honest, &w.voter.key, Some(w.node.public.key())).unwrap();
+    let r: Reply = serde_json::from_slice(&d.data[REPLY_PREFIX.len()..]).unwrap();
+    let mut cases: Vec<(Reply, Fail)> = Vec::new();
+    cases.push((
+        Reply {
+            v: PROTOCOL_VERSION + 1,
+            ..r.clone()
+        },
+        Fail::ProtocolVersion,
+    ));
+    cases.push((
+        Reply {
+            node_dtls: None,
+            ..r.clone()
+        },
+        Fail::BadField,
+    ));
+    cases.push((
+        Reply {
+            voter_dtls: None,
+            ..r.clone()
+        },
+        Fail::BadField,
+    ));
+    cases.push((
+        Reply {
+            node_dtls: Some("AB".repeat(32)),
+            ..r.clone()
+        },
+        Fail::SignedDtlsContradicts,
+    ));
+    for (rr, want) in cases {
+        let body = [REPLY_PREFIX, &serde_json::to_vec(&rr).unwrap()].concat();
+        let forged = reseal(&mut w, &body, true);
+        assert_eq!(w.verify(&a, &o, &forged, &seen), Err(want));
+    }
+}

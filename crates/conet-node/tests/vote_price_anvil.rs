@@ -92,6 +92,7 @@ fn golden() -> Value {
 }
 
 #[tokio::test]
+#[ignore = "needs a local anvil set up by tools/; run with --include-ignored and the env vars"]
 async fn votes_go_out_through_base_fee_spikes() {
     let (Ok(url), Ok(reg)) = (std::env::var("F5_RPC"), std::env::var("F5_REGISTRY")) else {
         eprintln!("skipped: F5_RPC / F5_REGISTRY not set");

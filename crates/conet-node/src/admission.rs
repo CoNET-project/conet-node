@@ -195,6 +195,9 @@ impl Observed {
 pub const RESERVED_PREFIX: &[u8] = b"CONET-ADMISSION-";
 pub const CHALLENGE_PREFIX: &[u8] = b"CONET-ADMISSION-CHALLENGE-v1\n";
 pub const REPLY_PREFIX: &[u8] = b"CONET-ADMISSION-REPLY-v1\n";
+/// Version carried in every challenge and reply (N6 §H.8.25): a peer on another version gets no
+/// answer and no vote, never a disagree.
+pub const PROTOCOL_VERSION: u8 = 1;
 
 /// For other PGP-signing code: true = refuse to sign this payload.
 pub fn is_reserved_pgp_payload(payload: &[u8]) -> bool {
@@ -348,6 +351,7 @@ pub struct Application {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Challenge {
+    /// Protocol version ([`PROTOCOL_VERSION`]); a mismatch is never a reason to disagree.
     pub v: u8,
     pub app_id: String,
     pub kind: Kind,
@@ -383,6 +387,8 @@ impl Challenge {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Reply {
+    /// Protocol version the applicant answered with ([`PROTOCOL_VERSION`]).
+    pub v: u8,
     pub challenge_hash: String,
     /// First admission: the main wallet's AdmissionResponse signature. Recovery: none (the main
     /// wallet authorized the candidate endpoint once; each reply is PGP-signed only).
@@ -411,6 +417,9 @@ pub enum Fail {
     /// The DTLS fingerprint on the voter's session is not the authorized one, or the two
     /// sides do not see the same pair of certificates.
     DtlsFingerprint,
+    /// Challenge or reply speaks another protocol version (upgrade in progress): never a
+    /// reason to disagree.
+    ProtocolVersion,
     /// The applicant's own signed reply, bound to this challenge, states DTLS fingerprints that
     /// differ from the voter's view of a session whose remote certificate IS the authorized one.
     SignedDtlsContradicts,
@@ -538,7 +547,7 @@ pub fn make_challenge<R: RngCore + CryptoRng>(
         Observed::Tcp { .. } => (None, None),
     };
     let c = Challenge {
-        v: 1,
+        v: PROTOCOL_VERSION,
         app_id: hex::encode(a.app_id),
         kind: a.kind,
         node_id: a.node_id,
@@ -615,6 +624,9 @@ pub fn answer<R: RngCore + CryptoRng>(
     if checked.verified != Some(true) || checked.data != plain.data {
         return Err(Fail::VoterSig);
     }
+    if c.v != PROTOCOL_VERSION {
+        return Err(Fail::ProtocolVersion);
+    }
     if c.chain_id != ctx.chain_id || !c.registry.eq_ignore_ascii_case(&ctx.registry) {
         return Err(Fail::WrongContext);
     }
@@ -675,6 +687,7 @@ pub fn answer<R: RngCore + CryptoRng>(
         Kind::Recovery => None,
     };
     let reply = Reply {
+        v: PROTOCOL_VERSION,
         challenge_hash: hex::encode(hc),
         wallet_sig,
         node_dtls: dtls_pair.0,
@@ -726,6 +739,9 @@ pub fn verify(
     }
     let r: Reply =
         serde_json::from_slice(strip_prefix(REPLY_PREFIX, &d.data)?).map_err(|_| Fail::BadField)?;
+    if r.v != PROTOCOL_VERSION {
+        return Err(Fail::ProtocolVersion);
+    }
     if r.challenge_hash != hex::encode(outstanding.hash) {
         return Err(Fail::ChallengeMismatch);
     }
@@ -750,9 +766,11 @@ pub fn verify(
         ..
     } = observed_now
     {
-        if r.node_dtls.as_deref() != Some(fp_norm(dtls_fingerprint).as_str())
-            || r.voter_dtls.as_deref() != Some(fp_norm(local_dtls_fingerprint).as_str())
-        {
+        // A missing field is a field error (no vote), not a contradiction (N6 §H.8.25).
+        let (Some(nd), Some(vd)) = (r.node_dtls.as_deref(), r.voter_dtls.as_deref()) else {
+            return Err(Fail::BadField);
+        };
+        if nd != fp_norm(dtls_fingerprint) || vd != fp_norm(local_dtls_fingerprint) {
             return Err(Fail::SignedDtlsContradicts);
         }
     }

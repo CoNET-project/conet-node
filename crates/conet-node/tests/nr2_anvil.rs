@@ -32,6 +32,7 @@ fn golden() -> Value {
 }
 
 #[tokio::test]
+#[ignore = "needs a local anvil set up by tools/; run with --include-ignored and the env vars"]
 async fn table_routes_and_policy_from_a_local_registry() {
     let Some((rpc, registry, lens)) = env() else {
         eprintln!("skipped: NR2_RPC / NR2_REGISTRY / NR2_LENS not set");
@@ -110,6 +111,7 @@ async fn table_routes_and_policy_from_a_local_registry() {
 /// With `NR2_WAIT_EVENT=1`: poll until a node event (sent by the operator meanwhile, e.g.
 /// `updateServices` on node 7) changes the version string, even if `tableVersion` does not.
 #[tokio::test]
+#[ignore = "needs a local anvil set up by tools/; run with --include-ignored and the env vars"]
 async fn node_event_changes_the_version() {
     let (Some((rpc, registry, lens)), Ok(_)) = (env(), std::env::var("NR2_WAIT_EVENT")) else {
         eprintln!("skipped: needs NR2_* and NR2_WAIT_EVENT");
