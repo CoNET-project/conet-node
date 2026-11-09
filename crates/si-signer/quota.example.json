@@ -1,8 +1,6 @@
 {
-  "_note": "conet-signer --quota-config example. Every value is an N6 proposal (H8-2, H8-7) and is PENDING USER APPROVAL. reportOffline has no daily count of any kind (operator decision H8-12, 2026-11-08) and none can be configured; max_inflight_report is a concurrency lane only (suggested, pending). reportOffline gas ceiling 384731 = local measurement x 1.5 (re-measure on a CoNET fork before deployment); markOnline, setOnline and extendOnline gas ceilings wait for measured gas x 1.5.",
+  "_note": "conet-signer --quota-config example. Values are N6 proposals (H8-2, H8-7) PENDING USER APPROVAL unless noted. voteReport (agree, disagree, deciding vote) has no daily count and no spend cap (operator and user, 2026-11-08); none can be configured. reportOffline has no daily count (H8-12); none can be configured. max_inflight_vote and max_inflight_report are concurrency lanes only (suggested, pending). spend_upkeep_wei covers markOnline and finalizeReport only (value pending, H8-13). reportOffline gas ceiling 384731 = local measurement x 1.5 (re-measure on a CoNET fork before deployment); voteReport/finalizeReport 6000000 is the floor; markOnline, setOnline and extendOnline gas ceilings wait for measured gas x 1.5.",
   "daily": {
-    "voteReport.agree": 20,
-    "voteReport.disagree": 200,
     "markOnline": 20,
     "finalizeReport": 50,
     "setOnline+extendOnline": 500,
@@ -14,11 +12,12 @@
     "finalizeReport": 6000000,
     "reportOffline": 384731
   },
-  "spend_vote_wei": 60000000000000000,
+  "spend_upkeep_wei": 60000000000000000,
   "spend_anchor_net_wei": 40000000000000000,
   "spend_total_wei": 100000000000000000,
   "max_fee_wei": 100000000,
   "max_inflight": 4,
-  "warn_percent": 80,
-  "max_inflight_report": 4
+  "max_inflight_vote": 4,
+  "max_inflight_report": 4,
+  "warn_percent": 80
 }

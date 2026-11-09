@@ -33,90 +33,196 @@ fn vote(agree: bool) -> Intent<'static> {
 
 /// Grant and immediately settle at the reserved cost, so in-flight never limits the test.
 fn vote_settled(q: &mut Quota, agree: bool, now: u64) -> Result<Grant, QuotaError> {
-    let g = q.reserve(&vote(agree), now)?;
-    q.settle(g.ticket.unwrap(), 80_000, GWEI_TENTH, now)
+    settled(q, &vote(agree), now)
+}
+
+/// finalizeReport: still a counted, capped action (50 per day by default; values pending).
+fn finalize() -> Intent<'static> {
+    Intent::tx(A_FINALIZE, 80_000, GWEI_TENTH)
+}
+
+fn settled(q: &mut Quota, i: &Intent, now: u64) -> Result<Grant, QuotaError> {
+    let g = q.reserve(i, now)?;
+    q.settle(g.ticket.unwrap(), i.gas_limit, i.max_fee_wei, now)
         .unwrap();
     Ok(g)
 }
 
 #[test]
-fn quota_vote_agree_cap_rejects_21st() {
+fn quota_vote_agree_no_daily_limit() {
     let d = tempfile::tempdir().unwrap();
-    let mut q = ledger(&d, QuotaConfig::default());
-    for _ in 0..20 {
-        vote_settled(&mut q, true, T0).unwrap();
+    let mut q = ledger(&d, defaults());
+    // Far past the withdrawn 20-per-day proposal: every agree vote goes through.
+    for _ in 0..500 {
+        let g = vote_settled(&mut q, true, T0).unwrap();
+        assert!(g.warnings.is_empty());
     }
-    let e = vote_settled(&mut q, true, T0).unwrap_err();
-    assert_eq!(
-        e,
-        QuotaError::Exceeded {
-            bucket: B_VOTE_AGREE.into(),
-            used: 20,
-            cap: 20
-        }
-    );
-    // The refusal names bucket and counts only.
-    assert_eq!(e.to_string(), "quota_exceeded:voteReport.agree 20/20");
+    // Recorded, not counted against anything.
+    assert_eq!(q.spent(SpendClass::Ballot, T0), 500 * 80_000 * GWEI_TENTH);
+    assert_eq!(q.used(A_VOTE_AGREE, T0), 0);
 }
 
 #[test]
-fn quota_vote_disagree_counted_separately() {
+fn quota_vote_disagree_no_daily_limit() {
     let d = tempfile::tempdir().unwrap();
-    let mut q = ledger(&d, QuotaConfig::default());
-    for _ in 0..20 {
-        vote_settled(&mut q, true, T0).unwrap();
-    }
-    assert!(vote_settled(&mut q, true, T0).is_err());
-    // Agree budget spent; disagree votes still go through and are counted apart.
-    for _ in 0..30 {
+    let mut q = ledger(&d, defaults());
+    // Far past the withdrawn 200-per-day proposal.
+    for _ in 0..2_000 {
         vote_settled(&mut q, false, T0).unwrap();
     }
-    assert_eq!(q.used(B_VOTE_AGREE, T0), 20);
-    assert_eq!(q.used(B_VOTE_DISAGREE, T0), 30);
+    // Votes do not touch the counted actions either.
+    for _ in 0..50 {
+        settled(&mut q, &finalize(), T0).unwrap();
+    }
+    assert!(matches!(
+        settled(&mut q, &finalize(), T0),
+        Err(QuotaError::Exceeded { .. })
+    ));
+    vote_settled(&mut q, false, T0).unwrap();
 }
 
 #[test]
-fn quota_report_offline_not_counted_in_votes() {
+fn quota_vote_daily_bucket_refused() {
+    let d = tempfile::tempdir().unwrap();
+    // A daily count for votes cannot be configured: the ledger does not start.
+    for b in [A_VOTE_AGREE, A_VOTE_DISAGREE, "voteReport"] {
+        let mut c = defaults();
+        c.daily.insert(b.into(), 20);
+        let err = Quota::open(c, d.path().join("x.json")).err().unwrap();
+        assert!(err.contains("unknown bucket"), "{b}: {err}");
+    }
+    // Neither can a spend cap for votes: the old field name is unknown.
+    let mut j = serde_json::to_value(defaults()).unwrap();
+    j["spend_vote_wei"] = serde_json::json!(60_000_000_000_000_000u64);
+    assert!(serde_json::from_value::<QuotaConfig>(j).is_err());
+}
+
+#[test]
+fn quota_vote_outside_spend_caps() {
+    let gwei = MAX_FEE_HARD_CAP_WEI;
+    let d = tempfile::tempdir().unwrap();
+    let mut c = defaults();
+    c.max_fee_wei = gwei;
+    c.gas_ceiling.insert(A_SET_ONLINE.into(), 10_000_000);
+    c.max_inflight = 100;
+    c.max_inflight_vote = 100;
+    let mut q = ledger(&d, c);
+    // Fill the upkeep class (0.06 = ten 6M-gas finalizeReport reservations at 1 gwei) ...
+    let fin = Intent::tx(A_FINALIZE, 6_000_000, gwei);
+    for _ in 0..10 {
+        q.reserve(&fin, T0).unwrap();
+    }
+    assert!(matches!(
+        q.reserve(&fin, T0).unwrap_err(),
+        QuotaError::Exceeded { ref bucket, .. } if bucket == "spend.upkeep"
+    ));
+    // ... and the anchor class (0.04): the total (0.1) is full too.
+    let anchor = Intent::tx(A_SET_ONLINE, 10_000_000, gwei);
+    for _ in 0..4 {
+        q.reserve(&anchor, T0).unwrap();
+    }
+    assert!(q.reserve(&anchor, T0).is_err());
+    // Votes, deciding votes at the 6M ceiling and the 1 gwei cap included, all go through.
+    let deciding = Intent::tx(A_VOTE_AGREE, DECIDING_VOTE_GAS_FLOOR, gwei);
+    for _ in 0..60 {
+        let g = q.reserve(&deciding, T0).unwrap();
+        assert!(g.warnings.is_empty(), "no spend warning for votes");
+        q.settle(g.ticket.unwrap(), 3_857_848, gwei, T0).unwrap();
+    }
+    assert_eq!(q.spent(SpendClass::Ballot, T0), 60 * 3_857_848 * gwei);
+    // A per-transaction bound still applies: above the gas ceiling or the maxFee cap.
+    assert!(matches!(
+        q.reserve(
+            &Intent::tx(A_VOTE_AGREE, DECIDING_VOTE_GAS_FLOOR + 1, gwei),
+            T0
+        ),
+        Err(QuotaError::GasAboveCeiling { .. })
+    ));
+    assert!(matches!(
+        q.reserve(&Intent::tx(A_VOTE_AGREE, 80_000, gwei + 1), T0),
+        Err(QuotaError::MaxFeeTooHigh { .. })
+    ));
+}
+
+#[test]
+fn quota_vote_inflight_lane_releases() {
+    let d = tempfile::tempdir().unwrap();
+    let mut q = ledger(&d, with_report_gas());
+    // The vote lane bounds only what is in flight at once.
+    let t: Vec<u64> = (0..4)
+        .map(|_| q.reserve(&vote(true), T0).unwrap().ticket.unwrap())
+        .collect();
+    assert_eq!(
+        q.reserve(&vote(false), T0).unwrap_err(),
+        QuotaError::InflightVote { cap: 4 }
+    );
+    // Other lanes are not affected by a full vote lane, and the other way round.
+    let f: Vec<u64> = (0..4)
+        .map(|_| q.reserve(&finalize(), T0).unwrap().ticket.unwrap())
+        .collect();
+    assert_eq!(
+        q.reserve(&finalize(), T0).unwrap_err(),
+        QuotaError::Inflight { cap: 4 }
+    );
+    assert!(q.reserve(&report(), T0).is_ok());
+    // Settling or cancelling frees a slot at once: thousands of votes over the day, four at a time.
+    q.settle(t[0], 80_000, GWEI_TENTH, T0).unwrap();
+    q.cancel(t[1], T0).unwrap();
+    for _ in 0..1_000 {
+        let g = q.reserve(&vote(true), T0).unwrap();
+        q.settle(g.ticket.unwrap(), 80_000, GWEI_TENTH, T0).unwrap();
+    }
+    // The lane does not reset by day: two still in flight carry over midnight and still count.
+    let next = T0 + 86_400;
+    let a = q.reserve(&vote(true), next).unwrap().ticket.unwrap();
+    let b = q.reserve(&vote(true), next).unwrap().ticket.unwrap();
+    assert_eq!(
+        q.reserve(&vote(true), next).unwrap_err(),
+        QuotaError::InflightVote { cap: 4 }
+    );
+    for x in [t[2], t[3], a, b] {
+        q.settle(x, 80_000, GWEI_TENTH, next).unwrap();
+    }
+    for x in f {
+        q.cancel(x, next).unwrap();
+    }
+    assert!(q.reserve(&vote(true), next).is_ok());
+}
+
+#[test]
+fn quota_report_offline_own_lane() {
     let gwei = MAX_FEE_HARD_CAP_WEI;
     let d = tempfile::tempdir().unwrap();
     let mut c = with_report_gas();
     c.max_fee_wei = gwei;
     let mut q = ledger(&d, c);
-    // Fill every vote-side limit: agree count, vote spend, and the vote in-flight lane.
-    for _ in 0..20 {
-        vote_settled(&mut q, true, T0).unwrap();
-    }
-    assert!(vote_settled(&mut q, true, T0).is_err());
-    let big = Intent::tx(A_VOTE_DISAGREE, 6_000_000, gwei);
+    // Fill the upkeep spend, the other lane and the vote lane.
+    let fin = Intent::tx(A_FINALIZE, 6_000_000, gwei);
     let held: Vec<u64> = (0..4)
-        .map(|_| q.reserve(&big, T0).unwrap().ticket.unwrap())
+        .map(|_| q.reserve(&fin, T0).unwrap().ticket.unwrap())
         .collect();
-    assert_eq!(
-        q.reserve(&big, T0).unwrap_err(),
-        QuotaError::Inflight { cap: 4 }
-    );
+    for _ in 0..4 {
+        q.reserve(&vote(false), T0).unwrap();
+    }
+    assert!(q.reserve(&fin, T0).is_err());
+    assert!(q.reserve(&vote(true), T0).is_err());
     // A report still goes through: no count, outside spend caps, its own lane.
     let r = Intent::tx(A_REPORT, 400_000, gwei);
     let g = q.reserve(&r, T0).unwrap();
     assert!(g.warnings.is_empty());
-    assert_eq!(q.used(B_VOTE_AGREE, T0), 20);
-    // Reports in flight do not block votes either.
-    for t in held {
-        q.settle(t, 6_000_000, gwei, T0).unwrap();
+    // The report lane is a concurrency bound only.
+    for _ in 0..3 {
+        q.reserve(&r, T0).unwrap();
     }
-    let reps: Vec<u64> = (0..3)
-        .map(|_| q.reserve(&r, T0).unwrap().ticket.unwrap())
-        .collect();
-    assert_eq!(reps.len() + 1, q.inflight()); // four reports, no votes in flight
-    assert!(q.reserve(&vote(false), T0).is_ok());
-    // The report lane is a concurrency bound only: the fifth concurrent report waits,
-    // and settling one frees a slot at once.
     assert_eq!(
         q.reserve(&r, T0).unwrap_err(),
         QuotaError::InflightReport { cap: 4 }
     );
     q.settle(g.ticket.unwrap(), 300_000, gwei, T0).unwrap();
     assert!(q.reserve(&r, T0).is_ok());
+    for t in held {
+        q.cancel(t, T0).unwrap();
+    }
 }
 
 #[test]
@@ -214,8 +320,8 @@ fn quota_spend_reserve_then_settle() {
     let mut c = defaults();
     c.max_fee_wei = gwei;
     let mut q = ledger(&d, c);
-    // A 6M-gas vote at 1 gwei reserves 0.006 CNET; the vote budget is 0.06.
-    let big = Intent::tx(A_VOTE_AGREE, 6_000_000, gwei);
+    // A 6M-gas finalizeReport at 1 gwei reserves 0.006 CNET; the upkeep budget is 0.06.
+    let big = Intent::tx(A_FINALIZE, 6_000_000, gwei);
     let tickets: Vec<u64> = (0..4)
         .map(|_| q.reserve(&big, T0).unwrap().ticket.unwrap())
         .collect();
@@ -224,14 +330,14 @@ fn quota_spend_reserve_then_settle() {
         q.settle(t, 80_000, 1_000_000, T0).unwrap();
     }
     assert_eq!(q.inflight(), 0);
-    // So nine more full-cost votes fit (0.054 + 4 x 0.00000008), the tenth does not.
+    // So nine more full-cost calls fit (0.054 + 4 x 0.00000008), the tenth does not.
     for _ in 0..9 {
         let t = q.reserve(&big, T0).unwrap().ticket.unwrap();
         q.settle(t, 6_000_000, gwei, T0).unwrap();
     }
     let e = q.reserve(&big, T0).unwrap_err();
     assert!(
-        matches!(e, QuotaError::Exceeded { ref bucket, .. } if bucket == "spend.vote"),
+        matches!(e, QuotaError::Exceeded { ref bucket, .. } if bucket == "spend.upkeep"),
         "{e}"
     );
 
@@ -239,17 +345,17 @@ fn quota_spend_reserve_then_settle() {
     let d = tempfile::tempdir().unwrap();
     let mut c = defaults();
     c.max_fee_wei = gwei;
-    c.spend_vote_wei = 6_000_000 * gwei; // room for exactly one reservation
+    c.spend_upkeep_wei = 6_000_000 * gwei; // room for exactly one reservation
     let mut q = ledger(&d, c);
     let t = q.reserve(&big, T0).unwrap().ticket.unwrap();
     assert!(matches!(
         q.reserve(&big, T0).unwrap_err(),
-        QuotaError::Exceeded { ref bucket, .. } if bucket == "spend.vote"
+        QuotaError::Exceeded { ref bucket, .. } if bucket == "spend.upkeep"
     ));
     q.cancel(t, T0).unwrap();
-    assert_eq!(q.used(B_VOTE_AGREE, T0), 1);
+    assert_eq!(q.used(B_FINALIZE, T0), 1);
     assert!(q.reserve(&big, T0).is_ok());
-    assert_eq!(q.used(B_VOTE_AGREE, T0), 2);
+    assert_eq!(q.used(B_FINALIZE, T0), 2);
     assert_eq!(
         q.settle(999, 1, 1, T0).unwrap_err(),
         QuotaError::UnknownTicket
@@ -258,13 +364,13 @@ fn quota_spend_reserve_then_settle() {
 
 #[test]
 fn quota_spend_class_caps_independent() {
+    let gwei = MAX_FEE_HARD_CAP_WEI;
     let d = tempfile::tempdir().unwrap();
     let mut c = defaults();
-    c.max_fee_wei = MAX_FEE_HARD_CAP_WEI;
+    c.max_fee_wei = gwei;
     c.gas_ceiling.insert(A_SET_ONLINE.into(), 10_000_000);
     c.max_inflight = 100;
     let mut q = ledger(&d, c);
-    let gwei = MAX_FEE_HARD_CAP_WEI;
     // Anchor class: 0.04 CNET net = four 0.01 CNET reservations.
     let anchor = Intent::tx(A_SET_ONLINE, 10_000_000, gwei);
     for _ in 0..4 {
@@ -274,18 +380,16 @@ fn quota_spend_class_caps_independent() {
         q.reserve(&anchor, T0).unwrap_err(),
         QuotaError::Exceeded { ref bucket, .. } if bucket == "spend.anchor"
     ));
-    // Vote class is separate: 0.06 CNET = ten 0.006 CNET reservations ...
-    let v = Intent::tx(A_VOTE_DISAGREE, 6_000_000, gwei);
+    // Upkeep class is separate: 0.06 CNET = ten 0.006 CNET reservations.
+    let fin = Intent::tx(A_FINALIZE, 6_000_000, gwei);
     for _ in 0..10 {
-        q.reserve(&v, T0).unwrap();
+        q.reserve(&fin, T0).unwrap();
     }
-    // ... and now the total (0.04 + 0.06 = 0.1) is full as well as the vote class.
     assert!(matches!(
-        q.reserve(&v, T0).unwrap_err(),
-        QuotaError::Exceeded { ref bucket, .. } if bucket == "spend.vote"
+        q.reserve(&fin, T0).unwrap_err(),
+        QuotaError::Exceeded { ref bucket, .. } if bucket == "spend.upkeep"
     ));
-    // Anchor spend counts net of reimbursements: settle four at full cost (0.04), get 0.02
-    // back, and the anchor class has 0.02 of room again.
+    // Anchor spend counts net of reimbursements; the total caps upkeep + anchor.
     let d2 = tempfile::tempdir().unwrap();
     let mut c = defaults();
     c.max_fee_wei = gwei;
@@ -303,10 +407,10 @@ fn quota_spend_class_caps_independent() {
     q.reimbursed(20_000_000_000_000_000, T0).unwrap();
     q.reserve(&anchor, T0).unwrap();
     q.reserve(&anchor, T0).unwrap(); // anchor net 0.04 again
-                                     // Vote class has room (0.06) but the total (0.05) has only 0.01 left: one 0.006 vote fits.
-    q.reserve(&v, T0).unwrap();
+                                     // Upkeep has room (0.06) but the total (0.05) has only 0.01 left: one 0.006 call fits.
+    q.reserve(&fin, T0).unwrap();
     assert!(matches!(
-        q.reserve(&v, T0).unwrap_err(),
+        q.reserve(&fin, T0).unwrap_err(),
         QuotaError::Exceeded { ref bucket, .. } if bucket == "spend.total"
     ));
 }
@@ -314,35 +418,35 @@ fn quota_spend_class_caps_independent() {
 #[test]
 fn quota_inflight_cap_4() {
     let d = tempfile::tempdir().unwrap();
-    let mut q = ledger(&d, QuotaConfig::default());
+    let mut q = ledger(&d, defaults());
     let mut t = Vec::new();
     for _ in 0..4 {
-        t.push(q.reserve(&vote(false), T0).unwrap().ticket.unwrap());
+        t.push(q.reserve(&finalize(), T0).unwrap().ticket.unwrap());
     }
     assert_eq!(
-        q.reserve(&vote(false), T0).unwrap_err(),
+        q.reserve(&finalize(), T0).unwrap_err(),
         QuotaError::Inflight { cap: 4 }
     );
     // Signatures are not transactions: anchor receipts are not limited by in flight.
     assert!(q.reserve(&Intent::signature(A_ANCHOR_RECEIPT), T0).is_ok());
     q.settle(t[0], 80_000, 1, T0).unwrap();
-    assert!(q.reserve(&vote(false), T0).is_ok());
+    assert!(q.reserve(&finalize(), T0).is_ok());
 }
 
 #[test]
 fn quota_persists_across_restart() {
     let d = tempfile::tempdir().unwrap();
-    let mut q = ledger(&d, QuotaConfig::default());
-    for _ in 0..20 {
-        vote_settled(&mut q, true, T0).unwrap();
+    let mut q = ledger(&d, defaults());
+    for _ in 0..50 {
+        settled(&mut q, &finalize(), T0).unwrap();
     }
     let held = q.reserve(&vote(false), T0).unwrap().ticket.unwrap();
     drop(q);
-    let mut q = ledger(&d, QuotaConfig::default());
-    assert_eq!(q.used(B_VOTE_AGREE, T0), 20);
+    let mut q = ledger(&d, defaults());
+    assert_eq!(q.used(B_FINALIZE, T0), 50);
     assert_eq!(q.inflight(), 1);
     assert!(matches!(
-        vote_settled(&mut q, true, T0 + 5),
+        settled(&mut q, &finalize(), T0 + 5),
         Err(QuotaError::Exceeded { .. })
     ));
     // The in-flight ticket from before the restart can still be settled.
@@ -360,18 +464,18 @@ fn quota_persists_across_restart() {
 #[test]
 fn quota_utc_day_rollover() {
     let d = tempfile::tempdir().unwrap();
-    let mut q = ledger(&d, QuotaConfig::default());
+    let mut q = ledger(&d, defaults());
     let last = (T0 / 86_400 + 1) * 86_400 - 1; // 23:59:59 UTC
-    for _ in 0..20 {
-        vote_settled(&mut q, true, last).unwrap();
+    for _ in 0..50 {
+        settled(&mut q, &finalize(), last).unwrap();
     }
-    assert!(vote_settled(&mut q, true, last).is_err());
+    assert!(settled(&mut q, &finalize(), last).is_err());
     let held = q.reserve(&vote(false), last).unwrap().ticket.unwrap();
     // 00:00:00 UTC: counts start over, the in-flight ticket carries over.
     let midnight = last + 1;
-    assert_eq!(q.used(B_VOTE_AGREE, midnight), 0);
-    vote_settled(&mut q, true, midnight).unwrap();
-    assert_eq!(q.used(B_VOTE_AGREE, midnight), 1);
+    assert_eq!(q.used(B_FINALIZE, midnight), 0);
+    settled(&mut q, &finalize(), midnight).unwrap();
+    assert_eq!(q.used(B_FINALIZE, midnight), 1);
     assert_eq!(q.inflight(), 1);
     q.settle(held, 80_000, 1, midnight).unwrap();
 }
@@ -405,22 +509,22 @@ fn quota_corrupt_state_fails_closed() {
 #[test]
 fn quota_warn_once_at_80pct() {
     let d = tempfile::tempdir().unwrap();
-    let mut q = ledger(&d, QuotaConfig::default());
+    let mut q = ledger(&d, defaults());
     let mut warned_at = Vec::new();
-    for i in 1..=20 {
-        let g = vote_settled(&mut q, true, T0).unwrap();
-        if g.warnings.iter().any(|w| w == B_VOTE_AGREE) {
+    for i in 1..=50 {
+        let g = settled(&mut q, &finalize(), T0).unwrap();
+        if g.warnings.iter().any(|w| w == B_FINALIZE) {
             warned_at.push(i);
         }
     }
-    // 16 of 20 = 80 %: one warning, not repeated at 17..20.
-    assert_eq!(warned_at, vec![16]);
+    // 40 of 50 = 80 %: one warning, not repeated at 41..50.
+    assert_eq!(warned_at, vec![40]);
     // Next day it can warn again.
     let next = T0 + 86_400;
     let mut again = 0;
-    for _ in 0..16 {
-        let g = vote_settled(&mut q, true, next).unwrap();
-        again += g.warnings.iter().filter(|w| *w == B_VOTE_AGREE).count();
+    for _ in 0..40 {
+        let g = settled(&mut q, &finalize(), next).unwrap();
+        again += g.warnings.iter().filter(|w| *w == B_FINALIZE).count();
     }
     assert_eq!(again, 1);
 }

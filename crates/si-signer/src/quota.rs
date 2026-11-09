@@ -6,15 +6,22 @@
 //! `SignTx` role yet, and adding one needs user approval (H8-1, H8-2, H8-7).
 //!
 //! What it enforces, all as parameters (defaults = N6 proposals, PENDING USER APPROVAL):
-//! - daily counts per bucket (UTC day), agree and disagree votes counted apart;
+//! - daily counts per bucket (UTC day) for markOnline, finalizeReport, anchor submissions and
+//!   anchor receipts;
+//! - `voteReport` (agree and disagree, the deciding vote included) has NO daily count and NO
+//!   spend cap (operator 2026-11-08, H812B; user 2026-11-08, "投票不受花费上限约束", H812C): its
+//!   own uncapped spend class (recorded only) and its own in-flight lane;
 //! - `reportOffline` has NO daily count of any kind (operator decision H8-12, 2026-11-08):
-//!   it is not counted toward votes, has its own uncapped spend class and its own in-flight
-//!   lane, so no vote or anchor limit can hold a report back;
+//!   its own uncapped spend class and its own in-flight lane;
+//! - so no other limit can hold a vote or a report back. One vote per case, the per-case lock
+//!   and the 7-day cooldown are contract rules, checked by `conet-node`'s vote gate, not here;
 //! - per-action gas ceiling; `voteReport` and `finalizeReport` may not go below 6,000,000
 //!   (a deciding vote settles the first batch in the same transaction);
-//! - daily spend per class (vote / anchor net of reimbursements / total): an in-flight
-//!   transaction reserves gas ceiling x maxFee, a receipt replaces that with the real cost;
-//! - at most N transactions in flight; maxFee cap;
+//! - daily spend per capped class (upkeep = markOnline + finalizeReport / anchor net of
+//!   reimbursements / total of those two; values pending, H8-13): an in-flight transaction
+//!   reserves gas ceiling x maxFee, a receipt replaces that with the real cost;
+//! - in-flight lanes (other / vote / report): concurrency bounds only, a settled or cancelled
+//!   transaction frees its slot at once, nothing resets by day; maxFee cap (all transactions);
 //! - a warning once per bucket per day at the warn threshold.
 //!
 //! State is written to disk (temp file, fsync, rename) before an operation is allowed, so a
@@ -44,9 +51,7 @@ pub const A_EXTEND_ONLINE: &str = "extendOnline";
 pub const A_REPORT: &str = "reportOffline";
 pub const A_ANCHOR_RECEIPT: &str = "anchorReceipt";
 
-/// Count buckets. setOnline and extendOnline share one. `reportOffline` has none.
-pub const B_VOTE_AGREE: &str = "voteReport.agree";
-pub const B_VOTE_DISAGREE: &str = "voteReport.disagree";
+/// Count buckets. setOnline and extendOnline share one. `voteReport` and `reportOffline` have none.
 pub const B_MARK_ONLINE: &str = "markOnline";
 pub const B_FINALIZE: &str = "finalizeReport";
 pub const B_ANCHOR_TX: &str = "setOnline+extendOnline";
@@ -55,8 +60,10 @@ pub const B_ANCHOR_RECEIPT: &str = "anchorReceipt";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpendClass {
-    /// Not reimbursed: voteReport, markOnline, finalizeReport.
-    Vote,
+    /// Not reimbursed, capped (values pending, H8-13): markOnline, finalizeReport.
+    Upkeep,
+    /// `voteReport`: recorded for monitoring, never capped (H812C).
+    Ballot,
     /// `reportOffline`: recorded for monitoring, never capped (H8-12).
     Report,
     /// Anchor submissions, reimbursed by the subsidy pool; counted net.
@@ -73,10 +80,10 @@ fn action(name: &str) -> Option<Action> {
     use SpendClass::*;
     let a = |buckets, class| Some(Action { buckets, class });
     match name {
-        A_VOTE_AGREE => a(&[B_VOTE_AGREE], Some(Vote)),
-        A_VOTE_DISAGREE => a(&[B_VOTE_DISAGREE], Some(Vote)),
-        A_MARK_ONLINE => a(&[B_MARK_ONLINE], Some(Vote)),
-        A_FINALIZE => a(&[B_FINALIZE], Some(Vote)),
+        // No bucket: votes have no daily count (H812B).
+        A_VOTE_AGREE | A_VOTE_DISAGREE => a(&[], Some(Ballot)),
+        A_MARK_ONLINE => a(&[B_MARK_ONLINE], Some(Upkeep)),
+        A_FINALIZE => a(&[B_FINALIZE], Some(Upkeep)),
         A_SET_ONLINE | A_EXTEND_ONLINE => a(&[B_ANCHOR_TX], Some(Anchor)),
         // No bucket: reports have no daily count (H8-12).
         A_REPORT => a(&[], Some(Report)),
@@ -96,7 +103,9 @@ pub struct QuotaConfig {
     pub daily: BTreeMap<String, u32>,
     /// Gas ceiling per transaction action. An absent action is refused (`gas_ceiling_unset`).
     pub gas_ceiling: BTreeMap<String, u64>,
-    pub spend_vote_wei: u64,
+    /// markOnline + finalizeReport per day (pending, H8-13). Votes are not in it (H812C); a
+    /// config that tries to cap votes does not start (unknown field).
+    pub spend_upkeep_wei: u64,
     pub spend_anchor_net_wei: u64,
     pub spend_total_wei: u64,
     pub max_fee_wei: u64,
@@ -106,6 +115,8 @@ pub struct QuotaConfig {
     /// In-flight lane for `reportOffline`, apart from `max_inflight` (suggested, pending).
     /// A concurrency bound only: settled reports free their slot at once; there is no daily count.
     pub max_inflight_report: u32,
+    /// In-flight lane for `voteReport` (suggested, pending). A concurrency bound only.
+    pub max_inflight_vote: u32,
 }
 
 impl Default for QuotaConfig {
@@ -114,8 +125,6 @@ impl Default for QuotaConfig {
     /// node line's local measurement x 1.5 (re-measure on a CoNET fork before deployment).
     fn default() -> Self {
         let daily = [
-            (B_VOTE_AGREE, 20),
-            (B_VOTE_DISAGREE, 200),
             (B_MARK_ONLINE, 20),
             (B_FINALIZE, 50),
             (B_ANCHOR_TX, 500),
@@ -142,13 +151,14 @@ impl Default for QuotaConfig {
             note: None,
             daily,
             gas_ceiling,
-            spend_vote_wei: 60_000_000_000_000_000, // 0.06 CNET
+            spend_upkeep_wei: 60_000_000_000_000_000, // 0.06 CNET (pending, H8-13)
             spend_anchor_net_wei: 40_000_000_000_000_000, // 0.04 CNET
             spend_total_wei: 100_000_000_000_000_000, // 0.1 CNET
-            max_fee_wei: 100_000_000,               // 0.1 gwei
+            max_fee_wei: 100_000_000,                 // 0.1 gwei
             max_inflight: 4,
             warn_percent: 80,
             max_inflight_report: 4,
+            max_inflight_vote: 4,
         }
     }
 }
@@ -156,14 +166,7 @@ impl Default for QuotaConfig {
 impl QuotaConfig {
     pub fn validate(&self) -> Result<(), String> {
         for b in self.daily.keys() {
-            let known = [
-                B_VOTE_AGREE,
-                B_VOTE_DISAGREE,
-                B_MARK_ONLINE,
-                B_FINALIZE,
-                B_ANCHOR_TX,
-                B_ANCHOR_RECEIPT,
-            ];
+            let known = [B_MARK_ONLINE, B_FINALIZE, B_ANCHOR_TX, B_ANCHOR_RECEIPT];
             if !known.contains(&b.as_str()) {
                 return Err(format!("quota config: unknown bucket {b}"));
             }
@@ -183,8 +186,8 @@ impl QuotaConfig {
         if self.max_fee_wei == 0 || self.max_fee_wei > MAX_FEE_HARD_CAP_WEI {
             return Err("quota config: max_fee_wei must be 1..=1 gwei".into());
         }
-        if self.max_inflight_report == 0 {
-            return Err("quota config: max_inflight_report >= 1".into());
+        if self.max_inflight_report == 0 || self.max_inflight_vote == 0 {
+            return Err("quota config: max_inflight_report, max_inflight_vote >= 1".into());
         }
         if self.max_inflight == 0 || !(1..=100).contains(&self.warn_percent) {
             return Err("quota config: max_inflight >= 1, warn_percent 1..=100".into());
@@ -204,6 +207,7 @@ pub enum QuotaError {
     Exceeded { bucket: String, used: u64, cap: u64 },
     Inflight { cap: u32 },
     InflightReport { cap: u32 },
+    InflightVote { cap: u32 },
     UnknownTicket,
     StateBroken(String),
     Write,
@@ -223,6 +227,7 @@ impl std::fmt::Display for QuotaError {
             Exceeded { bucket, used, cap } => write!(f, "quota_exceeded:{bucket} {used}/{cap}"),
             Inflight { cap } => write!(f, "quota_exceeded:inflight {cap}/{cap}"),
             InflightReport { cap } => write!(f, "inflight_report {cap}/{cap}"),
+            InflightVote { cap } => write!(f, "inflight_vote {cap}/{cap}"),
             UnknownTicket => write!(f, "unknown_ticket"),
             StateBroken(r) => write!(f, "quota_state_broken:{r}"),
             Write => write!(f, "quota_state_write"),
@@ -277,7 +282,7 @@ struct State {
     v: u32,
     day: u64,
     counts: BTreeMap<String, u64>,
-    spent_vote_wei: u64,
+    spent_upkeep_wei: u64,
     spent_anchor_wei: u64,
     reimbursed_anchor_wei: u64,
     inflight: BTreeMap<u64, Inflight>,
@@ -286,6 +291,9 @@ struct State {
     /// `reportOffline` gas, monitoring only.
     #[serde(default)]
     spent_report_wei: u64,
+    /// `voteReport` gas, monitoring only (H812C).
+    #[serde(default)]
+    spent_vote_wei: u64,
 }
 
 pub struct Quota {
@@ -295,7 +303,7 @@ pub struct Quota {
     broken: Option<String>,
 }
 
-const W_SPEND_VOTE: &str = "spend.vote";
+const W_SPEND_UPKEEP: &str = "spend.upkeep";
 const W_SPEND_ANCHOR: &str = "spend.anchor";
 const W_SPEND_TOTAL: &str = "spend.total";
 
@@ -342,6 +350,19 @@ impl Quota {
             return 0;
         }
         self.state.counts.get(bucket).copied().unwrap_or(0)
+    }
+
+    /// Settled spend today in a class (uncapped classes are recorded too).
+    pub fn spent(&self, class: SpendClass, now: u64) -> u64 {
+        if self.state.day != now / DAY {
+            return 0;
+        }
+        match class {
+            SpendClass::Upkeep => self.state.spent_upkeep_wei,
+            SpendClass::Ballot => self.state.spent_vote_wei,
+            SpendClass::Report => self.state.spent_report_wei,
+            SpendClass::Anchor => self.state.spent_anchor_wei,
+        }
     }
 
     pub fn inflight(&self) -> usize {
@@ -394,22 +415,41 @@ impl Quota {
                     cap: self.cfg.max_fee_wei,
                 });
             }
-            // Two lanes: reports never wait behind votes or anchors, and the other way round.
-            let is_report = |f: &Inflight| f.action == A_REPORT;
-            if class == SpendClass::Report {
-                let n = next.inflight.values().filter(|f| is_report(f)).count();
-                if n as u64 >= self.cfg.max_inflight_report as u64 {
-                    return Err(QuotaError::InflightReport {
+            // Three lanes: votes and reports never wait behind each other or behind upkeep and
+            // anchors. Counted from what is in flight now; nothing here resets by day.
+            let lane = |a: &str| match action(a).and_then(|x| x.class) {
+                Some(SpendClass::Report) => 2u8,
+                Some(SpendClass::Ballot) => 1,
+                _ => 0,
+            };
+            let mine = lane(intent.action);
+            let n = next
+                .inflight
+                .values()
+                .filter(|f| lane(&f.action) == mine)
+                .count() as u64;
+            let (cap, err) = match mine {
+                2 => (
+                    self.cfg.max_inflight_report,
+                    QuotaError::InflightReport {
                         cap: self.cfg.max_inflight_report,
-                    });
-                }
-            } else {
-                let n = next.inflight.values().filter(|f| !is_report(f)).count();
-                if n as u64 >= self.cfg.max_inflight as u64 {
-                    return Err(QuotaError::Inflight {
+                    },
+                ),
+                1 => (
+                    self.cfg.max_inflight_vote,
+                    QuotaError::InflightVote {
+                        cap: self.cfg.max_inflight_vote,
+                    },
+                ),
+                _ => (
+                    self.cfg.max_inflight,
+                    QuotaError::Inflight {
                         cap: self.cfg.max_inflight,
-                    });
-                }
+                    },
+                ),
+            };
+            if n >= cap as u64 {
+                return Err(err);
             }
             let cost =
                 intent
@@ -422,13 +462,13 @@ impl Quota {
                     })?;
             let (vote, anchor) = committed(&next);
             let (cv, ca) = match class {
-                SpendClass::Vote => (cost, 0),
+                SpendClass::Upkeep => (cost, 0),
                 SpendClass::Anchor => (0, cost),
-                // Reports are outside every spend cap (H8-12).
-                SpendClass::Report => (0, 0),
+                // Votes (H812C) and reports (H8-12) are outside every spend cap.
+                SpendClass::Ballot | SpendClass::Report => (0, 0),
             };
             let checks = [
-                (W_SPEND_VOTE, vote, cv, self.cfg.spend_vote_wei),
+                (W_SPEND_UPKEEP, vote, cv, self.cfg.spend_upkeep_wei),
                 (W_SPEND_ANCHOR, anchor, ca, self.cfg.spend_anchor_net_wei),
                 (
                     W_SPEND_TOTAL,
@@ -522,7 +562,10 @@ impl Quota {
         };
         if let Some(cost) = cost {
             match action(&f.action).and_then(|a| a.class) {
-                Some(SpendClass::Vote) => {
+                Some(SpendClass::Upkeep) => {
+                    next.spent_upkeep_wei = next.spent_upkeep_wei.saturating_add(cost)
+                }
+                Some(SpendClass::Ballot) => {
                     next.spent_vote_wei = next.spent_vote_wei.saturating_add(cost)
                 }
                 Some(SpendClass::Anchor) => {
@@ -551,23 +594,24 @@ fn roll(s: &mut State, now: u64) {
     if s.day != day {
         s.day = day;
         s.counts.clear();
-        s.spent_vote_wei = 0;
+        s.spent_upkeep_wei = 0;
         s.spent_anchor_wei = 0;
         s.reimbursed_anchor_wei = 0;
         s.spent_report_wei = 0;
+        s.spent_vote_wei = 0;
         s.warned.clear();
     }
 }
 
 /// Spend committed today per class: settled (anchor net of reimbursements) plus reservations.
 fn committed(s: &State) -> (u64, u64) {
-    let mut vote = s.spent_vote_wei;
+    let mut vote = s.spent_upkeep_wei;
     let mut anchor = s.spent_anchor_wei.saturating_sub(s.reimbursed_anchor_wei);
     for f in s.inflight.values() {
         match action(&f.action).and_then(|a| a.class) {
-            Some(SpendClass::Vote) => vote = vote.saturating_add(f.reserved_wei),
+            Some(SpendClass::Upkeep) => vote = vote.saturating_add(f.reserved_wei),
             Some(SpendClass::Anchor) => anchor = anchor.saturating_add(f.reserved_wei),
-            Some(SpendClass::Report) | None => {}
+            Some(SpendClass::Ballot) | Some(SpendClass::Report) | None => {}
         }
     }
     (vote, anchor)
