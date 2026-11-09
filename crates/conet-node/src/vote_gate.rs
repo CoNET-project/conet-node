@@ -425,36 +425,21 @@ pub fn would_decide_report(r: &ReportView, agree: bool, now: u64) -> bool {
         && now < r.expires_at
 }
 
-/// When to send a report vote (same candidate as online votes, `online_gate::vote_timing`): a
-/// vote that would reach the margin before the observation time is held until then (+ stagger,
-/// kept inside the window) so it decides; other votes go at once; none after the end. A report
-/// that ends without a verdict is void: no reward, no fine, its locks are freed by the contract
-/// (the gate reads `voteLocked` again, so freed capacity shows up by itself).
-pub fn report_vote_timing(
-    r: &ReportView,
-    agree: bool,
-    now: u64,
-    stagger: u64,
-) -> crate::online_gate::VoteTiming {
+/// When to send a report vote: at once while voting is open (no holding: anyone can seal through
+/// the unified entry once the observation time passed and the threshold is met), none after the
+/// end. A report that ends without a verdict is void: no reward, no fine, its locks are freed by
+/// the contract (the gate reads `voteLocked` again, so freed capacity shows up by itself).
+pub fn report_vote_timing(r: &ReportView, now: u64) -> crate::online_gate::VoteTiming {
     use crate::online_gate::VoteTiming;
     if r.state != REPORT_OPEN || now >= r.expires_at {
-        return VoteTiming::Closed;
-    }
-    if would_decide_report(r, agree, now) {
-        return VoteTiming::Now;
-    }
-    let (mine, other) = if agree {
-        (r.agree + 1, r.disagree)
-    } else {
-        (r.disagree + 1, r.agree)
-    };
-    if mine >= other + r.margin as u32 {
-        let room = r
-            .expires_at
-            .saturating_sub(r.decidable_at())
-            .saturating_sub(1);
-        VoteTiming::HoldUntil(r.decidable_at() + stagger.min(room))
+        VoteTiming::Closed
     } else {
         VoteTiming::Now
     }
+}
+
+/// The report's threshold is met and it can be sealed through the unified entry.
+pub fn report_seal_ready(r: &ReportView, now: u64) -> bool {
+    let met = r.agree >= r.disagree + r.margin as u32 || r.disagree >= r.agree + r.margin as u32;
+    r.state == REPORT_OPEN && met && now >= r.decidable_at() && now < r.expires_at
 }

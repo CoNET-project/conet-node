@@ -228,9 +228,9 @@ pub fn vote_expectation(win_bps: u128, gas_cost: u128) -> i128 {
     s * p / 10_000 - s * (10_000 - p) / 10_000 - gas_cost as i128
 }
 
-/// Optional executor strategy: a deciding-vote attempt that reverts because the case closed in
-/// the meantime (someone else cast the deciding vote) or this node's vote already counts is an
-/// expected race loss: no retry, not reported as an error.
+/// Optional seal / executor strategy: an attempt that reverts because the case was sealed in the
+/// meantime (someone else sealed it) or this node's vote already counts is an expected race loss:
+/// no retry, no second reward, not reported as an error.
 pub fn executor_race_lost(revert_name: &str) -> bool {
     matches!(revert_name, "AdmissionState" | "AlreadyVoted")
 }
@@ -273,48 +273,59 @@ pub fn decidable_from(t: &Tally, _agree: bool) -> u64 {
     t.opened_at + MIN_OPEN
 }
 
-/// CANDIDATE (project principle 2026-11-09, not decided): online cases have no separate finalize;
-/// the first vote that meets every verdict condition seals the case and runs the first settlement
-/// batch in the same transaction. Votes in the first 600 s cannot decide, so a case whose margin
-/// was reached early would end void at 7,200 s if nobody votes in between. Candidate answer: a node
-/// whose vote would bring its side to the margin before 600 s holds the vote and submits it
-/// between 600 s and 7,200 s (it then decides); a node whose vote does not reach the margin votes
-/// at once (it helps get there); after 7,200 s nobody votes.
+/// When to send a vote (project decision 2026-11-09: every proposal can be sealed by anyone through
+/// the unified seal entry once 600 s have passed and the threshold is met). Holding votes is no
+/// longer needed (the earlier hold-until-600 s candidate is withdrawn): a decided vote goes out at
+/// once, which keeps the on-chain count transparent; none after the end (7,200 s).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VoteTiming {
-    /// Submit now (it decides, or it only adds to the count).
+    /// Submit now.
     Now,
-    /// Hold: submit at this chain time (opening + 600 s plus a per-node stagger, before 7,200 s).
-    HoldUntil(u64),
     /// Voting ended (7,200 s): do not vote.
     Closed,
 }
 
-pub fn vote_timing(t: &Tally, agree: bool, now: u64, stagger: u64) -> VoteTiming {
-    if !voting_open(t, now) {
-        return VoteTiming::Closed;
-    }
-    if would_decide(t, agree, now) {
-        return VoteTiming::Now;
-    }
-    let (mine, other) = if agree {
-        (t.agree + 1, t.disagree)
-    } else {
-        (t.disagree + 1, t.agree)
-    };
-    if mine >= other + t.margin {
-        // Would reach the margin, but too early to decide: hold until 600 s (+ stagger, kept well
-        // inside the 7,200 s window).
-        let at = decidable_from(t, agree) + stagger.min(MAX_OPEN - MIN_OPEN - 1);
-        VoteTiming::HoldUntil(at)
-    } else {
+pub fn vote_timing(t: &Tally, _agree: bool, now: u64) -> VoteTiming {
+    if voting_open(t, now) {
         VoteTiming::Now
+    } else {
+        VoteTiming::Closed
     }
 }
 
-/// Deterministic per-node stagger in [0, spread) seconds for one case, so the holders of one case
-/// do not all submit in the same block (only the first one succeeds; the rest revert and count as
-/// a lost race: `executor_race_lost`). Derived from the case id and the node id.
+/// The threshold is met and the case can be sealed through the unified entry (600 s passed).
+/// Whether sealing stays allowed after 7,200 s for a case that met its threshold in time is up to
+/// the node line; this follows "within the window".
+pub fn seal_ready(t: &Tally, now: u64) -> bool {
+    let met = t.agree >= t.disagree + t.margin || t.disagree >= t.agree + t.margin;
+    met && now >= t.opened_at + MIN_OPEN && voting_open(t, now)
+}
+
+/// Optional strategy, OFF by default: call the unified seal entry for the executor reward
+/// (online 0.005 CNET, report 7% of its pot). Rewards do not stack per node and case: a node that
+/// already earns `own_reward` in the case (e.g. 0.001 as a winning voter) only gains the
+/// difference. The proposer of an online case never executes it. A losing racer's transaction
+/// reverts and still pays gas, discounted by `race_loss_rate_bps`.
+pub fn seal_worth_it(
+    enabled: bool,
+    is_proposer: bool,
+    seal_reward: u128,
+    own_reward: u128,
+    gas: u128,
+    gas_price_wei: u128,
+    race_loss_rate_bps: u128,
+) -> bool {
+    if !enabled || is_proposer {
+        return false;
+    }
+    let extra = seal_reward.saturating_sub(own_reward);
+    let expected = extra * (10_000 - race_loss_rate_bps.min(10_000)) / 10_000;
+    expected > gas.saturating_mul(gas_price_wei)
+}
+
+/// Deterministic per-node stagger in [0, spread) seconds for one case, so nodes running the seal
+/// strategy do not all call the seal entry in the same block (only the first one succeeds; the rest
+/// revert and count as a lost race: `executor_race_lost`). Derived from the case id and node id.
 pub fn stagger(case_id: &[u8; 32], node_id: u64, spread: u64) -> u64 {
     if spread == 0 {
         return 0;

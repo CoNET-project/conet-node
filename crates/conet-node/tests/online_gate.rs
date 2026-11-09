@@ -279,10 +279,11 @@ fn open_case_replaceable_only_after_twelve_hours() {
     assert_eq!((b.replace_at, b.wait), (None, Some(OFFLINE_COOLDOWN - 10)));
 }
 
-/// CANDIDATE: hold a vote that would reach the margin before 600 s, submit it between 600 s and
-/// 7,200 s (it becomes the deciding vote); otherwise vote at once; never after 7,200 s.
+/// Project decision 2026-11-09: no holding (votes go out at once, count stays transparent); any
+/// address may seal once 600 s passed and the threshold is met; sealing for the executor reward is
+/// an optional strategy, off by default; a lost seal race is expected.
 #[test]
-fn hold_the_reaching_vote_until_600s_never_after_7200() {
+fn vote_at_once_and_optional_seal_strategy() {
     let t0 = 1_900_000_000;
     let yes19 = Tally {
         opened_at: t0,
@@ -290,49 +291,49 @@ fn hold_the_reaching_vote_until_600s_never_after_7200() {
         disagree: 0,
         margin: 20,
     };
-    assert_eq!(
-        vote_timing(&yes19, true, t0 + 120, 7),
-        VoteTiming::HoldUntil(t0 + 607)
-    );
-    assert_eq!(
-        vote_timing(&yes19, true, t0 + 599, 0),
-        VoteTiming::HoldUntil(t0 + 600)
-    );
-    assert_eq!(vote_timing(&yes19, true, t0 + 600, 7), VoteTiming::Now);
-    assert_eq!(vote_timing(&yes19, true, t0 + 7_199, 7), VoteTiming::Now);
-    assert_eq!(vote_timing(&yes19, true, t0 + 7_200, 7), VoteTiming::Closed);
-    // Same window for the disagree side.
-    let no19 = Tally {
+    assert_eq!(vote_timing(&yes19, true, t0 + 120), VoteTiming::Now);
+    assert_eq!(vote_timing(&yes19, true, t0 + 7_199), VoteTiming::Now);
+    assert_eq!(vote_timing(&yes19, true, t0 + 7_200), VoteTiming::Closed);
+    // Threshold met at minute 2: sealable from 600 s, not before, not after the end.
+    let yes20 = Tally { agree: 20, ..yes19 };
+    assert!(!seal_ready(&yes20, t0 + 599));
+    assert!(seal_ready(&yes20, t0 + 600));
+    assert!(!seal_ready(&yes20, t0 + 7_200));
+    assert!(!seal_ready(&yes19, t0 + 1_000)); // threshold not met
+    let no20 = Tally {
         opened_at: t0,
         agree: 1,
-        disagree: 20,
+        disagree: 21,
         margin: 20,
     };
-    assert_eq!(
-        vote_timing(&no19, false, t0 + 300, 0),
-        VoteTiming::HoldUntil(t0 + 600)
-    );
-    assert_eq!(vote_timing(&no19, false, t0 + 600, 0), VoteTiming::Now);
-    // A huge stagger is clamped inside the window.
-    assert!(
-        matches!(vote_timing(&yes19, true, t0, 1_000_000), VoteTiming::HoldUntil(x) if x < t0 + 7_200)
-    );
-    // A vote that does not reach the margin goes at once; after 7,200 s nothing.
-    let yes5 = Tally { agree: 5, ..yes19 };
-    assert_eq!(vote_timing(&yes5, true, t0 + 60, 0), VoteTiming::Now);
-    assert_eq!(vote_timing(&yes5, true, t0 + 7_200, 0), VoteTiming::Closed);
-    // Stagger: deterministic, within the spread, differs between nodes.
+    assert!(seal_ready(&no20, t0 + 600));
+    // Seal strategy (off by default): 0.005 online reward, no stacking, proposer excluded.
+    let gwei = 1_000_000_000u128;
+    assert!(!seal_worth_it(false, false, EXECUTOR_REWARD, 0, 0, 0, 0));
+    assert!(!seal_worth_it(true, true, EXECUTOR_REWARD, 0, 0, 0, 0));
+    // Not a voter: 0.005 x 50% = 0.0025 vs 300k gas x 1 gwei = 0.0003: worth it.
+    assert!(seal_worth_it(
+        true,
+        false,
+        EXECUTOR_REWARD,
+        0,
+        300_000,
+        gwei,
+        5_000
+    ));
+    // Already a winning voter (0.001): extra 0.004 x 50% = 0.002 vs 300k x 10 gwei = 0.003: not.
+    assert!(!seal_worth_it(
+        true,
+        false,
+        EXECUTOR_REWARD,
+        VOTE_STAKE,
+        300_000,
+        10 * gwei,
+        5_000
+    ));
+    // Stagger for seal callers; lost races are expected.
     let case = [9u8; 32];
-    let s1 = stagger(&case, 101, 60);
-    assert!(s1 < 60);
-    assert_eq!(s1, stagger(&case, 101, 60));
-    assert!(
-        (100..140)
-            .map(|n| stagger(&case, n, 60))
-            .collect::<std::collections::BTreeSet<_>>()
-            .len()
-            > 10
-    );
+    assert!(stagger(&case, 101, 60) < 60);
     assert!(executor_race_lost("AdmissionState"));
 }
 

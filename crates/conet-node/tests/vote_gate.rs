@@ -364,16 +364,12 @@ fn report_window_600_to_7200() {
     assert!(would_decide_report(&r, true, t0 + 600));
     assert!(would_decide_report(&r, true, t0 + 7_199));
     assert!(!would_decide_report(&r, true, t0 + 7_200));
-    // Hold the margin-reaching vote until 600 s; never after 7,200 s.
-    assert_eq!(
-        report_vote_timing(&r, true, t0 + 100, 5),
-        VoteTiming::HoldUntil(t0 + 605)
-    );
-    assert_eq!(report_vote_timing(&r, true, t0 + 600, 5), VoteTiming::Now);
-    assert_eq!(
-        report_vote_timing(&r, true, t0 + 7_200, 5),
-        VoteTiming::Closed
-    );
+    // Votes go out at once while open (no holding); none after the end; sealable from 600 s.
+    assert_eq!(report_vote_timing(&r, t0 + 100), VoteTiming::Now);
+    assert_eq!(report_vote_timing(&r, t0 + 7_200), VoteTiming::Closed);
+    assert!(!report_seal_ready(&r, t0 + 599));
+    assert!(report_seal_ready(&r, t0 + 600));
+    assert!(!report_seal_ready(&r, t0 + 7_200));
     // Disagree side the same.
     let d = ReportView {
         agree: 1,
@@ -387,7 +383,8 @@ fn report_window_600_to_7200() {
         agree: 3,
         ..r.clone()
     };
-    assert_eq!(report_vote_timing(&few, true, t0 + 60, 0), VoteTiming::Now);
+    assert_eq!(report_vote_timing(&few, t0 + 60), VoteTiming::Now);
+    assert!(!report_seal_ready(&few, t0 + 600));
     assert_eq!(can_vote(&voter(1), &r, 0, t0 + 7_200), Err(Skip::Expired));
     // Void at 7,200 s: the contract frees the lock; the gate sees capacity again from voteLocked.
     let held = VoterView {
