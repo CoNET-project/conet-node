@@ -243,7 +243,7 @@ pub fn pick(v: &VoterView, reports: &[ReportView], my_choices: &[u8], now: u64) 
 // ---- chain reads ----
 
 /// Words in `getNodeRaw`'s `Node` struct (all static members; `uint32[3] anchors` takes three).
-/// Pinned to the node line's contract source set `df24b755` (after v0.4.2; abi/README.md): 41 members,
+/// Pinned to the node line's contract source set `45e9c5d0` (abi/README.md): 41 members,
 /// the stake-term fields and `offlineSince` appended at the end (earlier word positions unchanged).
 pub const NODE_RAW_WORDS: usize = 43;
 /// `offlineSince`: chain moment the node's current offline state took effect (recovery cooldown
@@ -450,17 +450,15 @@ pub fn would_decide_report(
     now: u64,
     rule: &crate::online_gate::MajorityRule,
 ) -> bool {
+    // As the contract: the vote that first finds the conditions met seals, whichever side it is for.
     let (a, d) = if agree {
         (r.agree + 1, r.disagree)
     } else {
         (r.agree, r.disagree + 1)
     };
-    let (mine, other) = if agree { (a, d) } else { (d, a) };
+    let met = a >= d + r.margin as u32 || d >= a + r.margin as u32;
     let early = crate::online_gate::majority_early(a, d, r.population, 1, rule);
-    r.state == REPORT_OPEN
-        && mine >= other + r.margin as u32
-        && (now >= r.decidable_at() || early)
-        && now < r.expires_at
+    r.state == REPORT_OPEN && met && (now >= r.decidable_at() || early) && now < r.expires_at
 }
 
 /// When to send a report vote: at once while voting is open (no holding: anyone can seal through

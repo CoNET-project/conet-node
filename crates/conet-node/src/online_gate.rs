@@ -321,19 +321,19 @@ pub fn voting_open(t: &Tally, now: u64) -> bool {
     now < t.opened_at + MAX_OPEN
 }
 
-/// Would this node's vote (`agree`) be the deciding one at `now`: with it, its side reaches the
-/// margin and either 600 s have passed or more than half of the base has now voted (early seal,
-/// admission / recovery / report only), and voting has not ended. Then the same transaction is
-/// expected to seal.
+/// Would this node's vote seal the case at `now` (the contract seals in the transaction that
+/// first finds the conditions met, whichever side that vote is for): after it, either side leads
+/// by the margin, and either 600 s have passed or more than half of the base has voted (early
+/// seal, admission / recovery / report only), and voting has not ended.
 pub fn would_decide(t: &Tally, agree: bool, now: u64, rule: &MajorityRule) -> bool {
     let (a, d) = if agree {
         (t.agree + 1, t.disagree)
     } else {
         (t.agree, t.disagree + 1)
     };
-    let (mine, other) = if agree { (a, d) } else { (d, a) };
+    let met = a >= d + t.margin || d >= a + t.margin;
     let early = majority_early(a, d, t.population, t.subject, rule);
-    mine >= other + t.margin && (now >= t.opened_at + MIN_OPEN || early) && voting_open(t, now)
+    met && (now >= t.opened_at + MIN_OPEN || early) && voting_open(t, now)
 }
 
 /// Earliest time any vote could decide the case (same for both sides).
