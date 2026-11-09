@@ -23,3 +23,37 @@ Three services, three users:
 
 These are templates. Node addresses, accounts and key locations of real servers do not belong in
 this repository.
+
+## Node security rules (project AGENTS.md, 2026-11-08)
+
+Every project node follows the repository root `AGENTS.md`. How the conet-node installation
+lines up with it:
+
+| Rule | conet-node installation |
+| --- | --- |
+| Only `peter` logs in interactively, ED25519 keys approved by the project only | The installer creates no login account. It never writes an `authorized_keys` file and never changes `peter`'s keys. |
+| `root` never logs in; no public key for root (`/root/.ssh/` holds no login key, `sshd -T -C user=root` gives `pubkeyauthentication no`) | The installer never touches `/root/.ssh/` or the SSH server configuration. Checking it is part of the security receipt (below), not of the installer. |
+| Services run under non-interactive accounts | `conet-signer`, `conet-node` and `conet-updater` are system accounts: `useradd --system --no-create-home --shell /usr/sbin/nologin <name>`, password locked (`usermod -L`). No SSH keys, no console login, no sudo rule, no group that grants a shell. |
+| No reliance on a root shell or on sudo for an interactive shell | The services never call `sudo` or `su`. Ports below 1024 come from `AmbientCapabilities=CAP_NET_BIND_SERVICE` on `conet-node` only. The updater restarts `conet-node.service` through a polkit rule limited to that one unit, not through sudo. Installation and upgrades of the units are done by `peter` with `sudo`, which the rules record as the approved admin path. |
+| Hardening | Each unit sets `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, an empty or minimal `CapabilityBoundingSet`; the signer also has no network (`PrivateNetwork`, `AF_UNIX` only) and no core dumps (`LimitCORE=0`). |
+
+Polkit rule for the updater (template, `/etc/polkit-1/rules.d/50-conet-updater.rules`):
+
+```js
+polkit.addRule(function (action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units" &&
+      action.lookup("unit") == "conet-node.service" &&
+      action.lookup("verb") == "restart" &&
+      subject.user == "conet-updater") {
+    return polkit.Result.YES;
+  }
+});
+```
+
+**Every node initialization is delivered with a read-only security receipt**: one per node, and a
+separate one for the host and for each virtual machine, in the format of the project's receipt
+template (kept outside this repository). It checks the effective SSH configuration
+(including `Include` and `Match`), the root public-key rule in both places, account shells,
+console autologin, other remote-login listeners and provider agents. A missing item or a failed
+check is listed as blocking; the node is not "passed" until every applicable item has evidence.
+Addresses, accounts and paths of real nodes go in the private operations folder, not here.
