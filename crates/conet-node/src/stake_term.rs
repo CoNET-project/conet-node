@@ -31,6 +31,9 @@ pub struct TermView {
     /// Locked effective stake ("余额"; excess-stake details pending the node line).
     pub stake: u128,
     pub renewal: Renewal,
+    /// PENDING the node line's read ("可提未提本金"): principal unlocked after a non-renewal and
+    /// not yet withdrawn (counted in dueUnpaid). None until the read exists.
+    pub withdrawable_principal: Option<u128>,
 }
 
 /// Outcome of the automatic renewal as the chain shows it.
@@ -157,7 +160,45 @@ pub enum TermLen {
 /// Inside the term, the floor that decides suspension: 80% of the term threshold (board note:
 /// "80% 停服线以本期核定额为基数"), not of the current threshold.
 pub fn serves_inside_term(v: &TermView, chain_now: u64) -> bool {
-    chain_now < v.term_ends_at && v.stake * 10 >= v.term_threshold * 8
+    chain_now < v.term_ends_at && v.stake >= suspend_floor(v.term_threshold)
+}
+
+/// The contract's `suspendFloor`: floor(termBase x 8000 / 10000). Equal to it still serves; one wei
+/// below stops (the contract checks the post-fine total in the same transaction).
+pub fn suspend_floor(term_base: u128) -> u128 {
+    term_base * 8_000 / 10_000
+}
+
+/// Why an ended term did not renew (project decision 2026-11-09; both can hold at once).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoRenewPath {
+    /// (1) Fines lowered the stake (it stayed at or above the 80% floor) and it is short of the
+    /// full threshold at the end.
+    pub after_fines: bool,
+    /// (2) The full threshold at the end rose above the term amount and the node did not top up.
+    pub threshold_raised: bool,
+}
+
+/// Renewal precheck at the term end: the contract renews by itself (same term length: termEnd +=
+/// termLength; no transaction from the node) when the whole stake >= minStakeAt(termEnd).
+/// Otherwise returns the path(s) for the log; the principal then becomes withdrawable after the
+/// unlock period ("可提未提", counted in dueUnpaid).
+pub fn renewal_precheck(v: &TermView) -> Result<(), NoRenewPath> {
+    if renews(v.stake, v.current_threshold) {
+        return Ok(());
+    }
+    Err(NoRenewPath {
+        after_fines: v.stake < v.term_threshold,
+        threshold_raised: v.current_threshold > v.term_threshold,
+    })
+}
+
+/// One log line for a renewal that will not happen.
+pub fn no_renew_log(v: &TermView, p: NoRenewPath) -> String {
+    format!(
+        "renewal will not happen: total_stake={} full_threshold_at_end={} term_base={} path_after_fines={} path_threshold_raised={}",
+        v.stake, v.current_threshold, v.term_threshold, p.after_fines, p.threshold_raised
+    )
 }
 
 /// Load of a same-day expiry wave (e.g. the 472 migration nodes): if `failed` nodes all need

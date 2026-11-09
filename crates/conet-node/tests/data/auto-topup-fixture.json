@@ -3,8 +3,8 @@
  "topupGasUsed": "72094",
  "A": {
   "beforeTopUp": {
-   "now": "1809719471",
-   "termEnd": "1809978671",
+   "now": "1809725399",
+   "termEnd": "1809984599",
    "inTerm": true,
    "termBase": "5000000000000000000",
    "stakeStop": false,
@@ -19,8 +19,8 @@
   },
   "appliedValue": "5000000000000000000",
   "afterTopUp": {
-   "now": "1809719472",
-   "termEnd": "1809978671",
+   "now": "1809725400",
+   "termEnd": "1809984599",
    "inTerm": true,
    "termBase": "5000000000000000000",
    "stakeStop": false,
@@ -34,8 +34,8 @@
    "active": true
   },
   "afterEnd": {
-   "now": "1809978672",
-   "termEnd": "1809978671",
+   "now": "1809984600",
+   "termEnd": "1809984599",
    "inTerm": true,
    "termBase": "10000000000000000000",
    "stakeStop": false,
@@ -47,12 +47,19 @@
    "wallet": "994999927650458851830",
    "nonce": "1",
    "active": true
+  },
+  "renewedTerm": {
+   "endBefore": "1809984599",
+   "lenBefore": "15768000",
+   "endAfter": "1825752599",
+   "baseAfter": "10000000000000000000",
+   "lenAfter": "15768000"
   }
  },
  "B": {
   "afterEnd": {
-   "now": "1809978672",
-   "termEnd": "1809978672",
+   "now": "1809984601",
+   "termEnd": "1809984600",
    "inTerm": false,
    "termBase": "5000000000000000000",
    "stakeStop": false,
@@ -69,8 +76,8 @@
   "recoveryTarget": "10000000000000000000",
   "afterTopUp": {
    "label": "cooldown over, online fee sent",
-   "now": "1810021872",
-   "termEnd": "1809978672",
+   "now": "1810027800",
+   "termEnd": "1809984600",
    "inTerm": true,
    "termBase": "10000000000000000000",
    "stakeStop": true,
@@ -79,10 +86,10 @@
    "effectiveMin": "5000000000000000000",
    "minStakeNow": "10000000000000000000",
    "locked": "0",
-   "wallet": "994999885635371127685",
+   "wallet": "994999885674004065395",
    "nonce": "1",
    "active": false,
-   "outOfServiceSince": "1809978672",
+   "outOfServiceSince": "1809984600",
    "feeSent": "10000000000000000",
    "answer": "ok"
   },
@@ -90,8 +97,8 @@
   "recoveryCases": [
    {
     "label": "just after the failed renewal, stake short",
-    "now": "1809978672",
-    "termEnd": "1809978672",
+    "now": "1809984601",
+    "termEnd": "1809984600",
     "inTerm": false,
     "termBase": "5000000000000000000",
     "stakeStop": false,
@@ -109,8 +116,8 @@
    },
    {
     "label": "topped up, still inside the 12-hour cooldown",
-    "now": "1809978673",
-    "termEnd": "1809978672",
+    "now": "1809984602",
+    "termEnd": "1809984600",
     "inTerm": true,
     "termBase": "10000000000000000000",
     "stakeStop": true,
@@ -119,17 +126,17 @@
     "effectiveMin": "5000000000000000000",
     "minStakeNow": "10000000000000000000",
     "locked": "0",
-    "wallet": "994999885635371127685",
+    "wallet": "994999885674004065395",
     "nonce": "1",
     "active": false,
-    "outOfServiceSince": "1809978672",
+    "outOfServiceSince": "1809984600",
     "feeSent": "10000000000000000",
     "answer": "OfflineCooldown"
    },
    {
     "label": "5 seconds before the cooldown ends",
-    "now": "1810021867",
-    "termEnd": "1809978672",
+    "now": "1810027795",
+    "termEnd": "1809984600",
     "inTerm": true,
     "termBase": "10000000000000000000",
     "stakeStop": true,
@@ -138,17 +145,17 @@
     "effectiveMin": "5000000000000000000",
     "minStakeNow": "10000000000000000000",
     "locked": "0",
-    "wallet": "994999885635371127685",
+    "wallet": "994999885674004065395",
     "nonce": "1",
     "active": false,
-    "outOfServiceSince": "1809978672",
+    "outOfServiceSince": "1809984600",
     "feeSent": "10000000000000000",
     "answer": "OfflineCooldown"
    },
    {
     "label": "cooldown over, no online fee sent",
-    "now": "1810021872",
-    "termEnd": "1809978672",
+    "now": "1810027800",
+    "termEnd": "1809984600",
     "inTerm": true,
     "termBase": "10000000000000000000",
     "stakeStop": true,
@@ -157,17 +164,17 @@
     "effectiveMin": "5000000000000000000",
     "minStakeNow": "10000000000000000000",
     "locked": "0",
-    "wallet": "994999885635371127685",
+    "wallet": "994999885674004065395",
     "nonce": "1",
     "active": false,
-    "outOfServiceSince": "1809978672",
+    "outOfServiceSince": "1809984600",
     "feeSent": "0",
     "answer": "OnlineFeeRequired"
    },
    {
     "label": "cooldown over, online fee sent",
-    "now": "1810021872",
-    "termEnd": "1809978672",
+    "now": "1810027800",
+    "termEnd": "1809984600",
     "inTerm": true,
     "termBase": "10000000000000000000",
     "stakeStop": true,
@@ -176,10 +183,10 @@
     "effectiveMin": "5000000000000000000",
     "minStakeNow": "10000000000000000000",
     "locked": "0",
-    "wallet": "994999885635371127685",
+    "wallet": "994999885674004065395",
     "nonce": "1",
     "active": false,
-    "outOfServiceSince": "1809978672",
+    "outOfServiceSince": "1809984600",
     "feeSent": "10000000000000000",
     "answer": "ok"
    }

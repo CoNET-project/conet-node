@@ -13,6 +13,7 @@ fn term(stake: u128, cur: u128, renewal: Renewal) -> TermView {
         current_threshold: cur,
         stake,
         renewal,
+        withdrawable_principal: None,
     }
 }
 
@@ -159,6 +160,7 @@ fn slashed_below_term_floor_tops_up_to_the_latest_full_threshold() {
         current_threshold: 10 * C,
         stake,
         renewal: Renewal::Pending,
+        withdrawable_principal: None,
     };
     let now = END - 30 * DAY;
     // Serving at 4.5: floor 4, renewal needs 10.
@@ -204,4 +206,71 @@ fn fine_follows_each_nodes_term_threshold() {
     assert_eq!(cases_that_fit(10 * C, 0, 5 * C, &cases), 10);
     assert_eq!(cases_that_fit(10 * C, 0, 10 * C, &cases), 5);
     assert_eq!(cases_that_fit(10 * C, 3 * C, 10 * C, &cases), 3);
+}
+
+/// 80% floor exactly as the contract: floor(termBase x 8000 / 10000); equal serves, 1 wei below
+/// stops (project decision 2026-11-09).
+#[test]
+fn floor_80_percent_boundary_matches_the_contract() {
+    let base = |b: u128, stake: u128| TermView {
+        term_ends_at: END,
+        term_threshold: b,
+        current_threshold: b,
+        stake,
+        renewal: Renewal::Pending,
+        withdrawable_principal: None,
+    };
+    assert_eq!(suspend_floor(5 * C), 4 * C);
+    assert!(serves_inside_term(&base(5 * C, 4 * C), END - 1));
+    assert!(!serves_inside_term(&base(5 * C, 4 * C - 1), END - 1));
+    // Rounding: base 7 wei -> floor(5.6) = 5; stake 5 serves (a x10 >= x8 test would stop it).
+    assert_eq!(suspend_floor(7), 5);
+    assert!(serves_inside_term(&base(7, 5), END - 1));
+    assert!(!serves_inside_term(&base(7, 4), END - 1));
+}
+
+/// No renewal when the whole stake is short of the full threshold at the end; the log names the
+/// path: (1) after fines, (2) threshold raised and not topped up.
+#[test]
+fn short_balance_does_not_renew_and_names_the_path() {
+    let v = |base: u128, at_end: u128, stake: u128| TermView {
+        term_ends_at: END,
+        term_threshold: base,
+        current_threshold: at_end,
+        stake,
+        renewal: Renewal::Pending,
+        withdrawable_principal: None,
+    };
+    // Normal: enough -> renews (the contract keeps the same term length by itself).
+    assert_eq!(renewal_precheck(&v(5 * C, 5 * C, 5 * C)), Ok(()));
+    // (1) Fined to 4.5 (above the 80% floor 4), threshold unchanged at 5.
+    let fined = v(5 * C, 5 * C, 9 * C / 2);
+    let p = renewal_precheck(&fined).unwrap_err();
+    assert_eq!(
+        p,
+        NoRenewPath {
+            after_fines: true,
+            threshold_raised: false
+        }
+    );
+    // (2) Threshold raised to 10, stake still 5.
+    let raised = v(5 * C, 10 * C, 5 * C);
+    assert_eq!(
+        renewal_precheck(&raised).unwrap_err(),
+        NoRenewPath {
+            after_fines: false,
+            threshold_raised: true
+        }
+    );
+    // Both.
+    assert_eq!(
+        renewal_precheck(&v(5 * C, 10 * C, 9 * C / 2)).unwrap_err(),
+        NoRenewPath {
+            after_fines: true,
+            threshold_raised: true
+        }
+    );
+    let line = no_renew_log(&fined, p);
+    assert!(line.contains("path_after_fines=true") && line.contains("total_stake="));
+    println!("{line}");
 }

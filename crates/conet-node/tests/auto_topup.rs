@@ -470,3 +470,15 @@ fn first_bid_leaves_room_for_three_replacements() {
     // N6's note: a 0.05 gwei tip bumps fine under the 0.1 gwei cap.
     assert!(bump_bid(4 * gwei, 50_000_000, max_cap, tip_cap).is_some());
 }
+
+/// Normal renewal keeps the term length (recorded from the contract: termEnd += termLength, the
+/// term amount becomes the full threshold at the end); the node sends no renewal transaction.
+#[test]
+fn normal_renewal_same_term_length_per_contract() {
+    let f = fixture();
+    let t = &f["A"]["renewedTerm"];
+    let n2 = |k: &str| t[k].as_str().unwrap().parse::<u128>().unwrap();
+    assert_eq!(n2("lenAfter"), n2("lenBefore"));
+    assert_eq!(n2("endAfter"), n2("endBefore") + n2("lenBefore"));
+    assert_eq!(n2("baseAfter"), n(&f["A"]["afterEnd"]["thresholdAtEnd"]));
+}
