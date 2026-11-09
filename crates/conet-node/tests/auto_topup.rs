@@ -443,3 +443,30 @@ fn refilled_stake_never_means_online() {
         Err(conet_node::recovery::Refused::RecoveryVoteRequired)
     );
 }
+
+/// First bid at <= 75% of the caps leaves at least three +10% replacements (N6 advice).
+#[test]
+fn first_bid_leaves_room_for_three_replacements() {
+    let gwei = 1_000_000_000u128;
+    let (max_cap, tip_cap) = (50 * gwei, 100_000_000u128); // signer caps: 50 gwei, 1e8 wei
+                                                           // A wanted tip at the cap (0.1 gwei) is lowered to 75% of it.
+    let (m, t) = first_bid(gwei, 100_000_000, max_cap, tip_cap);
+    assert_eq!(t, 75_000_000);
+    assert_eq!(m, 4 * gwei + 75_000_000);
+    let mut bid = (m, t);
+    for i in 0..3 {
+        bid = bump_bid(bid.0, bid.1, max_cap, tip_cap).unwrap_or_else(|| panic!("bump {i}"));
+    }
+    assert!(bid.1 <= tip_cap);
+    // High base fee: maxFee is held at 75% of its cap, still three bumps.
+    let (m, t) = first_bid(100 * gwei, 50_000_000, max_cap, tip_cap);
+    assert_eq!(m, max_cap * 3 / 4);
+    let mut bid = (m, t);
+    for _ in 0..3 {
+        bid = bump_bid(bid.0, bid.1, max_cap, tip_cap).unwrap();
+    }
+    // A tip already at the cap cannot be bumped: the old trap the 75% rule avoids.
+    assert_eq!(bump_bid(4 * gwei, tip_cap, max_cap, tip_cap), None);
+    // N6's note: a 0.05 gwei tip bumps fine under the 0.1 gwei cap.
+    assert!(bump_bid(4 * gwei, 50_000_000, max_cap, tip_cap).is_some());
+}

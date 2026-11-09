@@ -163,3 +163,37 @@ pub fn plan(v: &ChainView, inflight: Option<&InFlight>, cfg: &Config) -> Plan {
 pub fn recovery_target(latest_threshold: u128, locked: u128) -> u128 {
     latest_threshold.saturating_add(locked)
 }
+
+/// topUp pricing (N6 engineering advice on the fee caps, 2026-11-09): the first bid keeps both the
+/// tip and maxFee at or below ~75% of their signer caps, so at least three +10% replacements still
+/// fit under the caps (0.75 x 1.1^3 = 0.998). A first tip equal to the cap could never be replaced
+/// and the node would report "busy" forever.
+pub const FIRST_BID_SHARE_BPS: u128 = 7_500;
+
+/// First bid: tip = min(wanted, 75% of tip cap); maxFee = min(4 x baseFee + tip, 75% of maxFee
+/// cap), and never below the tip.
+pub fn first_bid(
+    base_fee: u128,
+    wanted_tip: u128,
+    max_fee_cap: u128,
+    tip_cap: u128,
+) -> (u128, u128) {
+    let tip = wanted_tip.min(tip_cap * FIRST_BID_SHARE_BPS / 10_000);
+    let max_fee = (base_fee.saturating_mul(4).saturating_add(tip))
+        .min(max_fee_cap * FIRST_BID_SHARE_BPS / 10_000)
+        .max(tip);
+    (max_fee, tip)
+}
+
+/// Next replacement bid: both fees +10% (rounded up, geth's rule), or None if either would pass its
+/// cap (then the node stops bumping and, near the end, alerts the operator).
+pub fn bump_bid(
+    max_fee: u128,
+    tip: u128,
+    max_fee_cap: u128,
+    tip_cap: u128,
+) -> Option<(u128, u128)> {
+    let up = |v: u128| v + v.div_ceil(10);
+    let (m, t) = (up(max_fee), up(tip));
+    (m <= max_fee_cap && t <= tip_cap).then_some((m, t))
+}
