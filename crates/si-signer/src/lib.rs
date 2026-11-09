@@ -11,6 +11,7 @@
 pub mod client;
 pub mod kek;
 pub mod keystore;
+pub mod probe_role;
 pub mod proto;
 pub mod quota;
 pub mod server;
