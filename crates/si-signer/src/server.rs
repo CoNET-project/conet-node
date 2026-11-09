@@ -1,10 +1,11 @@
 //! Signer service: policy checks, then the operation. Logs never contain payloads.
 use crate::proto::{self, Request, Response};
+use crate::quota::{Intent, Quota, QuotaConfig, A_ANCHOR_RECEIPT};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use si_core::statement::{AnchorReceipt, BindNode, Domain};
 use si_crypto::{eip712 as e7, eth, opgp};
 use si_proto as sp;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
@@ -23,6 +24,8 @@ pub struct Signer {
     pub allow_uid: Option<u32>,
     /// This node's NodeRegistryV2 id; None = no anchor receipts.
     pub anchor_node_id: Option<String>,
+    /// Quota ledger (§31); required when anchor receipts are enabled.
+    quota: Option<Mutex<Quota>>,
 }
 
 /// Contract ceiling for an online window (`ONLINE_TTL_CEIL`, 7 days): a receipt never covers more.
@@ -36,6 +39,9 @@ pub struct SignerConfig {
     pub allow_uid: Option<u32>,
     /// `--anchor-node-id`: this node's NodeRegistryV2 id (decimal). None = no anchor receipts.
     pub anchor_node_id: Option<String>,
+    /// `--quota-state <file>` (and optional `--quota-config <json>`): the quota ledger.
+    /// Required with `--anchor-node-id` (anchor receipts are capped per day, H8-7).
+    pub quota: Option<(QuotaConfig, std::path::PathBuf)>,
 }
 
 #[derive(Debug)]
@@ -73,6 +79,25 @@ impl Signer {
         };
         drop(secrets);
         let domain = Domain::new(&cfg.verifying_contract).map_err(|e| StartError(e.to_string()))?;
+        if cfg.anchor_node_id.is_some() && cfg.quota.is_none() {
+            return Err(StartError(
+                "anchor receipts need a quota ledger (--quota-state)".into(),
+            ));
+        }
+        let quota = match cfg.quota {
+            None => None,
+            Some((qc, path)) => {
+                let q = Quota::open(qc, path).map_err(StartError)?;
+                if let Some(r) = q.broken() {
+                    // Keep serving the other roles; every quota-gated request is refused.
+                    warn!(
+                        reason = r,
+                        "quota state broken: quota-gated requests refused"
+                    );
+                }
+                Some(Mutex::new(q))
+            }
+        };
         Ok(Self {
             wallet,
             route,
@@ -82,6 +107,7 @@ impl Signer {
             allow_bind: cfg.allow_bind,
             allow_uid: cfg.allow_uid,
             anchor_node_id: cfg.anchor_node_id,
+            quota,
         })
     }
 
@@ -309,6 +335,9 @@ impl Signer {
                 {
                     return refused("anchor_fields");
                 }
+                if let Err(e) = self.charge(&Intent::signature(A_ANCHOR_RECEIPT), t as u64) {
+                    return refused(&e);
+                }
                 let r = AnchorReceipt {
                     node_id: node,
                     anchor_node_id: anchor,
@@ -319,6 +348,30 @@ impl Signer {
                     .sign_digest(&r.digest(&self.domain))
                     .map(ok)
                     .unwrap_or_else(|_| refused("sign"))
+            }
+        }
+    }
+}
+
+impl Signer {
+    /// Ask the quota ledger; logs warnings and refusals by bucket only.
+    fn charge(&self, intent: &Intent, now: u64) -> Result<(), String> {
+        let Some(q) = &self.quota else {
+            return Err("quota_not_configured".into());
+        };
+        let mut q = q
+            .lock()
+            .map_err(|_| "quota_state_broken:lock".to_string())?;
+        match q.reserve(intent, now) {
+            Ok(g) => {
+                for w in &g.warnings {
+                    warn!(bucket = %w, "quota at warn threshold");
+                }
+                Ok(())
+            }
+            Err(e) => {
+                warn!(refusal = %e, "quota refused");
+                Err(e.to_string())
             }
         }
     }

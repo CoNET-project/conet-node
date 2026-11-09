@@ -12,6 +12,7 @@ pub mod client;
 pub mod kek;
 pub mod keystore;
 pub mod proto;
+pub mod quota;
 pub mod server;
 
 /// Derive a purpose key from the KEK (HMAC-SHA256(KEK, label)).

@@ -7,6 +7,8 @@
 //!        CONET_INIT_WALLET_KEY (0x hex), CONET_INIT_PGP_PASS (may be empty); the armored
 //!        key from `--pgp-key <file>`.
 //! serve: open the keystore and answer the network process on a Unix socket.
+//!        `--quota-state <file>` (required with `--anchor-node-id`) keeps the daily quota ledger;
+//!        `--quota-config <json>` overrides the defaults (see quota.example.json).
 //! The KEK comes from systemd-creds (`$CREDENTIALS_DIRECTORY/conet-node-kek`); `--insecure-kek-file`
 //! exists for tests and local networks only.
 use si_signer::{kek, keystore, server};
@@ -110,6 +112,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 allow_bind: flag("--allow-bind"),
                 anchor_node_id: arg("--anchor-node-id"),
                 allow_uid: arg("--allow-uid").and_then(|s| s.parse().ok()),
+                quota: match arg("--quota-state") {
+                    None => None,
+                    Some(state) => {
+                        // Defaults are N6 proposals, pending user approval; a config file overrides them.
+                        let qc = match arg("--quota-config") {
+                            Some(f) => serde_json::from_str(&std::fs::read_to_string(f)?)?,
+                            None => si_signer::quota::QuotaConfig::default(),
+                        };
+                        Some((qc, PathBuf::from(state)))
+                    }
+                },
             };
             let signer = Arc::new(server::Signer::start(cfg).map_err(|e| e.0)?);
             let _ = std::fs::remove_file(&socket);

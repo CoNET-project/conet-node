@@ -56,6 +56,7 @@ impl Env {
             allow_bind,
             allow_uid,
             anchor_node_id: None,
+            quota: None,
         }
     }
     /// Start a signer on a fresh socket; returns the client.
@@ -423,6 +424,7 @@ async fn generated_keys_serve_and_match_registration_values() {
             allow_bind: false,
             allow_uid: None,
             anchor_node_id: None,
+            quota: None,
         })
         .unwrap_or_else(|e| panic!("{}", e.0)),
     );
@@ -472,6 +474,7 @@ async fn route_key_rotation_keeps_the_old_key_until_retired() {
                 allow_bind: false,
                 allow_uid: None,
                 anchor_node_id: None,
+                quota: None,
             })
             .unwrap_or_else(|e| panic!("{}", e.0)),
         );
@@ -559,6 +562,10 @@ async fn anchor_receipt_for_own_node_id_only() {
         .contains("anchor_disabled"));
     let mut cfg = e.cfg(false, None);
     cfg.anchor_node_id = Some("5".into());
+    cfg.quota = Some((
+        si_signer::quota::QuotaConfig::default(),
+        e.dir.path().join("quota.json"),
+    ));
     let c = Arc::new(e.start(cfg, "b").await);
     let sig = call(&c, receipt("12", 4, now + 3600)).await.unwrap();
     let digest = AnchorReceipt {

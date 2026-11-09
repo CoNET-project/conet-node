@@ -259,6 +259,7 @@ async fn entry_with_signer_process() {
             allow_bind: false,
             allow_uid: None,
             anchor_node_id: None,
+            quota: None,
         })
         .unwrap_or_else(|e| panic!("{}", e.0)),
     );

@@ -98,7 +98,13 @@ ABIs live in `crates/conet-node/abi/` (compiled from the node line's sources; se
   reply 5 s, 10 s per stage; a node with three network failures in a row is skipped for 60 s.
   AddressPGP has one slot; AddressPGPV2 `getRoutes` plugs in when its ABI is final.
 - **Anchor receipts**: `conet-signer serve … --anchor-node-id <id>` signs `AnchorReceipt` for
-  other nodes' online declarations (never its own id, window ≤ 7 days).
+  other nodes' online declarations (never its own id, window ≤ 7 days). It needs
+  `--quota-state <file>`: a daily ledger that caps receipts (default 1,000 per UTC day) and
+  survives restarts; a damaged ledger file refuses every capped request until an operator
+  looks at it. `--quota-config <json>` overrides the defaults (`crates/si-signer/quota.example.json`).
+  The ledger also has entries for the registry-wallet transactions (vote counts, 6,000,000 gas
+  floor for `voteReport` / `finalizeReport`, daily spend, 4 in flight), but the signer has no
+  transaction role yet. All defaults are proposals pending user approval.
 - **Registration data**: `conet-register` prints typed data, digests and calldata for
   `registerFor`, `registerReserved` and `setEgressPolicy`. It never sends a transaction.
 

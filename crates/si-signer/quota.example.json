@@ -1,0 +1,23 @@
+{
+  "_note": "conet-signer --quota-config example. Every value is an N6 proposal (H8-2, H8-7) and is PENDING USER APPROVAL. reportOffline.manual (H8-12) is not set: manual reports stay refused until the user decides the daily count. markOnline, setOnline and extendOnline gas ceilings wait for measured gas x 1.5.",
+  "daily": {
+    "voteReport.agree": 20,
+    "voteReport.disagree": 200,
+    "markOnline": 20,
+    "finalizeReport": 50,
+    "setOnline+extendOnline": 500,
+    "anchorReceipt": 1000
+  },
+  "gas_ceiling": {
+    "voteReport.agree": 6000000,
+    "voteReport.disagree": 6000000,
+    "finalizeReport": 6000000
+  },
+  "spend_vote_wei": 60000000000000000,
+  "spend_anchor_net_wei": 40000000000000000,
+  "spend_total_wei": 100000000000000000,
+  "max_fee_wei": 100000000,
+  "max_inflight": 4,
+  "warn_percent": 80,
+  "manual_report_target_window_sec": 86400
+}
