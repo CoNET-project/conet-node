@@ -33,6 +33,36 @@ allow = [
 multiple-versions = "allow"
 wildcards = "deny"
 allow-wildcard-paths = true
+# AGENTS.md "禁止使用 WebSocket": no WebSocket client or server crate may enter the graph, directly or
+# transitively. Checked by `cargo deny check bans` in the quality gate; the run-time side is
+# crates/conet-node/tests/no_websocket.rs.
+deny = [
+  { crate = "tungstenite", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "tokio-tungstenite", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "async-tungstenite", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "websocket", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "ws", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "tokio-websockets", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "fastwebsockets", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "soketto", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "ws_stream_wasm", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "reqwest-websocket", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "alloy-transport-ws", reason = "WebSocket is banned (AGENTS.md)" },
+  { crate = "ethers-providers", reason = "carries WebSocket providers; not used" },
+]
+
+# The same rule for crate features that turn WebSocket on.
+[[bans.features]]
+crate = "web-sys"
+deny = ["WebSocket"]
+
+[[bans.features]]
+crate = "alloy-provider"
+deny = ["ws", "pubsub"]
+
+[[bans.features]]
+crate = "alloy"
+deny = ["provider-ws", "transport-ws", "pubsub"]
 
 [sources]
 unknown-registry = "deny"
