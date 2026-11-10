@@ -1,4 +1,4 @@
-//! Node line 45e9c5d0 ("允许补封" in the contract) on a local Hardhat chain vs the node side
+//! Node line 077c78f7 (late sealing "允许补封" since 45e9c5d0) on a local Hardhat chain vs the node side
 //! (`tests/data/late-fixture.json`, from `tools/vote-gate/late-fixture.test.ts`).
 use conet_node::online_gate::*;
 use conet_node::vote_gate::{report_after_window, report_seal_ready, ReportView, REPORT_OPEN};

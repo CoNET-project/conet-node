@@ -341,54 +341,6 @@
   "type": "function"
  },
  {
-  "inputs": [],
-  "name": "accounting",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "stakeTotal",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint256",
-    "name": "prestakeTotal",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint256",
-    "name": "owedTotal",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint256",
-    "name": "reserve",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint256",
-    "name": "reportEscrow",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint256",
-    "name": "voteReserve",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint256",
-    "name": "admissionEscrow",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint256",
-    "name": "onlineAccounts",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
   "inputs": [
    {
     "internalType": "bytes32",
@@ -421,25 +373,6 @@
     "internalType": "address",
     "name": "",
     "type": "address"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "address",
-    "name": "w",
-    "type": "address"
-   }
-  ],
-  "name": "bindNonceOf",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
    }
   ],
   "stateMutability": "view",
@@ -589,29 +522,6 @@
   "type": "function"
  },
  {
-  "inputs": [],
-  "name": "fetchAllowlist",
-  "outputs": [
-   {
-    "internalType": "bytes32",
-    "name": "root",
-    "type": "bytes32"
-   },
-   {
-    "internalType": "uint64",
-    "name": "version",
-    "type": "uint64"
-   },
-   {
-    "internalType": "string",
-    "name": "uri",
-    "type": "string"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
   "inputs": [
    {
     "internalType": "uint256",
@@ -622,309 +532,6 @@
   "name": "finalizeReport",
   "outputs": [],
   "stateMutability": "nonpayable",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "bytes32",
-    "name": "requestHash",
-    "type": "bytes32"
-   }
-  ],
-  "name": "getPrestake",
-  "outputs": [
-   {
-    "components": [
-     {
-      "internalType": "address",
-      "name": "payer",
-      "type": "address"
-     },
-     {
-      "internalType": "uint64",
-      "name": "since",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint128",
-      "name": "amount",
-      "type": "uint128"
-     }
-    ],
-    "internalType": "struct Prestake",
-    "name": "",
-    "type": "tuple"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "reportId",
-    "type": "uint256"
-   }
-  ],
-  "name": "getReport",
-  "outputs": [
-   {
-    "components": [
-     {
-      "internalType": "uint64",
-      "name": "target",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint64",
-      "name": "reporter",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint64",
-      "name": "openedAt",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint64",
-      "name": "expiresAt",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint64",
-      "name": "resolvedAt",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint32",
-      "name": "minOpen",
-      "type": "uint32"
-     },
-     {
-      "internalType": "uint32",
-      "name": "agree",
-      "type": "uint32"
-     },
-     {
-      "internalType": "uint32",
-      "name": "disagree",
-      "type": "uint32"
-     },
-     {
-      "internalType": "uint16",
-      "name": "margin",
-      "type": "uint16"
-     },
-     {
-      "internalType": "uint16",
-      "name": "winners",
-      "type": "uint16"
-     },
-     {
-      "internalType": "uint8",
-      "name": "state",
-      "type": "uint8"
-     },
-     {
-      "internalType": "uint16",
-      "name": "payCursor",
-      "type": "uint16"
-     },
-     {
-      "internalType": "bool",
-      "name": "closed",
-      "type": "bool"
-     },
-     {
-      "internalType": "uint128",
-      "name": "perWinner",
-      "type": "uint128"
-     },
-     {
-      "internalType": "uint128",
-      "name": "pot",
-      "type": "uint128"
-     },
-     {
-      "internalType": "uint128",
-      "name": "fine",
-      "type": "uint128"
-     },
-     {
-      "internalType": "uint32",
-      "name": "voterCursor",
-      "type": "uint32"
-     },
-     {
-      "internalType": "uint96",
-      "name": "roundPer",
-      "type": "uint96"
-     },
-     {
-      "internalType": "address",
-      "name": "executor",
-      "type": "address"
-     },
-     {
-      "internalType": "uint32",
-      "name": "population",
-      "type": "uint32"
-     },
-     {
-      "internalType": "uint128",
-      "name": "reporterPaid",
-      "type": "uint128"
-     },
-     {
-      "internalType": "uint128",
-      "name": "executorPaid",
-      "type": "uint128"
-     }
-    ],
-    "internalType": "struct Report",
-    "name": "",
-    "type": "tuple"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "legacyId",
-    "type": "uint256"
-   }
-  ],
-  "name": "getReservation",
-  "outputs": [
-   {
-    "components": [
-     {
-      "internalType": "bytes32",
-      "name": "ipHash",
-      "type": "bytes32"
-     },
-     {
-      "internalType": "address",
-      "name": "operator",
-      "type": "address"
-     },
-     {
-      "internalType": "uint16",
-      "name": "tcpPort",
-      "type": "uint16"
-     },
-     {
-      "internalType": "bytes8",
-      "name": "keyId",
-      "type": "bytes8"
-     },
-     {
-      "internalType": "bool",
-      "name": "vdrSyncable",
-      "type": "bool"
-     },
-     {
-      "internalType": "bool",
-      "name": "used",
-      "type": "bool"
-     },
-     {
-      "internalType": "address",
-      "name": "beneficiary",
-      "type": "address"
-     },
-     {
-      "internalType": "uint64",
-      "name": "notBefore",
-      "type": "uint64"
-     }
-    ],
-    "internalType": "struct Reservation",
-    "name": "",
-    "type": "tuple"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "reportId",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint256",
-    "name": "voterNodeId",
-    "type": "uint256"
-   }
-  ],
-  "name": "getVote",
-  "outputs": [
-   {
-    "components": [
-     {
-      "internalType": "uint8",
-      "name": "choice",
-      "type": "uint8"
-     },
-     {
-      "internalType": "bool",
-      "name": "settled",
-      "type": "bool"
-     },
-     {
-      "internalType": "bool",
-      "name": "fined",
-      "type": "bool"
-     },
-     {
-      "internalType": "uint32",
-      "name": "rank",
-      "type": "uint32"
-     },
-     {
-      "internalType": "uint96",
-      "name": "claimed",
-      "type": "uint96"
-     },
-     {
-      "internalType": "uint96",
-      "name": "fine",
-      "type": "uint96"
-     }
-    ],
-    "internalType": "struct Vote",
-    "name": "",
-    "type": "tuple"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   }
-  ],
-  "name": "ipOf",
-  "outputs": [
-   {
-    "internalType": "string",
-    "name": "",
-    "type": "string"
-   }
-  ],
-  "stateMutability": "view",
   "type": "function"
  },
  {
@@ -988,63 +595,6 @@
   "inputs": [
    {
     "internalType": "address",
-    "name": "w",
-    "type": "address"
-   }
-  ],
-  "name": "isLeakedNodeWallet",
-  "outputs": [
-   {
-    "internalType": "bool",
-    "name": "",
-    "type": "bool"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "bytes32",
-    "name": "requestHash",
-    "type": "bytes32"
-   }
-  ],
-  "name": "isRequestUsed",
-  "outputs": [
-   {
-    "internalType": "bool",
-    "name": "",
-    "type": "bool"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   }
-  ],
-  "name": "isVdrSynced",
-  "outputs": [
-   {
-    "internalType": "bool",
-    "name": "",
-    "type": "bool"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "address",
     "name": "nodeWallet",
     "type": "address"
    }
@@ -1055,38 +605,6 @@
     "internalType": "bytes32",
     "name": "",
     "type": "bytes32"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "i",
-    "type": "uint256"
-   }
-  ],
-  "name": "listedAt",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [],
-  "name": "listedCount",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
    }
   ],
   "stateMutability": "view",
@@ -1176,19 +694,6 @@
  {
   "inputs": [],
   "name": "minStakeNow",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [],
-  "name": "nextNodeId",
   "outputs": [
    {
     "internalType": "uint256",
@@ -1585,125 +1090,6 @@
  {
   "inputs": [
    {
-    "internalType": "address",
-    "name": "a",
-    "type": "address"
-   }
-  ],
-  "name": "owedOf",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [],
-  "name": "params",
-  "outputs": [
-   {
-    "components": [
-     {
-      "internalType": "uint64",
-      "name": "thresholdGrace",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint64",
-      "name": "unbondingPeriod",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint64",
-      "name": "reportExpiry",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint32",
-      "name": "reportMinOpen",
-      "type": "uint32"
-     },
-     {
-      "internalType": "uint16",
-      "name": "reportMargin",
-      "type": "uint16"
-     },
-     {
-      "internalType": "uint16",
-      "name": "offlineRateBps",
-      "type": "uint16"
-     },
-     {
-      "internalType": "uint16",
-      "name": "fraudReporterBps",
-      "type": "uint16"
-     },
-     {
-      "internalType": "uint32",
-      "name": "maxOnlineTtl",
-      "type": "uint32"
-     },
-     {
-      "internalType": "uint16",
-      "name": "maxDailyOnline",
-      "type": "uint16"
-     },
-     {
-      "internalType": "address",
-      "name": "subsidyPool",
-      "type": "address"
-     },
-     {
-      "internalType": "uint64",
-      "name": "mailboxChangeFine",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint8",
-      "name": "ovVoidPays",
-      "type": "uint8"
-     },
-     {
-      "internalType": "uint8",
-      "name": "rtGapBasis",
-      "type": "uint8"
-     },
-     {
-      "internalType": "uint16",
-      "name": "ovMaxPaidVoters",
-      "type": "uint16"
-     },
-     {
-      "internalType": "uint8",
-      "name": "mjIrreversible",
-      "type": "uint8"
-     },
-     {
-      "internalType": "uint16",
-      "name": "mjMinBase",
-      "type": "uint16"
-     },
-     {
-      "internalType": "uint8",
-      "name": "mjExcludeSubject",
-      "type": "uint8"
-     }
-    ],
-    "internalType": "struct Params",
-    "name": "",
-    "type": "tuple"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
     "internalType": "uint256",
     "name": "nodeId",
     "type": "uint256"
@@ -1748,44 +1134,6 @@
     "internalType": "uint256",
     "name": "amount",
     "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   }
-  ],
-  "name": "pendingOperatorOf",
-  "outputs": [
-   {
-    "internalType": "address",
-    "name": "",
-    "type": "address"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   }
-  ],
-  "name": "pgpOf",
-  "outputs": [
-   {
-    "internalType": "bytes",
-    "name": "",
-    "type": "bytes"
    }
   ],
   "stateMutability": "view",
@@ -2003,19 +1351,6 @@
   "type": "function"
  },
  {
-  "inputs": [],
-  "name": "reportCount",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
   "inputs": [
    {
     "internalType": "uint8",
@@ -2211,30 +1546,6 @@
   "inputs": [
    {
     "internalType": "uint256",
-    "name": "reportId",
-    "type": "uint256"
-   }
-  ],
-  "name": "reportVoters",
-  "outputs": [
-   {
-    "internalType": "uint64[]",
-    "name": "agree",
-    "type": "uint64[]"
-   },
-   {
-    "internalType": "uint64[]",
-    "name": "disagree",
-    "type": "uint64[]"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
     "name": "nodeId",
     "type": "uint256"
    }
@@ -2242,25 +1553,6 @@
   "name": "requestExit",
   "outputs": [],
   "stateMutability": "nonpayable",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "bytes8",
-    "name": "keyId",
-    "type": "bytes8"
-   }
-  ],
-  "name": "reservedIdOfKeyId",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
   "type": "function"
  },
  {
@@ -2297,53 +1589,6 @@
   "name": "seed",
   "outputs": [],
   "stateMutability": "nonpayable",
-  "type": "function"
- },
- {
-  "inputs": [],
-  "name": "seedState",
-  "outputs": [
-   {
-    "internalType": "bytes32",
-    "name": "seedHash",
-    "type": "bytes32"
-   },
-   {
-    "internalType": "bytes32",
-    "name": "expectedNext",
-    "type": "bytes32"
-   },
-   {
-    "internalType": "uint256",
-    "name": "nextIndex",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint64",
-    "name": "reserveUntil",
-    "type": "uint64"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint8",
-    "name": "nodeType",
-    "type": "uint8"
-   }
-  ],
-  "name": "serviceMaskOf",
-  "outputs": [
-   {
-    "internalType": "uint16",
-    "name": "",
-    "type": "uint16"
-   }
-  ],
-  "stateMutability": "view",
   "type": "function"
  },
  {
@@ -2614,49 +1859,6 @@
  {
   "inputs": [
    {
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   }
-  ],
-  "name": "slashCountOf",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "nodeId",
-    "type": "uint256"
-   },
-   {
-    "internalType": "uint256",
-    "name": "i",
-    "type": "uint256"
-   }
-  ],
-  "name": "slashIdOfNodeAt",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
     "internalType": "uint256[]",
     "name": "nodeIds",
     "type": "uint256[]"
@@ -2685,72 +1887,6 @@
   "name": "slashMany",
   "outputs": [],
   "stateMutability": "nonpayable",
-  "type": "function"
- },
- {
-  "inputs": [
-   {
-    "internalType": "uint256",
-    "name": "slashId",
-    "type": "uint256"
-   }
-  ],
-  "name": "slashRecord",
-  "outputs": [
-   {
-    "components": [
-     {
-      "internalType": "uint256",
-      "name": "slashId",
-      "type": "uint256"
-     },
-     {
-      "internalType": "uint256",
-      "name": "nodeId",
-      "type": "uint256"
-     },
-     {
-      "internalType": "uint64",
-      "name": "time",
-      "type": "uint64"
-     },
-     {
-      "internalType": "uint8",
-      "name": "track",
-      "type": "uint8"
-     },
-     {
-      "internalType": "uint8",
-      "name": "reason",
-      "type": "uint8"
-     },
-     {
-      "internalType": "uint256",
-      "name": "amount",
-      "type": "uint256"
-     },
-     {
-      "internalType": "uint256",
-      "name": "stakeAfter",
-      "type": "uint256"
-     },
-     {
-      "internalType": "uint256",
-      "name": "refId",
-      "type": "uint256"
-     },
-     {
-      "internalType": "bytes32",
-      "name": "evidenceHash",
-      "type": "bytes32"
-     }
-    ],
-    "internalType": "struct SlashRecord",
-    "name": "r",
-    "type": "tuple"
-   }
-  ],
-  "stateMutability": "view",
   "type": "function"
  },
  {
@@ -2793,19 +1929,6 @@
   "type": "function"
  },
  {
-  "inputs": [],
-  "name": "tableVersion",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
-  "type": "function"
- },
- {
   "inputs": [
    {
     "internalType": "uint256",
@@ -2816,19 +1939,6 @@
   "name": "topUp",
   "outputs": [],
   "stateMutability": "payable",
-  "type": "function"
- },
- {
-  "inputs": [],
-  "name": "totalSlashCount",
-  "outputs": [
-   {
-    "internalType": "uint256",
-    "name": "",
-    "type": "uint256"
-   }
-  ],
-  "stateMutability": "view",
   "type": "function"
  },
  {
@@ -5358,6 +4468,54 @@
   "type": "event"
  },
  {
+  "inputs": [],
+  "name": "accounting",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "stakeTotal",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "prestakeTotal",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "owedTotal",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "reserve",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "reportEscrow",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "voteReserve",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "admissionEscrow",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "onlineAccounts",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
   "inputs": [
    {
     "internalType": "bytes32",
@@ -5479,6 +4637,25 @@
  {
   "inputs": [
    {
+    "internalType": "address",
+    "name": "w",
+    "type": "address"
+   }
+  ],
+  "name": "bindNonceOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
     "internalType": "bytes32",
     "name": "id",
     "type": "bytes32"
@@ -5521,6 +4698,29 @@
     "internalType": "uint256",
     "name": "owed",
     "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "fetchAllowlist",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "root",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint64",
+    "name": "version",
+    "type": "uint64"
+   },
+   {
+    "internalType": "string",
+    "name": "uri",
+    "type": "string"
    }
   ],
   "stateMutability": "view",
@@ -5722,6 +4922,42 @@
   "inputs": [
    {
     "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "getPrestake",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "address",
+      "name": "payer",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "since",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint128",
+      "name": "amount",
+      "type": "uint128"
+     }
+    ],
+    "internalType": "struct Prestake",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
     "name": "recId",
     "type": "bytes32"
    }
@@ -5843,6 +5079,362 @@
   "inputs": [
    {
     "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   }
+  ],
+  "name": "getReport",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint64",
+      "name": "target",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "reporter",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "openedAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "expiresAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "resolvedAt",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32",
+      "name": "minOpen",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint32",
+      "name": "agree",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint32",
+      "name": "disagree",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "margin",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "winners",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "state",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "payCursor",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bool",
+      "name": "closed",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint128",
+      "name": "perWinner",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint128",
+      "name": "pot",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint128",
+      "name": "fine",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint32",
+      "name": "voterCursor",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint96",
+      "name": "roundPer",
+      "type": "uint96"
+     },
+     {
+      "internalType": "address",
+      "name": "executor",
+      "type": "address"
+     },
+     {
+      "internalType": "uint32",
+      "name": "population",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint128",
+      "name": "reporterPaid",
+      "type": "uint128"
+     },
+     {
+      "internalType": "uint128",
+      "name": "executorPaid",
+      "type": "uint128"
+     }
+    ],
+    "internalType": "struct Report",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "legacyId",
+    "type": "uint256"
+   }
+  ],
+  "name": "getReservation",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "bytes32",
+      "name": "ipHash",
+      "type": "bytes32"
+     },
+     {
+      "internalType": "address",
+      "name": "operator",
+      "type": "address"
+     },
+     {
+      "internalType": "uint16",
+      "name": "tcpPort",
+      "type": "uint16"
+     },
+     {
+      "internalType": "bytes8",
+      "name": "keyId",
+      "type": "bytes8"
+     },
+     {
+      "internalType": "bool",
+      "name": "vdrSyncable",
+      "type": "bool"
+     },
+     {
+      "internalType": "bool",
+      "name": "used",
+      "type": "bool"
+     },
+     {
+      "internalType": "address",
+      "name": "beneficiary",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "notBefore",
+      "type": "uint64"
+     }
+    ],
+    "internalType": "struct Reservation",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "voterNodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "getVote",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint8",
+      "name": "choice",
+      "type": "uint8"
+     },
+     {
+      "internalType": "bool",
+      "name": "settled",
+      "type": "bool"
+     },
+     {
+      "internalType": "bool",
+      "name": "fined",
+      "type": "bool"
+     },
+     {
+      "internalType": "uint32",
+      "name": "rank",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint96",
+      "name": "claimed",
+      "type": "uint96"
+     },
+     {
+      "internalType": "uint96",
+      "name": "fine",
+      "type": "uint96"
+     }
+    ],
+    "internalType": "struct Vote",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "ipOf",
+  "outputs": [
+   {
+    "internalType": "string",
+    "name": "",
+    "type": "string"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "w",
+    "type": "address"
+   }
+  ],
+  "name": "isLeakedNodeWallet",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "requestHash",
+    "type": "bytes32"
+   }
+  ],
+  "name": "isRequestUsed",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "isVdrSynced",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "i",
+    "type": "uint256"
+   }
+  ],
+  "name": "listedAt",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "listedCount",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
     "name": "nodeId",
     "type": "uint256"
    }
@@ -5907,6 +5499,19 @@
    {
     "internalType": "uint256",
     "name": "sum",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "nextNodeId",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
     "type": "uint256"
    }
   ],
@@ -6064,6 +5669,125 @@
   "inputs": [
    {
     "internalType": "address",
+    "name": "a",
+    "type": "address"
+   }
+  ],
+  "name": "owedOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "params",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint64",
+      "name": "thresholdGrace",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "unbondingPeriod",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint64",
+      "name": "reportExpiry",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint32",
+      "name": "reportMinOpen",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "reportMargin",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "offlineRateBps",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint16",
+      "name": "fraudReporterBps",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint32",
+      "name": "maxOnlineTtl",
+      "type": "uint32"
+     },
+     {
+      "internalType": "uint16",
+      "name": "maxDailyOnline",
+      "type": "uint16"
+     },
+     {
+      "internalType": "address",
+      "name": "subsidyPool",
+      "type": "address"
+     },
+     {
+      "internalType": "uint64",
+      "name": "mailboxChangeFine",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint8",
+      "name": "ovVoidPays",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint8",
+      "name": "rtGapBasis",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "ovMaxPaidVoters",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mjIrreversible",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint16",
+      "name": "mjMinBase",
+      "type": "uint16"
+     },
+     {
+      "internalType": "uint8",
+      "name": "mjExcludeSubject",
+      "type": "uint8"
+     }
+    ],
+    "internalType": "struct Params",
+    "name": "",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
     "name": "nodeWallet",
     "type": "address"
    }
@@ -6074,6 +5798,44 @@
     "internalType": "bytes32",
     "name": "",
     "type": "bytes32"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "pendingOperatorOf",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "pgpOf",
+  "outputs": [
+   {
+    "internalType": "bytes",
+    "name": "",
+    "type": "bytes"
    }
   ],
   "stateMutability": "view",
@@ -6224,6 +5986,43 @@
   "type": "function"
  },
  {
+  "inputs": [],
+  "name": "reportCount",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "reportId",
+    "type": "uint256"
+   }
+  ],
+  "name": "reportVoters",
+  "outputs": [
+   {
+    "internalType": "uint64[]",
+    "name": "agree",
+    "type": "uint64[]"
+   },
+   {
+    "internalType": "uint64[]",
+    "name": "disagree",
+    "type": "uint64[]"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
   "inputs": [
    {
     "internalType": "uint256",
@@ -6292,6 +6091,25 @@
  {
   "inputs": [
    {
+    "internalType": "bytes8",
+    "name": "keyId",
+    "type": "bytes8"
+   }
+  ],
+  "name": "reservedIdOfKeyId",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
     "internalType": "uint256",
     "name": "nodeId",
     "type": "uint256"
@@ -6300,6 +6118,53 @@
   "name": "revokeProbeSigner",
   "outputs": [],
   "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "seedState",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "seedHash",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "bytes32",
+    "name": "expectedNext",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "nextIndex",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint64",
+    "name": "reserveUntil",
+    "type": "uint64"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint8",
+    "name": "nodeType",
+    "type": "uint8"
+   }
+  ],
+  "name": "serviceMaskOf",
+  "outputs": [
+   {
+    "internalType": "uint16",
+    "name": "",
+    "type": "uint16"
+   }
+  ],
+  "stateMutability": "view",
   "type": "function"
  },
  {
@@ -6368,6 +6233,115 @@
   "type": "function"
  },
  {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "slashCountOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "i",
+    "type": "uint256"
+   }
+  ],
+  "name": "slashIdOfNodeAt",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "slashId",
+    "type": "uint256"
+   }
+  ],
+  "name": "slashRecord",
+  "outputs": [
+   {
+    "components": [
+     {
+      "internalType": "uint256",
+      "name": "slashId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "nodeId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint64",
+      "name": "time",
+      "type": "uint64"
+     },
+     {
+      "internalType": "uint8",
+      "name": "track",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint8",
+      "name": "reason",
+      "type": "uint8"
+     },
+     {
+      "internalType": "uint256",
+      "name": "amount",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "stakeAfter",
+      "type": "uint256"
+     },
+     {
+      "internalType": "uint256",
+      "name": "refId",
+      "type": "uint256"
+     },
+     {
+      "internalType": "bytes32",
+      "name": "evidenceHash",
+      "type": "bytes32"
+     }
+    ],
+    "internalType": "struct SlashRecord",
+    "name": "r",
+    "type": "tuple"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
   "inputs": [],
   "name": "solvency",
   "outputs": [
@@ -6390,6 +6364,19 @@
     "internalType": "int256",
     "name": "forcedIn",
     "type": "int256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "tableVersion",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
    }
   ],
   "stateMutability": "view",
@@ -6447,6 +6434,19 @@
    {
     "internalType": "uint256",
     "name": "termBase",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "totalSlashCount",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
     "type": "uint256"
    }
   ],

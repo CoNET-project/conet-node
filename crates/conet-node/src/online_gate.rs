@@ -53,6 +53,9 @@ pub struct RecoveryBlockers {
     pub retry_until: Option<u64>,
     /// The open case cannot be replaced by a new version before this chain time.
     pub replace_at: Option<u64>,
+    /// The open case's frozen tally meets the margin but it is not sealed: call
+    /// `finalizeRecovery(recId)` first, then ask again (contract error `AdmissionState`).
+    pub seal_first: bool,
     /// Free stake (stake - locked) still missing for [`recovery_required`].
     pub stake_missing: Option<u128>,
     /// The node is suspended: only a top-up of the whole stake to `minStakeNow` clears it.
@@ -65,13 +68,15 @@ impl RecoveryBlockers {
     pub fn clear(&self) -> bool {
         self.wait.is_none()
             && self.replace_at.is_none()
+            && !self.seal_first
             && self.stake_missing.is_none()
             && !self.suspended
             && self.fee_missing.is_none()
     }
 
     /// The error `requestRecovery` returns for this state: the first failing check in the
-    /// contract's order (stake, 5-minute gap, offline cooldown, rejection wait, protected case).
+    /// contract's order (stake, 5-minute gap, offline cooldown, rejection wait, protected case,
+    /// decided but unsealed case).
     /// None = the contract accepts (the online fee is sent with the call and not checked here).
     pub fn contract_error(&self) -> Option<&'static str> {
         if self.stake_missing.is_some() || self.suspended {
@@ -84,6 +89,8 @@ impl RecoveryBlockers {
             Some("RejectedWait")
         } else if self.replace_at.is_some() {
             Some("CaseProtected")
+        } else if self.seal_first {
+            Some("AdmissionState")
         } else {
             None
         }
@@ -101,9 +108,11 @@ pub struct RecoveryView {
     /// `recoveryThrottle(nodeId).retryAt`: the seal of the last valid rejection + 12 hours;
     /// 0 = never rejected. Fixed, never doubled (decision "重新申请上线都是 12h").
     pub retry_at: u64,
-    /// This node's own case while it is still voting: its chain `openedAt`. Use
-    /// [`protected_case`] to fill it (a case past its voting end is not protected).
+    /// This node's own case while it is still voting (open, or past its 7,200 s window but not
+    /// sealed): its chain `openedAt`. Use [`protected_case`] to fill it.
     pub open_case_opened_at: Option<u64>,
+    /// That case's tally meets the margin (either side) but it is not sealed yet.
+    pub open_case_decided: bool,
     /// `stakeOf(nodeId)` (locks included).
     pub stake: u128,
     /// `voteLocked` (stake - `lockCapacityOf(nodeId).freeStake`).
@@ -132,12 +141,20 @@ pub fn recovery_required(v: &RecoveryView) -> u128 {
     }
 }
 
-/// `open_case_opened_at` from `getRecovery(currentRecovery(nodeId))`: protected only while it
-/// is voting (`REC_VOTING`) and before its voting end; a requested-but-unproposed case or a case
-/// past `expiresAt` (even if not sealed yet) can be replaced after the 5-minute gap.
-pub fn protected_case(state: u8, opened_at: u64, expires_at: u64, now: u64) -> Option<u64> {
-    const REC_VOTING: u8 = 1;
-    (state == REC_VOTING && now < expires_at).then_some(opened_at)
+const REC_VOTING: u8 = 1;
+
+/// `open_case_opened_at` from `getRecovery(currentRecovery(nodeId))` (node line 077c78f7): any
+/// case still `REC_VOTING` counts, inside its 7,200 s window or past it but not sealed; it is
+/// protected until openedAt + 43,200. A requested-but-unproposed case (`REC_REQUESTED`) or a
+/// sealed one is not.
+pub fn protected_case(state: u8, opened_at: u64) -> Option<u64> {
+    (state == REC_VOTING).then_some(opened_at)
+}
+
+/// The contract's `marginMet`: either side leads by at least the margin.
+pub fn margin_met(agree: u32, disagree: u32, margin: u16) -> bool {
+    let (a, d, m) = (agree as u64, disagree as u64, margin as u64);
+    a >= d + m || d >= a + m
 }
 
 /// The raw view outputs [`recovery_view_from`] turns into a [`RecoveryView`] (one block).
@@ -148,10 +165,12 @@ pub struct RecoveryReads {
     pub offline_since: u64,
     pub not_before: u64,
     pub retry_at: u64,
-    /// `getRecovery(currentRecovery)`: state, openedAt, expiresAt; zeros when there is none.
+    /// `getRecovery(currentRecovery)`: state, openedAt and tally; zeros when there is none.
     pub case_state: u8,
     pub case_opened_at: u64,
-    pub case_expires_at: u64,
+    pub case_agree: u32,
+    pub case_disagree: u32,
+    pub case_margin: u16,
     pub stake_stop: bool,
     pub in_term: bool,
     pub term_base: u128,
@@ -168,12 +187,9 @@ pub fn recovery_view_from(r: &RecoveryReads, fee_balance: u128) -> RecoveryView 
         offline_since: r.offline_since,
         not_before: r.not_before,
         retry_at: r.retry_at,
-        open_case_opened_at: protected_case(
-            r.case_state,
-            r.case_opened_at,
-            r.case_expires_at,
-            r.now,
-        ),
+        open_case_opened_at: protected_case(r.case_state, r.case_opened_at),
+        open_case_decided: r.case_state == REC_VOTING
+            && margin_met(r.case_agree, r.case_disagree, r.case_margin),
         stake: r.stake,
         locked: r.stake.saturating_sub(r.free_stake),
         stake_stop: r.stake_stop,
@@ -201,12 +217,14 @@ pub fn precheck_recovery(v: &RecoveryView) -> RecoveryBlockers {
         .flatten()
         .max()
         .map(|t| t - v.now);
-    // An own case still voting may only be replaced 12 hours after it opened.
+    // An own case still voting may only be replaced 12 hours after it opened; after that, a
+    // case whose frozen tally is decided must be sealed first.
     if let Some(opened) = v.open_case_opened_at {
         if v.now < opened + REPLACE_AFTER {
             b.replace_at = Some(opened + REPLACE_AFTER);
         }
     }
+    b.seal_first = b.replace_at.is_none() && v.open_case_decided;
     let free = v.stake.saturating_sub(v.locked);
     let need = recovery_required(v);
     if free < need {

@@ -1,5 +1,5 @@
 // Recovery / renewal precheck comparison fixture for crates/conet-node/tests/precheck_fixture.rs.
-// Runs in a COPY of the node line's contract tree (45e9c5d0) on Hardhat's in-process chain; test
+// Runs in a COPY of the node line's contract tree (077c78f7) on Hardhat's in-process chain; test
 // keys only. Writes $PRECHECK_FIXTURE.
 //
 //   cp tools/vote-gate/precheck-fixture.test.ts <copy>/test/node-registry-v2/
@@ -33,23 +33,31 @@ describe("precheck comparison fixture", function () {
       const now = BigInt(await time.latest());
       const [notBefore, retryAt] = await reg.recoveryThrottle(id);
       const cur = await reg.currentRecovery(id);
-      let caseState = 0n, openedAt = 0n, expiresAt = 0n;
-      if (cur !== ethers.ZeroHash) { const [c] = await reg.getRecovery(cur); caseState = c.state; openedAt = c.openedAt; expiresAt = c.expiresAt; }
+      let caseState = 0n, openedAt = 0n, expiresAt = 0n, agree = 0n, disagree = 0n, margin = 0n;
+      if (cur !== ethers.ZeroHash) { const [c] = await reg.getRecovery(cur); caseState = c.state; openedAt = c.openedAt; expiresAt = c.expiresAt; agree = c.agree; disagree = c.disagree; margin = c.margin; }
       const t = await reg.termOf(id);
       const ts = await reg.termStateOf(id);
       const st = await reg.nodeStatus(id);
       const cap = await reg.lockCapacityOf(id);
+      // Raw answers of the real contract to every call the Rust read layer makes (recovery_view and
+      // term_watch::read), keyed by calldata, for replay through a mock JSON-RPC.
+      const calls: [string, any[]][] = [["recoveryThrottle", [id]], ["currentRecovery", [id]], ["termOf", [id]], ["termStateOf", [id]], ["nodeStatus", [id]], ["offlineSinceOf", [id]], ["stakeOf", [id]], ["lockCapacityOf", [id]], ["minStakeNow", []], ["minStakeAt", [t.termEnd]]];
+      if (cur !== ethers.ZeroHash) calls.push(["getRecovery", [cur]]);
+      const rpc: any = {};
+      const to = await raw.getAddress();
+      for (const [f, a] of calls) { const data = raw.interface.encodeFunctionData(f, a); rpc[data.toLowerCase()] = await ethers.provider.call({ to, data }); }
+      const blk = await ethers.provider.getBlock("latest");
       let answer = "ok";
       try { await raw.connect(n.wallet).requestRecovery.staticCall(id, req(n), n.ip, { value: E("0.01") }); } catch (e) { answer = errName(e); }
       const row = {
         label, nodeId: String(id), now: String(now),
         offlineSince: String(await reg.offlineSinceOf(id)),
         notBefore: String(notBefore), retryAt: String(retryAt),
-        caseState: String(caseState), caseOpenedAt: String(openedAt), caseExpiresAt: String(expiresAt),
+        caseState: String(caseState), caseOpenedAt: String(openedAt), caseExpiresAt: String(expiresAt), caseAgree: String(agree), caseDisagree: String(disagree), caseMargin: String(margin),
         stakeStop: t.stakeStop, inTerm: ts.inTerm, termBase: String(ts.termBase),
         stake: String(await reg.stakeOf(id)), freeStake: String(cap.freeStake),
         minStakeNow: String(await reg.minStakeNow()), suspended: st.suspended,
-        answer,
+        answer, block: String(blk!.number), registry: to, rpc,
       };
       out.recovery.push(row);
       console.log(label, answer);
@@ -91,14 +99,27 @@ describe("precheck comparison fixture", function () {
     await snap("A unproposed request+299", A);
     await time.increase(1);
     await snap("A unproposed request+300", A);
-    // A proposed case: protected while it is voting and younger than 12 h (voting ends at +7,200).
+    // A proposed case without a decided tally: protected until openedAt + 43,200, also past its
+    // 7,200 s voting window (077c78f7).
     await time.increase(300);
     const rec3 = await request(A, true);
     const [c3] = await reg.getRecovery(rec3);
-    await time.increaseTo(Number(c3.openedAt) + 7_199);
-    await snap("A voting case openedAt+7199", A);
-    await time.increaseTo(Number(c3.openedAt) + 7_200);
-    await snap("A voting case openedAt+7200 (voting ended, not sealed)", A);
+    for (const off of [7_199, 7_200, 43_199, 43_200]) {
+      await time.increaseTo(Number(c3.openedAt) + off);
+      await snap(`A undecided voting case openedAt+${off}`, A);
+    }
+    // A case decided early (21 disagree before 600 s, so not sealed by the votes) and never sealed:
+    // protected until +43,200, then "seal first" (AdmissionState); sealed by anyone, then the
+    // rejection wait.
+    const rec4 = await request(A, true);
+    for (let i = 2; i <= 22; i++) await raw.connect(N[i].wallet).voteRecovery(rec4, false);
+    const [c4] = await reg.getRecovery(rec4);
+    for (const off of [7_200, 43_199, 43_200]) {
+      await time.increaseTo(Number(c4.openedAt) + off);
+      await snap(`A decided unsealed case openedAt+${off}`, A);
+    }
+    await (await raw.connect(ctx.stranger).finalizeRecovery(rec4)).wait();
+    await snap("A after sealing the decided case", A);
 
     // B: offline, slashed 10% inside its term (above the 80% floor, not stopped).
     const B = N[23];
@@ -146,7 +167,7 @@ describe("precheck comparison fixture", function () {
     await snap("D topped up to the new full amount", D);
 
     const file = process.env.PRECHECK_FIXTURE ?? "precheck-fixture.json";
-    writeFileSync(file, JSON.stringify({ note: "Generated by tools/vote-gate/precheck-fixture.test.ts on a local Hardhat chain from node line 45e9c5d0; test keys only.", ...out }, null, 1) + "\n");
+    writeFileSync(file, JSON.stringify({ note: "Generated by tools/vote-gate/precheck-fixture.test.ts on a local Hardhat chain from node line 077c78f7; test keys only.", ...out }, null, 1) + "\n");
     console.log(`wrote ${file}`);
   });
 });

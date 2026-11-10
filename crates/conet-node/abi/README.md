@@ -5,13 +5,12 @@ copy so the node line's tree is not touched, with its `hardhat.node-registry.con
 0.8.35, cancun). Refreshed 2026-11-09 to the node line's tree after v0.4.2 (per-case `population`
 and the early-majority seal switches on top of v0.4.2's seal entries, window, dueBreakdown,
 offlineSince). Source fingerprint with the node line's algorithm (`shasum -a 256 *.sol | sort -k2 |
-shasum -a 256`, first 16 hex): `45e9c5d095bd0ff0`, with late sealing in the contract (before:
-`df24b75518707ee7`; v0.4.2 `a1a13d465f4380fc`).
+shasum -a 256`, first 16 hex): `077c78f789744fad` (scheme A: 29 views moved to `NodeRegistryV2Ext`, reached through the core's fallback at the same address with the same selectors, so the merged ABI below is unchanged in its 306 entries; a voting recovery case is protected until openedAt + 43,200 and, once decided but unsealed, must be sealed first). Before: `45e9c5d095bd0ff0` (late sealing), `df24b75518707ee7`, v0.4.2 `a1a13d465f4380fc`.
 Earlier pins used another algorithm (sha256 of all `.sol` concatenated in sorted path order:
 `a18191abf5c80d05`, `12123775fbd4e434`). Refresh: `tools/abi-refresh.py
 <copy>/artifacts/node-registry/src/b-unit/node-registry-v2`.
 
-`NodeRegistryV2.json` = the core ABI (minus `getNodeRaw`) + events and errors of the linked
+`NodeRegistryV2.json` = the core ABI (minus `getNodeRaw`, wherever it is declared: core before 077c78f7, Ext since) + events and errors of the linked
 libraries (`NodeAdminLib`, `RegistrationLib`, `OfflineReportLib`, `AdmissionLib`, `OnlineVoteLib`,
 `RecoveryLib`) + the functions,
 events and errors of `NodeRegistryV2Ext`, which the core reaches through its fallback (so calls

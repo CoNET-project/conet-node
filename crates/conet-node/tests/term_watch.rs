@@ -1,5 +1,5 @@
 //! Term watch (read-only task in the running node): mapping of the contract's read-time term
-//! state, once-only log lines, the recorded renewals of node line 45e9c5d0
+//! state, once-only log lines, the recorded renewals of node line 077c78f7
 //! (`data/precheck-fixture.json`), and the read layer against a local mock JSON-RPC (every read
 //! of one round pinned to the same block).
 use alloy_primitives::keccak256;
@@ -9,7 +9,7 @@ use conet_node::term_watch::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+mod common;
 
 const C: u128 = 1_000_000_000_000_000_000;
 const DAY: u64 = 86_400;
@@ -157,7 +157,7 @@ fn n(v: &Value) -> u128 {
     v.as_str().unwrap().parse().unwrap()
 }
 
-/// The two renewals recorded from the real contract (45e9c5d0): the short node is reminded
+/// The two renewals recorded from the real contract (077c78f7): the short node is reminded
 /// before and reported stopped after; the funded node (stake == minStakeAt(termEnd)) is never
 /// reminded and, once settled, runs its next term.
 #[test]
@@ -225,64 +225,6 @@ fn word(v: u128) -> String {
     format!("{v:064x}")
 }
 
-async fn serve(answers: HashMap<String, String>, seen: Arc<Mutex<Vec<String>>>) -> String {
-    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", l.local_addr().unwrap());
-    tokio::spawn(async move {
-        loop {
-            let (mut s, _) = l.accept().await.unwrap();
-            let answers = answers.clone();
-            let seen = seen.clone();
-            tokio::spawn(async move {
-                let mut buf = Vec::new();
-                let mut tmp = [0u8; 4096];
-                let body = loop {
-                    let k = s.read(&mut tmp).await.unwrap();
-                    if k == 0 {
-                        return;
-                    }
-                    buf.extend_from_slice(&tmp[..k]);
-                    let text = String::from_utf8_lossy(&buf).to_string();
-                    if let Some(h) = text.find("\r\n\r\n") {
-                        let len = text[..h]
-                            .lines()
-                            .find_map(|l| {
-                                l.to_ascii_lowercase()
-                                    .strip_prefix("content-length:")
-                                    .map(|v| v.trim().parse::<usize>().unwrap())
-                            })
-                            .unwrap_or(0);
-                        if buf.len() >= h + 4 + len {
-                            break buf[h + 4..h + 4 + len].to_vec();
-                        }
-                    }
-                };
-                let req: Value = serde_json::from_slice(&body).unwrap();
-                let result = match req["method"].as_str().unwrap() {
-                    "eth_getBlockByNumber" => {
-                        json!({ "number": "0x2a", "timestamp": format!("0x{:x}", END - 7 * DAY) })
-                    }
-                    "eth_call" => {
-                        let data = req["params"][0]["data"].as_str().unwrap();
-                        seen.lock()
-                            .unwrap()
-                            .push(req["params"][1].as_str().unwrap().to_string());
-                        json!(format!("0x{}", answers[&data[2..10]]))
-                    }
-                    m => panic!("unexpected {m}"),
-                };
-                let out = json!({ "jsonrpc": "2.0", "id": 1, "result": result }).to_string();
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{out}",
-                    out.len()
-                );
-                s.write_all(resp.as_bytes()).await.unwrap();
-            });
-        }
-    });
-    url
-}
-
 #[tokio::test]
 async fn read_pins_one_block_and_decodes() {
     let mut a = HashMap::new();
@@ -296,7 +238,19 @@ async fn read_pins_one_block_and_decodes() {
     a.insert(sel("minStakeAt(uint64)"), word(10 * C));
     a.insert(sel("minStakeNow()"), word(12 * C));
     let seen = Arc::new(Mutex::new(vec![]));
-    let url = serve(a, seen.clone()).await;
+    let s2 = seen.clone();
+    let url = common::serve(Arc::new(move |m: &str, p: &Value| match m {
+        "eth_getBlockByNumber" => {
+            json!({ "number": "0x2a", "timestamp": format!("0x{:x}", END - 7 * DAY) })
+        }
+        "eth_call" => {
+            let data = p[0]["data"].as_str().unwrap();
+            s2.lock().unwrap().push(p[1].as_str().unwrap().to_string());
+            json!(format!("0x{}", a[&data[2..10]]))
+        }
+        m => panic!("unexpected {m}"),
+    }))
+    .await;
     let reader = Nr2Reader {
         rpc: conet_node::chain::Rpc::new(&url).unwrap(),
         registry: "0x00000000000000000000000000000000c0de0001".into(),

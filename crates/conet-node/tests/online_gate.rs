@@ -13,6 +13,7 @@ fn rv(now: u64, since: u64, stake: u128, fee: u128) -> RecoveryView {
         not_before: 0,
         retry_at: 0,
         open_case_opened_at: None,
+        open_case_decided: false,
         stake_stop: false,
         in_term: false,
         term_base: 0,
@@ -279,6 +280,7 @@ fn open_case_replaceable_only_after_twelve_hours() {
     // No open case: only the other rules.
     let none = RecoveryView {
         open_case_opened_at: None,
+        open_case_decided: false,
         now: opened + 10,
         ..base.clone()
     };
@@ -286,6 +288,7 @@ fn open_case_replaceable_only_after_twelve_hours() {
     // A rejection follows its own clock (from the seal), independent of this one.
     let rejected = RecoveryView {
         open_case_opened_at: None,
+        open_case_decided: false,
         retry_at: opened + 50 + OFFLINE_COOLDOWN,
         now: opened + 60,
         ..base

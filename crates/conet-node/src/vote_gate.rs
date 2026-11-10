@@ -243,7 +243,7 @@ pub fn pick(v: &VoterView, reports: &[ReportView], my_choices: &[u8], now: u64) 
 // ---- chain reads ----
 
 /// Words in `getNodeRaw`'s `Node` struct (all static members; `uint32[3] anchors` takes three).
-/// Pinned to the node line's contract source set `45e9c5d0` (abi/README.md): 41 members,
+/// Pinned to the node line's contract source set `077c78f7` (abi/README.md): 41 members,
 /// the stake-term fields and `offlineSince` appended at the end (earlier word positions unchanged).
 pub const NODE_RAW_WORDS: usize = 43;
 /// `offlineSince`: chain moment the node's current offline state took effect (recovery cooldown
@@ -446,14 +446,15 @@ impl VoteReader {
         let cur = self
             .call(NodeRegistryV2::currentRecoveryCall { nodeId: id })
             .await?;
-        let (case_state, case_opened_at, case_expires_at) = if cur.is_zero() {
-            (0, 0, 0)
+        let (case_state, case_opened_at, case_agree, case_disagree, case_margin) = if cur.is_zero()
+        {
+            (0, 0, 0, 0, 0)
         } else {
             let c = self
                 .call(NodeRegistryV2::getRecoveryCall { recId: cur })
                 .await?
                 ._0;
-            (c.state, c.openedAt, c.expiresAt)
+            (c.state, c.openedAt, c.agree, c.disagree, c.margin)
         };
         let term = self.call(NodeRegistryV2::termOfCall { nodeId: id }).await?;
         let state = self
@@ -471,7 +472,9 @@ impl VoteReader {
             retry_at: throttle.retryAt,
             case_state,
             case_opened_at,
-            case_expires_at,
+            case_agree,
+            case_disagree,
+            case_margin,
             stake_stop: term.stakeStop,
             in_term: state.inTerm,
             term_base: state.termBase.try_into().map_err(ce)?,

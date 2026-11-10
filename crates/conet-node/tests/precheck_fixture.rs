@@ -1,4 +1,4 @@
-//! Recovery and renewal prechecks against the real contract (node line 45e9c5d0), from
+//! Recovery and renewal prechecks against the real contract (node line 077c78f7), from
 //! `tests/data/precheck-fixture.json` written by `tools/vote-gate/precheck-fixture.test.ts` on a
 //! local Hardhat chain (test keys only).
 //!
@@ -8,7 +8,10 @@
 //! Renewal: `renews(stake, minStakeAt(termEnd))` must match the event `settleTerms` emitted.
 use conet_node::online_gate::{precheck_recovery, recovery_view_from, RecoveryReads, ONLINE_FEE};
 use conet_node::stake_term::renews;
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::sync::Arc;
+
+mod common;
 
 fn fixture() -> Value {
     serde_json::from_str(include_str!("data/precheck-fixture.json")).unwrap()
@@ -25,7 +28,9 @@ fn reads(c: &Value) -> RecoveryReads {
         retry_at: n(&c["retryAt"]) as u64,
         case_state: n(&c["caseState"]) as u8,
         case_opened_at: n(&c["caseOpenedAt"]) as u64,
-        case_expires_at: n(&c["caseExpiresAt"]) as u64,
+        case_agree: n(&c["caseAgree"]) as u32,
+        case_disagree: n(&c["caseDisagree"]) as u32,
+        case_margin: n(&c["caseMargin"]) as u16,
         stake_stop: c["stakeStop"].as_bool().unwrap(),
         in_term: c["inTerm"].as_bool().unwrap(),
         term_base: n(&c["termBase"]),
@@ -40,7 +45,7 @@ fn reads(c: &Value) -> RecoveryReads {
 fn recovery_precheck_matches_request_recovery() {
     let f = fixture();
     let cases = f["recovery"].as_array().unwrap();
-    assert_eq!(cases.len(), 18);
+    assert_eq!(cases.len(), 24);
     let mut seen = std::collections::BTreeSet::new();
     for c in cases {
         let label = c["label"].as_str().unwrap();
@@ -57,6 +62,7 @@ fn recovery_precheck_matches_request_recovery() {
         "OfflineCooldown",
         "RejectedWait",
         "CaseProtected",
+        "AdmissionState",
     ] {
         assert!(seen.contains(e), "{e} not covered");
     }
@@ -144,4 +150,47 @@ fn renewal_matches_settle_terms() {
         }
     }
     assert_eq!(both, (true, true));
+}
+
+/// The read layer against the real contract's own answers: every state's recorded eth_call
+/// results (keyed by calldata, merged core + Ext ABI, 29 views served through the Ext fallback
+/// since 077c78f7) are replayed through a local JSON-RPC; `VoteReader::recovery_view` and
+/// `term_watch::read` must decode exactly the values the fixture read with ethers.
+#[tokio::test]
+async fn read_layer_decodes_the_real_contract_answers() {
+    let f = fixture();
+    for c in f["recovery"].as_array().unwrap() {
+        let label = c["label"].as_str().unwrap().to_string();
+        let rpc = c["rpc"].as_object().unwrap().clone();
+        let (block, now) = (n(&c["block"]) as u64, n(&c["now"]) as u64);
+        let url = common::serve(Arc::new(move |m: &str, p: &Value| match m {
+            "eth_call" => rpc
+                .get(&p[0]["data"].as_str().unwrap().to_lowercase())
+                .cloned()
+                .unwrap_or_else(|| panic!("call not recorded: {}", p[0]["data"])),
+            "eth_getBlockByNumber" => {
+                json!({ "number": format!("0x{block:x}"), "timestamp": format!("0x{now:x}") })
+            }
+            m => panic!("unexpected {m}"),
+        }))
+        .await;
+        let registry = c["registry"].as_str().unwrap().to_string();
+        let rpc = conet_node::chain::Rpc::new(&url).unwrap();
+        let id = n(&c["nodeId"]) as u64;
+        let vr = conet_node::vote_gate::VoteReader {
+            rpc: rpc.clone(),
+            registry: registry.clone(),
+        };
+        let got = vr.recovery_view(id, now, ONLINE_FEE).await.unwrap();
+        assert_eq!(got, recovery_view_from(&reads(c), ONLINE_FEE), "{label}");
+        let t = conet_node::term_watch::read(&conet_node::nr2::Nr2Reader { rpc, registry }, id)
+            .await
+            .unwrap();
+        assert_eq!(t.now, now, "{label}");
+        assert_eq!(t.stake_stop, c["stakeStop"].as_bool().unwrap(), "{label}");
+        assert_eq!(t.in_term, c["inTerm"].as_bool().unwrap(), "{label}");
+        assert_eq!(t.read_base, n(&c["termBase"]), "{label}");
+        assert_eq!(t.stake, n(&c["stake"]), "{label}");
+        assert_eq!(t.min_stake_now, n(&c["minStakeNow"]), "{label}");
+    }
 }

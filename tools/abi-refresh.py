@@ -19,11 +19,12 @@ def key(x):
     return (x.get("type"), x.get("name"), json.dumps([i["type"] for i in x.get("inputs", [])]))
 
 
-out, seen = [], set()
+# getNodeRaw is skipped wherever it is declared (core before 077c78f7, Ext since).
+SKIP = key({"type": "function", "name": "getNodeRaw", "inputs": [{"type": "uint256"}]})
+out, seen = [], {SKIP}
 for x in abi("NodeRegistryV2"):
-    if x.get("type") == "function" and x["name"] == "getNodeRaw":
-        continue
-    seen.add(key(x)); out.append(x)
+    if key(x) not in seen:
+        seen.add(key(x)); out.append(x)
 for lib in ["NodeAdminLib", "RegistrationLib", "OfflineReportLib", "AdmissionLib", "OnlineVoteLib", "RecoveryLib"]:
     if os.path.exists(f"{A}/{lib}.sol/{lib}.json"):
         for x in abi(lib):
