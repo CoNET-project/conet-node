@@ -7,6 +7,9 @@
 //! `--node-registry <addr> --node-lens <addr>`) and AddressPGP from chain;
 //! `--routes <routes.json>` uses a static table (local test networks).
 //!
+//! Term watch: with `--node-registry` the node reads its own stake term every
+//! `--term-watch-secs` (default 600, at least 30) and logs renewal reminders and stops; read-only.
+//!
 //! Exit (SilentPass `SaaS_Sock5*`): off unless `--egress-policy <file>` is given. Open-type
 //! policies also need `--egress-open-confirm`. With `--node-registry` the exit serves only while
 //! the chain pointer `egressPolicyOf(nodeId)` equals the file's CID; without a registry the
@@ -198,6 +201,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             opts.force_full = Duration::from_secs(3600);
         }
         tokio::spawn(watcher::run(src, routes, ctx.chain.clone(), opts));
+    }
+    // Stake term watch (read-only, log lines only): with a NodeRegistryV2.
+    if let (Some(url), Some(reg)) = (arg("--rpc"), arg("--node-registry")) {
+        let every = arg("--term-watch-secs")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(600u64)
+            .max(30);
+        let reader = conet_node::nr2::Nr2Reader {
+            rpc: Rpc::new(&url)?,
+            registry: reg,
+        };
+        tokio::spawn(conet_node::term_watch::run(
+            reader,
+            ctx.wallet.address(),
+            Duration::from_secs(every),
+        ));
     }
     // HTTPS: in-process ACME for {keyID}.conet.network (Q13), or fixed PEM files for tests.
     // ACME mode (Q74): TLS-ALPN-01 on :443, DNS-01 through the DNS daemon on other ports (W42).

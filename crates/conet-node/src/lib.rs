@@ -24,6 +24,7 @@ pub mod server;
 pub mod stake_term;
 pub mod stake_view;
 pub mod store;
+pub mod term_watch;
 pub mod tls;
 pub mod voice;
 pub mod vote_book;
