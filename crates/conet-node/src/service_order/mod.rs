@@ -159,9 +159,16 @@ pub fn verify_eoa(d: B256, sig: &[u8], user: Address) -> Result<(), Refuse> {
 }
 
 /// Smart-wallet acceptance (ERC-1271, third-party tokens only; GB stays EOA-only).
+///
+/// The verdict is the wallet's own on-chain `isValidSignature(digest, sig)` answer (project
+/// requirement): the node never re-implements a wallet's scheme (e.g. BeamioAccount's eth-sign
+/// wrapping and ascending m-of-n managers) and treats `sig` as opaque; how it is built belongs to
+/// the client and the Beamio signing protocol. The code-hash list only decides whether the node
+/// is willing to make that call; it never replaces it.
 #[derive(Debug, Clone)]
 pub struct WalletPolicy {
-    /// keccak256 of the runtime code of accepted Beamio factory wallets.
+    /// DRAFT: keccak256 of the runtime code of accepted Beamio factory wallets, until the
+    /// authoritative source is decided (factory registry view or published code hash).
     pub accepted_code_hashes: Vec<B256>,
     /// Gas given to the `isValidSignature` eth_call.
     pub gas_cap: u64,

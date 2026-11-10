@@ -1,6 +1,7 @@
 //! Service orders (local prototype on fork 5's DRAFT fields, 8e43083c): type string and digest
 //! against ethers (`conformance/vectors/settlement-order.json`, test key), strict ECDSA, the
-//! ERC-1271 path against a local mock JSON-RPC (code-hash allowlist, gas cap, timeout), nonce
+//! ERC-1271 call mechanics against a local mock JSON-RPC (code-hash allowlist, gas cap, timeout;
+//! not a Beamio compatibility test, which waits for a real BeamioAccount fixture), nonce
 //! book, deadline by chain time, the ordered precheck, and the settle simulation's error names.
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolError, SolStruct};
@@ -159,6 +160,9 @@ async fn wallet_rpc(
 
 const MAGIC: &str = "0x1626ba7e00000000000000000000000000000000000000000000000000000000";
 
+/// Node-side call mechanics of the ERC-1271 path only (allowlist before the call, gas cap,
+/// timeout, magic value) against a mock JSON-RPC. This is NOT a Beamio compatibility test: that
+/// one needs a real BeamioAccount fixture (requested from fork 4 through the PM) on a local chain.
 #[tokio::test(flavor = "multi_thread")]
 async fn erc1271_path() {
     let code = "0x6080604052";
@@ -169,7 +173,9 @@ async fn erc1271_path() {
     let policy = WalletPolicy {
         accepted_code_hashes: vec![h],
         gas_cap: 150_000,
-        timeout: Duration::from_secs(2),
+        // Generous for the passing cases (a loaded machine right after a build once failed
+        // this test once, cause not reproduced in 83 reruns); the timeout case below sets its own.
+        timeout: Duration::from_secs(10),
     };
     // Accepted wallet, magic value: ok; the call carries the gas cap.
     let (rpc, calls, gas) = wallet_rpc(code, MAGIC, Duration::ZERO).await;
