@@ -43,13 +43,21 @@ pub fn offline_since(out_of_service_since: u64, expired_declaration_end: Option<
 /// What stops this node from asking for recovery now. Empty = may ask.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecoveryBlockers {
-    /// Seconds still to wait in the 12-hour cooldown.
+    /// Seconds still to wait until every time gate below has passed.
     pub wait: Option<u64>,
+    /// C17: 5 minutes between two requests of this node (`recoveryThrottle.notBefore`).
+    pub gap_until: Option<u64>,
+    /// 12 hours from the moment the node went offline (`offlineSinceOf` + 43,200).
+    pub cooldown_until: Option<u64>,
+    /// 12 hours from the seal of the last valid rejection (`recoveryThrottle.retryAt`).
+    pub retry_until: Option<u64>,
     /// The open case cannot be replaced by a new version before this chain time.
     pub replace_at: Option<u64>,
-    /// Stake still missing (stake - locked must reach the latest full threshold).
+    /// Free stake (stake - locked) still missing for [`recovery_required`].
     pub stake_missing: Option<u128>,
-    /// Online fee still missing in the balance it is paid from (source pending).
+    /// The node is suspended: only a top-up of the whole stake to `minStakeNow` clears it.
+    pub suspended: bool,
+    /// Online fee still missing in the balance it is paid from.
     pub fee_missing: Option<u128>,
 }
 
@@ -58,53 +66,153 @@ impl RecoveryBlockers {
         self.wait.is_none()
             && self.replace_at.is_none()
             && self.stake_missing.is_none()
+            && !self.suspended
             && self.fee_missing.is_none()
+    }
+
+    /// The error `requestRecovery` returns for this state: the first failing check in the
+    /// contract's order (stake, 5-minute gap, offline cooldown, rejection wait, protected case).
+    /// None = the contract accepts (the online fee is sent with the call and not checked here).
+    pub fn contract_error(&self) -> Option<&'static str> {
+        if self.stake_missing.is_some() || self.suspended {
+            Some("InsufficientStake")
+        } else if self.gap_until.is_some() {
+            Some("RecoveryTooSoon")
+        } else if self.cooldown_until.is_some() {
+            Some("OfflineCooldown")
+        } else if self.retry_until.is_some() {
+            Some("RejectedWait")
+        } else if self.replace_at.is_some() {
+            Some("CaseProtected")
+        } else {
+            None
+        }
     }
 }
 
-/// Inputs from one confirmed block.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Inputs from one confirmed block, each read as the contract reports it (never derived).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecoveryView {
     pub now: u64,
-    /// [`offline_since`]; 0 = not offline.
+    /// `offlineSinceOf(nodeId)` (see [`offline_since`]); 0 = not offline.
     pub offline_since: u64,
-    /// Chain time at which the latest valid rejection of this node's recovery sealed its votes;
-    /// 0 = never rejected (user decision 2026-11-09). Contract field pending the node line.
-    pub last_rejected_at: u64,
-    /// This node's own recovery case if it is still voting: its chain `openedAt` (project decision
-    /// 2026-11-09: no new version may replace it before openedAt + 43,200). None = no open case
-    /// (never opened, or already decided: those follow the other rules).
+    /// `recoveryThrottle(nodeId).notBefore`: 5 minutes after this node's last request (C17).
+    pub not_before: u64,
+    /// `recoveryThrottle(nodeId).retryAt`: the seal of the last valid rejection + 12 hours;
+    /// 0 = never rejected. Fixed, never doubled (decision "重新申请上线都是 12h").
+    pub retry_at: u64,
+    /// This node's own case while it is still voting: its chain `openedAt`. Use
+    /// [`protected_case`] to fill it (a case past its voting end is not protected).
     pub open_case_opened_at: Option<u64>,
+    /// `stakeOf(nodeId)` (locks included).
     pub stake: u128,
+    /// `voteLocked` (stake - `lockCapacityOf(nodeId).freeStake`).
     pub locked: u128,
+    /// `termOf(nodeId).stakeStop`: stopped for lack of stake (failed renewal, below the floor).
+    pub stake_stop: bool,
+    /// `termStateOf(nodeId)`: inside a running term (read-time renewal applied) and its base.
+    pub in_term: bool,
+    pub term_base: u128,
+    /// `nodeStatus(nodeId).suspended`.
+    pub suspended: bool,
+    /// `minStakeNow()`: the latest full threshold.
     pub latest_threshold: u128,
-    /// Balance the online fee is locked from (interface pending).
+    /// Balance the online fee is paid from.
     pub fee_balance: u128,
 }
 
-/// Recovery precheck: all three must hold before asking a proposer; otherwise tell the operator
+/// Free stake a recovery request needs, as the contract's `_recoveryEligible`: the latest full
+/// threshold for a node stopped for lack of stake or whose term ended without renewal; inside a
+/// running term the 80% floor of the term's base (a DAO raise does not bite inside the term).
+pub fn recovery_required(v: &RecoveryView) -> u128 {
+    if v.stake_stop || !v.in_term {
+        v.latest_threshold
+    } else {
+        crate::stake_term::suspend_floor(v.term_base)
+    }
+}
+
+/// `open_case_opened_at` from `getRecovery(currentRecovery(nodeId))`: protected only while it
+/// is voting (`REC_VOTING`) and before its voting end; a requested-but-unproposed case or a case
+/// past `expiresAt` (even if not sealed yet) can be replaced after the 5-minute gap.
+pub fn protected_case(state: u8, opened_at: u64, expires_at: u64, now: u64) -> Option<u64> {
+    const REC_VOTING: u8 = 1;
+    (state == REC_VOTING && now < expires_at).then_some(opened_at)
+}
+
+/// The raw view outputs [`recovery_view_from`] turns into a [`RecoveryView`] (one block).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecoveryReads {
+    /// The block's timestamp (eth_call runs at it).
+    pub now: u64,
+    pub offline_since: u64,
+    pub not_before: u64,
+    pub retry_at: u64,
+    /// `getRecovery(currentRecovery)`: state, openedAt, expiresAt; zeros when there is none.
+    pub case_state: u8,
+    pub case_opened_at: u64,
+    pub case_expires_at: u64,
+    pub stake_stop: bool,
+    pub in_term: bool,
+    pub term_base: u128,
+    pub stake: u128,
+    /// `lockCapacityOf(nodeId).freeStake` (stake - voteLocked).
+    pub free_stake: u128,
+    pub min_stake_now: u128,
+    pub suspended: bool,
+}
+
+pub fn recovery_view_from(r: &RecoveryReads, fee_balance: u128) -> RecoveryView {
+    RecoveryView {
+        now: r.now,
+        offline_since: r.offline_since,
+        not_before: r.not_before,
+        retry_at: r.retry_at,
+        open_case_opened_at: protected_case(
+            r.case_state,
+            r.case_opened_at,
+            r.case_expires_at,
+            r.now,
+        ),
+        stake: r.stake,
+        locked: r.stake.saturating_sub(r.free_stake),
+        stake_stop: r.stake_stop,
+        in_term: r.in_term,
+        term_base: r.term_base,
+        suspended: r.suspended,
+        latest_threshold: r.min_stake_now,
+        fee_balance,
+    }
+}
+
+/// Recovery precheck: every gate must pass before asking a proposer; otherwise tell the operator
 /// how long to wait and how much is missing. Note for the operator: if the request is rejected,
 /// the PROPOSER (another node) is fined 0.001, so proposers will only take honest requests.
 pub fn precheck_recovery(v: &RecoveryView) -> RecoveryBlockers {
     let mut b = RecoveryBlockers::default();
-    // Always a fixed 12 hours (project correction "重新申请上线都是 12h"; the doubling C17 rule is
-    // void): from the actual offline moment, or after a rejection from the moment its verdict
-    // sealed the votes. Rejections never add up.
-    let start = v.offline_since.max(v.last_rejected_at);
-    if start != 0 && v.now < start + OFFLINE_COOLDOWN {
-        b.wait = Some(start + OFFLINE_COOLDOWN - v.now);
+    let future = |t: u64| (t != 0 && v.now < t).then_some(t);
+    b.gap_until = future(v.not_before);
+    if v.offline_since != 0 {
+        b.cooldown_until = future(v.offline_since + OFFLINE_COOLDOWN);
     }
-    // An own case still voting may only be replaced 12 hours after it opened (a separate rule
-    // from the post-rejection wait).
+    b.retry_until = future(v.retry_at);
+    b.wait = [b.gap_until, b.cooldown_until, b.retry_until]
+        .into_iter()
+        .flatten()
+        .max()
+        .map(|t| t - v.now);
+    // An own case still voting may only be replaced 12 hours after it opened.
     if let Some(opened) = v.open_case_opened_at {
         if v.now < opened + REPLACE_AFTER {
             b.replace_at = Some(opened + REPLACE_AFTER);
         }
     }
     let free = v.stake.saturating_sub(v.locked);
-    if free < v.latest_threshold {
-        b.stake_missing = Some(v.latest_threshold - free);
+    let need = recovery_required(v);
+    if free < need {
+        b.stake_missing = Some(need - free);
     }
+    b.suspended = v.suspended;
     if v.fee_balance < ONLINE_FEE {
         b.fee_missing = Some(ONLINE_FEE - v.fee_balance);
     }

@@ -6,7 +6,9 @@
 //!   (renewal compares the whole stake), the 80% floor inside a term.
 //! - `free_stake`: total minus the temporary vote locks (`voteLocked`). Used only where it was
 //!   used before: whether a vote can lock its fine (vote_gate), and recovery eligibility (stake
-//!   minus locked >= the latest full threshold, decided rule, unchanged).
+//!   minus locked >= the latest full threshold for a node stopped for lack of stake, or >= 80% of
+//!   the term's base inside a running term, as the contract's `_recoveryEligible`; see
+//!   `online_gate::recovery_required`).
 //!
 //! A lock is not a gap: only an actual fine (which lowers the total) can open one.
 

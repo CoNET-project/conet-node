@@ -10,8 +10,13 @@ fn rv(now: u64, since: u64, stake: u128, fee: u128) -> RecoveryView {
     RecoveryView {
         now,
         offline_since: since,
-        last_rejected_at: 0,
+        not_before: 0,
+        retry_at: 0,
         open_case_opened_at: None,
+        stake_stop: false,
+        in_term: false,
+        term_base: 0,
+        suspended: false,
         stake,
         locked: 0,
         latest_threshold: 10 * C,
@@ -230,13 +235,13 @@ fn after_rejections_always_twelve_hours_from_the_last_seal() {
     for _ in 0..5 {
         let v = RecoveryView {
             now: rejected + 60,
-            last_rejected_at: rejected,
+            retry_at: rejected + OFFLINE_COOLDOWN,
             ..base.clone()
         };
         assert_eq!(precheck_recovery(&v).wait, Some(OFFLINE_COOLDOWN - 60));
         let v = RecoveryView {
             now: rejected + OFFLINE_COOLDOWN,
-            last_rejected_at: rejected,
+            retry_at: rejected + OFFLINE_COOLDOWN,
             ..base.clone()
         };
         assert!(precheck_recovery(&v).clear());
@@ -281,7 +286,7 @@ fn open_case_replaceable_only_after_twelve_hours() {
     // A rejection follows its own clock (from the seal), independent of this one.
     let rejected = RecoveryView {
         open_case_opened_at: None,
-        last_rejected_at: opened + 50,
+        retry_at: opened + 50 + OFFLINE_COOLDOWN,
         now: opened + 60,
         ..base
     };

@@ -431,6 +431,66 @@ impl VoteReader {
         })
     }
 
+    /// Everything the recovery precheck needs, read from the latest block. `now` is that block's
+    /// timestamp (eth_call runs at it); `fee_balance` is the balance the online fee is paid from.
+    pub async fn recovery_view(
+        &self,
+        node_id: u64,
+        now: u64,
+        fee_balance: u128,
+    ) -> Result<crate::online_gate::RecoveryView, ChainError> {
+        let id = U256::from(node_id);
+        let throttle = self
+            .call(NodeRegistryV2::recoveryThrottleCall { nodeId: id })
+            .await?;
+        let cur = self
+            .call(NodeRegistryV2::currentRecoveryCall { nodeId: id })
+            .await?;
+        let (case_state, case_opened_at, case_expires_at) = if cur.is_zero() {
+            (0, 0, 0)
+        } else {
+            let c = self
+                .call(NodeRegistryV2::getRecoveryCall { recId: cur })
+                .await?
+                ._0;
+            (c.state, c.openedAt, c.expiresAt)
+        };
+        let term = self.call(NodeRegistryV2::termOfCall { nodeId: id }).await?;
+        let state = self
+            .call(NodeRegistryV2::termStateOfCall { nodeId: id })
+            .await?;
+        let status = self
+            .call(NodeRegistryV2::nodeStatusCall { nodeId: id })
+            .await?;
+        let r = crate::online_gate::RecoveryReads {
+            now,
+            offline_since: self
+                .call(NodeRegistryV2::offlineSinceOfCall { nodeId: id })
+                .await?,
+            not_before: throttle.notBefore,
+            retry_at: throttle.retryAt,
+            case_state,
+            case_opened_at,
+            case_expires_at,
+            stake_stop: term.stakeStop,
+            in_term: state.inTerm,
+            term_base: state.termBase.try_into().map_err(ce)?,
+            stake: self
+                .call(NodeRegistryV2::stakeOfCall { nodeId: id })
+                .await?
+                .try_into()
+                .map_err(ce)?,
+            free_stake: self.lock_capacity(node_id).await?.free_stake,
+            min_stake_now: self
+                .call(NodeRegistryV2::minStakeNowCall {})
+                .await?
+                .try_into()
+                .map_err(ce)?,
+            suspended: status.suspended,
+        };
+        Ok(crate::online_gate::recovery_view_from(&r, fee_balance))
+    }
+
     pub async fn report_count(&self) -> Result<u64, ChainError> {
         let n = self.call(NodeRegistryV2::reportCountCall {}).await?;
         n.try_into().map_err(ce)
