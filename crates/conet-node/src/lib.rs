@@ -21,6 +21,7 @@ pub mod recovery;
 pub mod register;
 pub mod route;
 pub mod server;
+pub mod service_order;
 pub mod stake_term;
 pub mod stake_view;
 pub mod store;

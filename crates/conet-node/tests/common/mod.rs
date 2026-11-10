@@ -1,5 +1,6 @@
 //! A minimal local JSON-RPC over HTTP for read-layer tests: `answer(method, params)` gives the
-//! `result` of each request. Test data only; binds 127.0.0.1 on a free port.
+//! `result` of each request; an answer `{"__rpc_error": {...}}` is sent as the JSON-RPC `error`
+//! instead (e.g. a revert with its data). Test data only; binds 127.0.0.1 on a free port.
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -40,7 +41,11 @@ pub async fn serve(answer: Answer) -> String {
                 };
                 let req: Value = serde_json::from_slice(&body).unwrap();
                 let result = answer(req["method"].as_str().unwrap(), &req["params"]);
-                let out = json!({ "jsonrpc": "2.0", "id": 1, "result": result }).to_string();
+                let out = match result.get("__rpc_error") {
+                    Some(e) => json!({ "jsonrpc": "2.0", "id": 1, "error": e }),
+                    None => json!({ "jsonrpc": "2.0", "id": 1, "result": result }),
+                }
+                .to_string();
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{out}",
                     out.len()

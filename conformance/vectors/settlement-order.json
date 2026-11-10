@@ -1,0 +1,44 @@
+[
+ {
+  "order": {
+   "pool": "0",
+   "user": "0x5CbDd86a2FA8Dc4bDdd8a8f69dBa48572EeC07FB",
+   "nodeId": "101",
+   "nodeWallet": "0x00000000000000000000000000000000000a0001",
+   "minNodeGb": "500000000",
+   "maxUserPay": "1234567",
+   "gbBaseVersion": "3",
+   "markupVersion": "2",
+   "freeExchangeVersion": "0",
+   "freePoolVersion": "0",
+   "serviceBit": "0x0000000000000000000000000000000000000000000000000000000000000004",
+   "deadline": "1900000000",
+   "nonce": "0x9c6230254ac733f54ec47298f0a5ddaf93dc9efe6e05fb726dcb6faf10ddece2"
+  },
+  "token": "0x00000000000000000000000000000000000c0de2",
+  "digest": "0xb8f25653ec17048fb8e66c3639d47352a43cc340e8438ae730854780ac96ff3b",
+  "signature": "0x26d621b56fdc4ff53d4ddfa4e66d988c3fee481469d74b131cc9ffd34094bfaa688f2e41bee6f71317a26733fdc778b8010a91b542fac6b819896351146483621b",
+  "typeString": "SettlementOrder(uint8 pool,address user,uint64 nodeId,address nodeWallet,uint256 minNodeGb,uint256 maxUserPay,uint64 gbBaseVersion,uint64 markupVersion,uint64 freeExchangeVersion,uint64 freePoolVersion,bytes32 serviceBit,uint64 deadline,bytes32 nonce)"
+ },
+ {
+  "order": {
+   "pool": "1",
+   "user": "0x5CbDd86a2FA8Dc4bDdd8a8f69dBa48572EeC07FB",
+   "nodeId": "4294967296",
+   "nodeWallet": "0x00000000000000000000000000000000000a0002",
+   "minNodeGb": "1",
+   "maxUserPay": "57896044618658097711785492504343953926634992332820282019728792003956564819968",
+   "gbBaseVersion": "18446744073709551615",
+   "markupVersion": "7",
+   "freeExchangeVersion": "5",
+   "freePoolVersion": "9",
+   "serviceBit": "0x000000000000000000000000000000000000000000000000000000000000000c",
+   "deadline": "1900003600",
+   "nonce": "0xabababababababababababababababababababababababababababababababab"
+  },
+  "token": "0x00000000000000000000000000000000000c0de2",
+  "digest": "0xe1c9f1c0371c6870a5a7060a273028f1444a740b95e046ae8b5e5d79cbfc4988",
+  "signature": "0x6bbb64588a1fe67af6960b7223950753d6f7b8702cce21a83a49b6edbf6f62ab3aae4459251e8d9fc8d101b5b2089e9444c492aa948f73bd005785a2473625131b",
+  "typeString": "SettlementOrder(uint8 pool,address user,uint64 nodeId,address nodeWallet,uint256 minNodeGb,uint256 maxUserPay,uint64 gbBaseVersion,uint64 markupVersion,uint64 freeExchangeVersion,uint64 freePoolVersion,bytes32 serviceBit,uint64 deadline,bytes32 nonce)"
+ }
+]
