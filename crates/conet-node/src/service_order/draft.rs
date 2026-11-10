@@ -73,6 +73,57 @@ sol! {
 
 pub const POOL_PAID: u8 = 0;
 pub const POOL_FREE: u8 = 1;
+/// PLACEHOLDER until fork 5 v0.4: the subscription-receipt (ERC1155) source. The 8e43083c draft
+/// has no receipt field in the signed order; the prototype carries `receiptId` beside it.
+pub const POOL_RECEIPT: u8 = 2;
+
+/// Where an order's payment comes from (decided 2026-11-10). The three are independent: a FREE
+/// pool close or freeze never touches RECEIPT orders, and RECEIPT orders bind no FREE versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// Ordinary paid balance.
+    Paid,
+    /// Ordinary free balance.
+    Free,
+    /// A subscription receipt (ERC1155, one per subscription).
+    Receipt,
+}
+
+pub fn source(o: &SettlementOrder) -> Option<Source> {
+    match o.pool {
+        POOL_PAID => Some(Source::Paid),
+        POOL_FREE => Some(Source::Free),
+        POOL_RECEIPT => Some(Source::Receipt),
+        _ => None,
+    }
+}
+
+/// What the creator chose for existing ordinary free balances while the free pool is closed
+/// (decided 2026-11-10; view name and encoding pending fork 5 v0.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreeClosedMode {
+    /// A: frozen; FREE orders are not submitted while the pool is closed.
+    Freeze,
+    /// B: still usable; FREE orders go on (versions and the exchange switch still apply).
+    KeepUsable,
+}
+
+/// A subscription receipt as the node reads it (PLACEHOLDER fields until fork 5 v0.4). The quota
+/// is "the maximum free stable-token amount" (project wording): counted in the third-party
+/// token, per receipt, never reset, kept across transfers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiptView {
+    pub receipt_id: U256,
+    /// The token the receipt belongs to (must be the order's token).
+    pub token: Address,
+    /// ERC1155 `balanceOf(order.user, receiptId)`: 1 = the signer holds it now.
+    pub holder_balance: U256,
+    pub valid_from: u64,
+    pub valid_until: u64,
+    /// None = unlimited.
+    pub quota: Option<U256>,
+    pub used: U256,
+}
 
 /// DESIGN.md §6.1.
 pub const DOMAIN_NAME: &str = "ThirdPartyStableSettlement";
@@ -98,23 +149,29 @@ pub fn digest(order: &SettlementOrder, token: Address) -> B256 {
     order.eip712_signing_hash(&domain(token))
 }
 
-/// The versions an order binds, by pool (DESIGN.md §6.4 table): (name, signed, active).
-/// PAID binds the GB base price and the markup only; FREE also binds both free-pool switches.
-/// Unrelated items (airdrop amount, free-transfer switch) are never compared.
+/// The versions an order binds, by source (DESIGN.md §6.4 table and the 2026-11-10 decisions):
+/// (name, signed, active). PAID: GB base price and markup. FREE: also both free-pool switches.
+/// RECEIPT: none of the ordinary-pool versions (independent of the free pool); what a receipt
+/// order binds besides `receiptId` is pending fork 5 v0.4. Unrelated items (airdrop amount,
+/// free-transfer switch) are never compared.
 pub fn bound_versions(o: &SettlementOrder, c: &SettlementConfig) -> Vec<(&'static str, u64, u64)> {
-    let mut v = vec![
-        ("gbBaseVersion", o.gbBaseVersion, c.gbBaseVersion),
-        ("markupVersion", o.markupVersion, c.markupVersion),
-    ];
-    if o.pool == POOL_FREE {
-        v.push((
-            "freeExchangeVersion",
-            o.freeExchangeVersion,
-            c.freeExchangeVersion,
-        ));
-        v.push(("freePoolVersion", o.freePoolVersion, c.freePoolVersion));
+    match source(o) {
+        Some(Source::Paid) => vec![
+            ("gbBaseVersion", o.gbBaseVersion, c.gbBaseVersion),
+            ("markupVersion", o.markupVersion, c.markupVersion),
+        ],
+        Some(Source::Free) => vec![
+            ("gbBaseVersion", o.gbBaseVersion, c.gbBaseVersion),
+            ("markupVersion", o.markupVersion, c.markupVersion),
+            (
+                "freeExchangeVersion",
+                o.freeExchangeVersion,
+                c.freeExchangeVersion,
+            ),
+            ("freePoolVersion", o.freePoolVersion, c.freePoolVersion),
+        ],
+        Some(Source::Receipt) | None => vec![],
     }
-    v
 }
 
 /// User pay for `g` GB base units (DESIGN.md §7.1, draft): ceilDiv(G x pBase x (10000 + m),

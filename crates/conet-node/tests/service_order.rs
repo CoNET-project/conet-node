@@ -256,6 +256,12 @@ fn deadline_by_chain_time() {
     assert_eq!(check_deadline(4_601, 1_000, p), Err(Refuse::DeadlineTooFar));
 }
 
+fn tok() -> Address {
+    "0x00000000000000000000000000000000000c0de2"
+        .parse()
+        .unwrap()
+}
+
 fn me() -> Me {
     Me {
         node_id: 101,
@@ -280,6 +286,7 @@ fn view(now: u64) -> TokenView {
         free_balance: U256::from(10_000_000u64),
         inventory_gb: U256::from(1_000_000_000u64),
         price: None,
+        free_closed_mode: draft::FreeClosedMode::Freeze,
     }
 }
 
@@ -290,10 +297,10 @@ fn precheck_follows_the_draft_rules() {
     let now = paid.deadline - 600;
     let p = DeadlinePolicy::default();
     let mut book = NonceBook::default();
-    precheck(&paid, &me(), &view(now), p, &mut book).unwrap();
+    precheck(&paid, &me(), &view(now), None, tok(), p, &mut book).unwrap();
     // Same order again: nonce held.
     assert_eq!(
-        precheck(&paid, &me(), &view(now), p, &mut book),
+        precheck(&paid, &me(), &view(now), None, tok(), p, &mut book),
         Err(Refuse::NonceUsed)
     );
     let fresh = NonceBook::default;
@@ -303,12 +310,12 @@ fn precheck_follows_the_draft_rules() {
     t.config.freePoolOn = false;
     t.config.freeExchangeOn = false;
     t.config.freePoolVersion = 99;
-    precheck(&paid, &me(), &t, p, &mut fresh()).unwrap();
+    precheck(&paid, &me(), &t, None, tok(), p, &mut fresh()).unwrap();
     // A bound version moved: refused, by name.
     let mut t = view(now);
     t.config.markupVersion = 3;
     assert_eq!(
-        precheck(&paid, &me(), &t, p, &mut fresh()),
+        precheck(&paid, &me(), &t, None, tok(), p, &mut fresh()),
         Err(Refuse::VersionMismatch {
             item: "markupVersion",
             active: 3,
@@ -321,23 +328,23 @@ fn precheck_follows_the_draft_rules() {
     free.pool = draft::POOL_FREE;
     free.freeExchangeVersion = 5;
     free.freePoolVersion = 9;
-    precheck(&free, &me(), &view(now), p, &mut fresh()).unwrap();
+    precheck(&free, &me(), &view(now), None, tok(), p, &mut fresh()).unwrap();
     let mut t = view(now);
     t.config.freePoolOn = false;
     assert_eq!(
-        precheck(&free, &me(), &t, p, &mut fresh()),
+        precheck(&free, &me(), &t, None, tok(), p, &mut fresh()),
         Err(Refuse::PoolDisabled)
     );
     let mut t = view(now);
     t.config.freeExchangeOn = false;
     assert_eq!(
-        precheck(&free, &me(), &t, p, &mut fresh()),
+        precheck(&free, &me(), &t, None, tok(), p, &mut fresh()),
         Err(Refuse::FreeExchangeOff)
     );
     let mut t = view(now);
     t.config.freePoolVersion = 10;
     assert!(matches!(
-        precheck(&free, &me(), &t, p, &mut fresh()),
+        precheck(&free, &me(), &t, None, tok(), p, &mut fresh()),
         Err(Refuse::VersionMismatch {
             item: "freePoolVersion",
             ..
@@ -348,19 +355,19 @@ fn precheck_follows_the_draft_rules() {
     let mut o = paid.clone();
     o.nodeId = 102;
     assert_eq!(
-        precheck(&o, &me(), &view(now), p, &mut fresh()),
+        precheck(&o, &me(), &view(now), None, tok(), p, &mut fresh()),
         Err(Refuse::NotForThisNode)
     );
     let mut o = paid.clone();
     o.serviceBit = B256::left_padding_from(&[0x10]);
     assert_eq!(
-        precheck(&o, &me(), &view(now), p, &mut fresh()),
+        precheck(&o, &me(), &view(now), None, tok(), p, &mut fresh()),
         Err(Refuse::ServiceMissing)
     );
     let mut o = paid.clone();
     o.minNodeGb = U256::ZERO;
     assert_eq!(
-        precheck(&o, &me(), &view(now), p, &mut fresh()),
+        precheck(&o, &me(), &view(now), None, tok(), p, &mut fresh()),
         Err(Refuse::BadField("zero amount"))
     );
 
@@ -372,24 +379,24 @@ fn precheck_follows_the_draft_rules() {
     );
     let mut t = view(now);
     t.price = Some((U256::from(2_000_000u64), 250));
-    precheck(&paid, &me(), &t, p, &mut fresh()).unwrap();
+    precheck(&paid, &me(), &t, None, tok(), p, &mut fresh()).unwrap();
     t.price = Some((U256::from(2_500_000u64), 250));
     assert!(matches!(
-        precheck(&paid, &me(), &t, p, &mut fresh()),
+        precheck(&paid, &me(), &t, None, tok(), p, &mut fresh()),
         Err(Refuse::ExceedsMaxPay { .. })
     ));
     let mut t = view(now);
     t.price = Some((U256::from(2_000_000u64), 250));
     t.paid_balance = U256::from(1_024_999u64);
     assert!(matches!(
-        precheck(&paid, &me(), &t, p, &mut fresh()),
+        precheck(&paid, &me(), &t, None, tok(), p, &mut fresh()),
         Err(Refuse::BalanceShort { .. })
     ));
     // Inventory short: whole order refused (the contract would revert without burning).
     let mut t = view(now);
     t.inventory_gb = paid.minNodeGb - U256::from(1);
     assert!(matches!(
-        precheck(&paid, &me(), &t, p, &mut fresh()),
+        precheck(&paid, &me(), &t, None, tok(), p, &mut fresh()),
         Err(Refuse::InsufficientInventory { .. })
     ));
     // Refusals carry the matching draft contract error name.
@@ -454,4 +461,122 @@ async fn settle_simulation_names_the_revert() {
         Ok((U256::from(1_025_000u64), U256::from(500_000_000u64)))
     );
     assert_eq!(draft::error_name(&[0xde, 0xad, 0xbe, 0xef]), None);
+}
+
+/// Payment sources (decided 2026-11-10): ordinary FREE under the creator's close mode, and the
+/// subscription receipt, independent of the free pool and binding none of its versions.
+#[test]
+fn payment_sources() {
+    let v = vectors();
+    let paid = order_of(&v[0]["order"]);
+    let now = paid.deadline - 600;
+    let p = DeadlinePolicy::default();
+    let fresh = NonceBook::default;
+    let mut free = paid.clone();
+    free.pool = draft::POOL_FREE;
+    free.freeExchangeVersion = 5;
+    free.freePoolVersion = 9;
+    // Free pool closed: A (freeze) refuses, B (keep usable) goes on.
+    let mut t = view(now);
+    t.config.freePoolOn = false;
+    assert_eq!(
+        precheck(&free, &me(), &t, None, tok(), p, &mut fresh()),
+        Err(Refuse::PoolDisabled)
+    );
+    t.free_closed_mode = draft::FreeClosedMode::KeepUsable;
+    precheck(&free, &me(), &t, None, tok(), p, &mut fresh()).unwrap();
+    // ... but the exchange switch and the free versions still apply under B.
+    let mut t2 = t.clone();
+    t2.config.freeExchangeOn = false;
+    assert_eq!(
+        precheck(&free, &me(), &t2, None, tok(), p, &mut fresh()),
+        Err(Refuse::FreeExchangeOff)
+    );
+    assert_eq!(
+        precheck(&paid, &me(), &t2, None, tok(), p, &mut fresh()),
+        Ok(())
+    );
+
+    // Receipt orders.
+    let mut rec = paid.clone();
+    rec.pool = draft::POOL_RECEIPT;
+    rec.gbBaseVersion = 0; // binds no ordinary-pool version (what it binds is pending v0.4)
+    rec.markupVersion = 0;
+    let r = draft::ReceiptView {
+        receipt_id: U256::from(77),
+        token: tok(),
+        holder_balance: U256::from(1),
+        valid_from: now - 100,
+        valid_until: now + 86_400,
+        quota: Some(U256::from(2_000_000u64)),
+        used: U256::from(500_000u64),
+    };
+    // Free pool closed and frozen, free versions moved: no effect on a receipt order.
+    let mut t = view(now);
+    t.config.freePoolOn = false;
+    t.config.freeExchangeOn = false;
+    t.config.freePoolVersion = 99;
+    precheck(&rec, &me(), &t, Some(&r), tok(), p, &mut fresh()).unwrap();
+    assert!(draft::bound_versions(&rec, &t.config).is_empty());
+    // No receipt, another token's receipt, transferred away: not held.
+    assert_eq!(
+        precheck(&rec, &me(), &t, None, tok(), p, &mut fresh()),
+        Err(Refuse::ReceiptNotHeld)
+    );
+    let other = draft::ReceiptView {
+        token: Address::repeat_byte(5),
+        ..r.clone()
+    };
+    assert_eq!(
+        precheck(&rec, &me(), &t, Some(&other), tok(), p, &mut fresh()),
+        Err(Refuse::ReceiptNotHeld)
+    );
+    let gone = draft::ReceiptView {
+        holder_balance: U256::ZERO,
+        ..r.clone()
+    };
+    assert_eq!(
+        precheck(&rec, &me(), &t, Some(&gone), tok(), p, &mut fresh()),
+        Err(Refuse::ReceiptNotHeld)
+    );
+    // Validity by chain time, both ends inclusive.
+    let late = draft::ReceiptView {
+        valid_until: now - 1,
+        ..r.clone()
+    };
+    assert_eq!(
+        precheck(&rec, &me(), &t, Some(&late), tok(), p, &mut fresh()),
+        Err(Refuse::ReceiptExpired)
+    );
+    let edge = draft::ReceiptView {
+        valid_until: now,
+        ..r.clone()
+    };
+    precheck(&rec, &me(), &t, Some(&edge), tok(), p, &mut fresh()).unwrap();
+    // Quota in the stable token: pay 1,025,000 against 1,500,000 left passes; 1,024,999 left fails.
+    t.price = Some((U256::from(2_000_000u64), 250));
+    precheck(&rec, &me(), &t, Some(&r), tok(), p, &mut fresh()).unwrap();
+    let short = draft::ReceiptView {
+        used: U256::from(975_001u64),
+        ..r.clone()
+    };
+    assert_eq!(
+        precheck(&rec, &me(), &t, Some(&short), tok(), p, &mut fresh()),
+        Err(Refuse::ReceiptQuotaShort {
+            left: U256::from(1_024_999u64),
+            need: U256::from(1_025_000u64)
+        })
+    );
+    // Unlimited: only the issuer's GB inventory limits it.
+    let unlimited = draft::ReceiptView {
+        quota: None,
+        used: U256::from(10u64).pow(U256::from(30)),
+        ..r.clone()
+    };
+    precheck(&rec, &me(), &t, Some(&unlimited), tok(), p, &mut fresh()).unwrap();
+    t.inventory_gb = rec.minNodeGb - U256::from(1);
+    assert!(matches!(
+        precheck(&rec, &me(), &t, Some(&unlimited), tok(), p, &mut fresh()),
+        Err(Refuse::InsufficientInventory { .. })
+    ));
 }

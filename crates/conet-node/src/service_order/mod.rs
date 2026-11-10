@@ -12,7 +12,7 @@ pub mod draft;
 use crate::chain::{ChainError, Rpc};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{Eip712Domain, SolCall};
-use draft::{SettlementConfig, SettlementOrder, POOL_FREE, POOL_PAID};
+use draft::{FreeClosedMode, ReceiptView, SettlementConfig, SettlementOrder, Source};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -60,6 +60,16 @@ pub enum Refuse {
     /// The user's balance in the chosen pool cannot cover the pay (no fallback to the other pool).
     BalanceShort {
         have: U256,
+        need: U256,
+    },
+    /// RECEIPT order without a readable receipt, a receipt of another token, or not held by the
+    /// signer now (transferred away).
+    ReceiptNotHeld,
+    /// Outside the receipt's validity period (chain time).
+    ReceiptExpired,
+    /// The receipt's remaining free amount cannot cover the pay.
+    ReceiptQuotaShort {
+        left: U256,
         need: U256,
     },
     /// The issuer's prepaid GB does not cover the order (contract: `InsufficientInventory`).
@@ -356,15 +366,20 @@ pub struct TokenView {
     pub inventory_gb: U256,
     /// (pBase, markup bps) when the node can read them (no view in the draft yet).
     pub price: Option<(U256, u32)>,
+    /// The creator's choice for ordinary free balances while the free pool is closed.
+    pub free_closed_mode: FreeClosedMode,
 }
 
-/// Field, node, pool, version, deadline, nonce, amount and inventory checks, in the order of the
-/// draft's settlement (DESIGN.md §7.2 / §7.3; the signature is checked separately, async). The
-/// first failure is returned. `nonces` is only touched when everything else passed.
+/// Field, node, source, version, deadline, amount, inventory and nonce checks, in the order of
+/// the draft's settlement (DESIGN.md §7.2 / §7.3; the signature is checked separately, async).
+/// The first failure is returned. `receipt` is the receipt state for a RECEIPT order (None
+/// otherwise). `nonces` is only touched when everything else passed.
 pub fn precheck(
     o: &SettlementOrder,
     me: &Me,
     t: &TokenView,
+    receipt: Option<&ReceiptView>,
+    token: Address,
     deadline: DeadlinePolicy,
     nonces: &mut NonceBook,
 ) -> Result<(), Refuse> {
@@ -376,22 +391,34 @@ pub fn precheck(
         return Err(Refuse::ServiceMissing);
     }
     // Fields.
-    if o.pool != POOL_PAID && o.pool != POOL_FREE {
+    let Some(src) = draft::source(o) else {
         return Err(Refuse::BadField("pool"));
-    }
+    };
     if o.minNodeGb.is_zero() || o.maxUserPay.is_zero() {
         return Err(Refuse::BadField("zero amount"));
     }
-    // Pool switches (FREE only; never falls back to PAID).
-    if o.pool == POOL_FREE {
-        if !t.config.freePoolOn {
-            return Err(Refuse::PoolDisabled);
+    // Source state; never falls back to another source.
+    match src {
+        Source::Paid => {}
+        Source::Free => {
+            if !t.config.freePoolOn && t.free_closed_mode == FreeClosedMode::Freeze {
+                return Err(Refuse::PoolDisabled);
+            }
+            if !t.config.freeExchangeOn {
+                return Err(Refuse::FreeExchangeOff);
+            }
         }
-        if !t.config.freeExchangeOn {
-            return Err(Refuse::FreeExchangeOff);
+        Source::Receipt => {
+            let r = receipt.ok_or(Refuse::ReceiptNotHeld)?;
+            if r.token != token || r.holder_balance != U256::from(1) {
+                return Err(Refuse::ReceiptNotHeld);
+            }
+            if t.now < r.valid_from || t.now > r.valid_until {
+                return Err(Refuse::ReceiptExpired);
+            }
         }
     }
-    // Versions bound by this pool.
+    // Versions bound by this source.
     for (item, signed, active) in draft::bound_versions(o, &t.config) {
         if signed != active {
             return Err(Refuse::VersionMismatch {
@@ -403,11 +430,6 @@ pub fn precheck(
     }
     check_deadline(o.deadline, t.now, deadline)?;
     // Amount: exact when the price inputs are known; otherwise the simulation decides.
-    let balance = if o.pool == POOL_FREE {
-        t.free_balance
-    } else {
-        t.paid_balance
-    };
     if let Some((p_base, m)) = t.price {
         let pay = draft::user_pay(o.minNodeGb, p_base, m);
         if pay > o.maxUserPay {
@@ -416,11 +438,26 @@ pub fn precheck(
                 max: o.maxUserPay,
             });
         }
-        if balance < pay {
-            return Err(Refuse::BalanceShort {
-                have: balance,
-                need: pay,
-            });
+        match src {
+            Source::Paid | Source::Free => {
+                let have = if src == Source::Free {
+                    t.free_balance
+                } else {
+                    t.paid_balance
+                };
+                if have < pay {
+                    return Err(Refuse::BalanceShort { have, need: pay });
+                }
+            }
+            Source::Receipt => {
+                let r = receipt.expect("checked above");
+                if let Some(q) = r.quota {
+                    let left = q.saturating_sub(r.used);
+                    if left < pay {
+                        return Err(Refuse::ReceiptQuotaShort { left, need: pay });
+                    }
+                }
+            }
         }
     }
     if t.inventory_gb < o.minNodeGb {
