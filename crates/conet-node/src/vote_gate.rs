@@ -243,7 +243,7 @@ pub fn pick(v: &VoterView, reports: &[ReportView], my_choices: &[u8], now: u64) 
 // ---- chain reads ----
 
 /// Words in `getNodeRaw`'s `Node` struct (all static members; `uint32[3] anchors` takes three).
-/// Pinned to the node line's contract source set `077c78f7` (abi/README.md): 41 members,
+/// Pinned to the node line's contract source set `396942ab` (abi/README.md; layout unchanged since 077c78f7): 41 members,
 /// the stake-term fields and `offlineSince` appended at the end (earlier word positions unchanged).
 pub const NODE_RAW_WORDS: usize = 43;
 /// `offlineSince`: chain moment the node's current offline state took effect (recovery cooldown

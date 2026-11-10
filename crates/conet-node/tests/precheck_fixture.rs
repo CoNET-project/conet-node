@@ -1,4 +1,4 @@
-//! Recovery and renewal prechecks against the real contract (node line 077c78f7), from
+//! Recovery and renewal prechecks against the real contract (node line 396942ab; recovery behaviour unchanged since 077c78f7), from
 //! `tests/data/precheck-fixture.json` written by `tools/vote-gate/precheck-fixture.test.ts` on a
 //! local Hardhat chain (test keys only).
 //!

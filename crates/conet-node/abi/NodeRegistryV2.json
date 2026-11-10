@@ -1909,6 +1909,35 @@
   "type": "function"
  },
  {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "nodeId",
+    "type": "uint256"
+   }
+  ],
+  "name": "stakeShortfallOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "shortfall",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "need",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "have",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
   "inputs": [],
   "name": "sweepReserve",
   "outputs": [],

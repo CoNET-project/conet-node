@@ -1,5 +1,5 @@
 //! Term watch (read-only task in the running node): mapping of the contract's read-time term
-//! state, once-only log lines, the recorded renewals of node line 077c78f7
+//! state, once-only log lines, the recorded renewals of node line 396942ab
 //! (`data/precheck-fixture.json`), and the read layer against a local mock JSON-RPC (every read
 //! of one round pinned to the same block).
 use alloy_primitives::keccak256;
@@ -157,7 +157,7 @@ fn n(v: &Value) -> u128 {
     v.as_str().unwrap().parse().unwrap()
 }
 
-/// The two renewals recorded from the real contract (077c78f7): the short node is reminded
+/// The two renewals recorded from the real contract (396942ab): the short node is reminded
 /// before and reported stopped after; the funded node (stake == minStakeAt(termEnd)) is never
 /// reminded and, once settled, runs its next term.
 #[test]
