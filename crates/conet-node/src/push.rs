@@ -77,13 +77,18 @@ impl std::fmt::Display for ApiError {
     }
 }
 
-/// Startup notice when Beamio API pushes are off because `--api-base` is absent or blank. The
-/// message never includes the configured value. None when `--api-base` has a value.
-pub fn push_disabled_reason(api_base: Option<&str>) -> Option<&'static str> {
-    match api_base.map(str::trim) {
-        Some(v) if !v.is_empty() => None,
-        _ => Some("push disabled: --api-base not set"),
+/// Startup notices for Beamio API pushes that are off, one per missing setting. A missing
+/// `--api-base` (absent or blank) and a missing `--rpc` (static routes, so no user routes) each
+/// switch pushes off. The messages never include a configured value.
+pub fn push_disabled_reasons(api_base: Option<&str>, has_user_routes: bool) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if !matches!(api_base.map(str::trim), Some(v) if !v.is_empty()) {
+        out.push("push disabled: --api-base not set");
     }
+    if !has_user_routes {
+        out.push("push disabled: --rpc not set");
+    }
+    out
 }
 
 /// Audit of a configured base (`--api-base`, from `BEAMIO_API_BASE`). Returns the reason it is
@@ -505,16 +510,32 @@ mod tests {
     }
 
     #[test]
-    fn startup_warns_when_api_base_is_absent_or_blank() {
-        let msg = "push disabled: --api-base not set";
-        assert_eq!(push_disabled_reason(None), Some(msg));
-        assert_eq!(push_disabled_reason(Some("")), Some(msg));
-        assert_eq!(push_disabled_reason(Some("   ")), Some(msg));
+    fn startup_warns_for_each_missing_push_setting() {
+        let base = "push disabled: --api-base not set";
+        let rpc = "push disabled: --rpc not set";
+        // --api-base absent or blank.
+        assert_eq!(push_disabled_reasons(None, true), vec![base]);
+        assert_eq!(push_disabled_reasons(Some(""), true), vec![base]);
+        assert_eq!(push_disabled_reasons(Some("   "), true), vec![base]);
         // A value, even a rejected one, is not a missing setting: the audit warns about it.
-        assert_eq!(push_disabled_reason(Some("https://beamio.ca")), None);
-        assert_eq!(push_disabled_reason(Some("https://beamio.app")), None);
-        // The message carries no configured value.
-        assert!(!msg.contains("http") && !msg.contains("beamio"));
+        assert_eq!(
+            push_disabled_reasons(Some("https://beamio.ca"), true),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            push_disabled_reasons(Some("https://beamio.app"), true),
+            Vec::<&str>::new()
+        );
+        // --rpc absent (static routes): pushes are off whatever --api-base says.
+        assert_eq!(
+            push_disabled_reasons(Some("https://beamio.ca"), false),
+            vec![rpc]
+        );
+        assert_eq!(push_disabled_reasons(None, false), vec![base, rpc]);
+        // The messages carry no configured value.
+        for m in push_disabled_reasons(None, false) {
+            assert!(!m.contains("http") && !m.contains("beamio"), "{m}");
+        }
     }
 
     #[test]

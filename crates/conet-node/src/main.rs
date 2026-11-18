@@ -16,7 +16,7 @@
 //! operator must say `--egress-no-chain-check` (V6 era). Operator limits:
 //! `--exit-max-per-wallet`, `--exit-max-conns`, `--exit-idle-secs`, `--exit-connect-secs`.
 use conet_node::chain::{AddressPgp, GuardianV6, NodeSource, Rpc, UserRoutes};
-use conet_node::push::{push_disabled_reason, BeamioApi, Push};
+use conet_node::push::{push_disabled_reasons, BeamioApi, Push};
 use conet_node::route::{RouteTable, StaticRoutes};
 use conet_node::store::{DiskStore, MailboxStore, MemoryOffers, MemoryStore, OfferStore};
 use conet_node::{mailbox::Mailbox, server, watcher};
@@ -174,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ctx.mailbox = Arc::new(Mailbox::new(store, api.clone()));
         ctx.push = api;
     }
-    if let Some(msg) = push_disabled_reason(arg("--api-base").as_deref()) {
+    for msg in push_disabled_reasons(arg("--api-base").as_deref(), user_routes.is_some()) {
         eprintln!("{msg}");
     }
     // SilentPass exit: needs a policy file and the chain (passport checks); off otherwise.

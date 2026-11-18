@@ -21,6 +21,18 @@ Three services, three users:
 - The KEK is created once per server with `systemd-creds encrypt` (see `conet-signer.service`).
 - Release keys are offline; signing uses `conet-updater release sign` on the offline machine.
 
+## Required checks before a node start
+
+Beamio API pushes (offline-chat, voice-call, native-wake and device-registration calls to
+beamio.ca) run only when both `--rpc` and `--api-base` are passed. Without one of them the node
+prints `push disabled: --rpc not set` or `push disabled: --api-base not set` at start and sends no
+pushes. Both are required items on every deployment:
+
+- `--rpc ${CONET_RPC}` is set to a non-empty URL, so the node runs with user routes.
+- `--api-base ${BEAMIO_API_BASE}` is set to a non-empty value. The value is audited only; the
+  target is always https://beamio.ca.
+- The start output has neither `push disabled:` line.
+
 These are templates. Node addresses, accounts and key locations of real servers do not belong in
 this repository.
 
