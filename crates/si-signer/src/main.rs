@@ -33,89 +33,6 @@ fn flag(name: &str) -> bool {
     std::env::args().any(|a| a == name)
 }
 
-#[cfg(test)]
-mod arg_tests {
-    use super::arg_in;
-
-    /// Every value flag this binary reads through `arg()`. `--allow-bind` is a switch (`flag()`).
-    const FLAGS: [&str; 11] = [
-        "--allow-uid",
-        "--anchor-node-id",
-        "--insecure-kek-file",
-        "--keystore",
-        "--pgp-key",
-        "--quota-config",
-        "--quota-state",
-        "--socket",
-        "--topup-config",
-        "--topup-state",
-        "--verifying-contract",
-    ];
-
-    fn argv(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn every_flag_takes_a_normal_value() {
-        for f in FLAGS {
-            assert_eq!(
-                arg_in(&argv(&["bin", f, "v1"]), f),
-                Some("v1".into()),
-                "{f}"
-            );
-        }
-    }
-
-    #[test]
-    fn every_flag_missing_from_argv_is_none() {
-        for f in FLAGS {
-            assert_eq!(arg_in(&argv(&["bin", "--other", "x"]), f), None, "{f}");
-        }
-    }
-
-    #[test]
-    fn every_flag_at_the_end_has_no_value() {
-        for f in FLAGS {
-            assert_eq!(arg_in(&argv(&["bin", "--other", "x", f]), f), None, "{f}");
-        }
-    }
-
-    #[test]
-    fn every_flag_followed_by_a_flag_takes_no_value_and_the_next_flag_still_parses() {
-        for f in FLAGS {
-            let next = if f == "--socket" {
-                "--keystore"
-            } else {
-                "--socket"
-            };
-            let a = argv(&["bin", f, next, "/run/conet-signer/signer.sock"]);
-            assert_eq!(arg_in(&a, f), None, "{f} took the next flag");
-            assert_eq!(
-                arg_in(&a, next),
-                Some("/run/conet-signer/signer.sock".into()),
-                "{next} after {f}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_single_dash_value_is_kept() {
-        assert_eq!(
-            arg_in(&argv(&["bin", "--allow-uid", "-1"]), "--allow-uid"),
-            Some("-1".into())
-        );
-    }
-
-    #[test]
-    fn an_empty_value_is_kept_for_the_caller_to_judge() {
-        assert_eq!(
-            arg_in(&argv(&["bin", "--quota-state", ""]), "--quota-state"),
-            Some(String::new())
-        );
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -257,4 +174,87 @@ fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
 fn set_mode(path: &std::path::Path, mode: u32) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+}
+
+#[cfg(test)]
+mod arg_tests {
+    use super::arg_in;
+
+    /// Every value flag this binary reads through `arg()`. `--allow-bind` is a switch (`flag()`).
+    const FLAGS: [&str; 11] = [
+        "--allow-uid",
+        "--anchor-node-id",
+        "--insecure-kek-file",
+        "--keystore",
+        "--pgp-key",
+        "--quota-config",
+        "--quota-state",
+        "--socket",
+        "--topup-config",
+        "--topup-state",
+        "--verifying-contract",
+    ];
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_flag_takes_a_normal_value() {
+        for f in FLAGS {
+            assert_eq!(
+                arg_in(&argv(&["bin", f, "v1"]), f),
+                Some("v1".into()),
+                "{f}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_flag_missing_from_argv_is_none() {
+        for f in FLAGS {
+            assert_eq!(arg_in(&argv(&["bin", "--other", "x"]), f), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn every_flag_at_the_end_has_no_value() {
+        for f in FLAGS {
+            assert_eq!(arg_in(&argv(&["bin", "--other", "x", f]), f), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn every_flag_followed_by_a_flag_takes_no_value_and_the_next_flag_still_parses() {
+        for f in FLAGS {
+            let next = if f == "--socket" {
+                "--keystore"
+            } else {
+                "--socket"
+            };
+            let a = argv(&["bin", f, next, "/run/conet-signer/signer.sock"]);
+            assert_eq!(arg_in(&a, f), None, "{f} took the next flag");
+            assert_eq!(
+                arg_in(&a, next),
+                Some("/run/conet-signer/signer.sock".into()),
+                "{next} after {f}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_dash_value_is_kept() {
+        assert_eq!(
+            arg_in(&argv(&["bin", "--allow-uid", "-1"]), "--allow-uid"),
+            Some("-1".into())
+        );
+    }
+
+    #[test]
+    fn an_empty_value_is_kept_for_the_caller_to_judge() {
+        assert_eq!(
+            arg_in(&argv(&["bin", "--quota-state", ""]), "--quota-state"),
+            Some(String::new())
+        );
+    }
 }
