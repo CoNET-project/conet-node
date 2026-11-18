@@ -1,6 +1,17 @@
 {
   "schema": "treasury-v3-bridge-operation/1",
-  "source": "CoNET-SI 215afb1 src/vote/treasuryV3Listen.ts parseBridgeOperation, ethers 6.17.0",
+  "source": {
+    "repo": "CoNET-SI",
+    "commit": "215afb185dcf0884cbf7f187833308e09ce284fd",
+    "rev": "215afb185dcf0884cbf7f187833308e09ce284fd",
+    "files": {
+      "src/vote/treasuryV3Listen.ts": "014febd8b30b8a64bc5397a6d3ae7dc4055f7c9e",
+      "src/vote/treasuryAddresses.ts": "30490d761391060c2a6a47d540c151b8eca7d63c"
+    },
+    "parser": "parseBridgeOperation (treasuryV3Listen.ts)",
+    "ethers": "6.17.0",
+    "generator": "tests/fixtures/treasury_v3_gen/gen-fixtures.mjs"
+  },
   "cases": [
     {
       "name": "base_to_conet_single",

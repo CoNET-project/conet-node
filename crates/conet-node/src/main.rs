@@ -189,6 +189,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => Err(format!("selftest failed: {e}").into()),
         };
     }
+    // The Treasury V3 backfill is not implemented here: a non-zero value refuses the start.
+    let backfill =
+        std::env::var_os("TREASURY_V3_BACKFILL_BLOCKS").map(|v| v.to_string_lossy().into_owned());
+    if let Err(e) = conet_node::treasury_v3::check_backfill_env(backfill.as_deref()) {
+        return Err(e.into());
+    }
     let argv: Vec<String> = std::env::args().collect();
     if let Some(flag) = valueless_flag(&argv) {
         return Err(format!("{flag} is given without a value; refusing to start").into());

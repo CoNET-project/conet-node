@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolEvent};
 use serde_json::{json, Value};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 sol! {
     /// The on-chain event, exactly as the TS ABI in 215afb1 declares it.
@@ -225,37 +225,51 @@ pub fn advance(c: &mut Cursor, to: u64, failures: usize) {
 
 #[derive(Debug)]
 pub enum CursorError {
-    Io(std::io::Error),
-    /// The file exists but is not a version-1 state file. Refused, not silently rescanned.
+    /// Reading or writing the state file failed. The path is kept so the message can name it.
+    Io(PathBuf, std::io::Error),
+    /// The file exists but cannot be used: not JSON, not version 1, or a field is not a block
+    /// number. The message names the file and the reason, never the file's content.
     Format(String),
 }
+
+/// What an operator does about a refused state file, and what it costs.
+const RECOVERY: &str =
+    "delete the file to rescan from the deploy block (no operation is lost, but a \
+    rescan reads every block since the deploy block, so delivery waits until it catches up)";
 
 impl std::fmt::Display for CursorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CursorError::Io(e) => write!(f, "cursor file: {e}"),
-            CursorError::Format(e) => write!(f, "cursor file: {e}"),
+            CursorError::Io(p, e) => write!(
+                f,
+                "state file {} unusable: {e}; fix it or {RECOVERY}",
+                p.display()
+            ),
+            CursorError::Format(m) => write!(f, "{m}; {RECOVERY}"),
         }
     }
 }
 
-/// Load the state file. A missing file is a first start (`Ok(None)`). A file that exists but is
-/// unreadable or not version 1 is an error: TS would quietly start over, Rust refuses instead.
+/// Load the state file. A missing file is a first start (`Ok(None)`). A file that exists but cannot
+/// be read or is not version 1 is an error: TS would quietly start over, Rust refuses instead.
 pub fn load_cursor(path: &Path) -> Result<Option<Cursor>, CursorError> {
+    let refuse = |reason: &str| {
+        CursorError::Format(format!("state file {} refused: {reason}", path.display()))
+    };
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(CursorError::Io(e)),
+        Err(e) => return Err(CursorError::Io(path.to_path_buf(), e)),
     };
-    let v: Value = serde_json::from_str(&text).map_err(|e| CursorError::Format(e.to_string()))?;
+    let v: Value = serde_json::from_str(&text).map_err(|_| refuse("not valid JSON"))?;
     if v.get("version").and_then(Value::as_u64) != Some(1) {
-        return Err(CursorError::Format("version is not 1".into()));
+        return Err(refuse("version is not 1"));
     }
     let parse = |key: &str| -> Result<u64, CursorError> {
         v.get(key)
             .and_then(Value::as_str)
             .and_then(|s| s.parse::<u64>().ok())
-            .ok_or_else(|| CursorError::Format(format!("{key} is not a block number")))
+            .ok_or_else(|| refuse(&format!("{key} is not a block number")))
     };
     Ok(Some(Cursor {
         last_processed: parse("lastProcessedBlock")?,
@@ -273,20 +287,18 @@ pub fn save_cursor(path: &Path, c: &Cursor, updated_at_unix: u64) -> Result<(), 
         "scanTargetBlock": c.scan_target.to_string(),
         "updatedAt": updated_at_unix.to_string(),
     });
+    let text = serde_json::to_string_pretty(&body)
+        .map_err(|_| CursorError::Format("cursor encode failed".into()))?;
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.tmp", std::process::id()));
-    let tmp = std::path::PathBuf::from(tmp);
+    let tmp = PathBuf::from(tmp);
+    let io = |e| CursorError::Io(path.to_path_buf(), e);
     {
-        let mut f = std::fs::File::create(&tmp).map_err(CursorError::Io)?;
-        f.write_all(
-            serde_json::to_string_pretty(&body)
-                .map_err(|e| CursorError::Format(e.to_string()))?
-                .as_bytes(),
-        )
-        .map_err(CursorError::Io)?;
-        f.sync_all().map_err(CursorError::Io)?;
+        let mut f = std::fs::File::create(&tmp).map_err(io)?;
+        f.write_all(text.as_bytes()).map_err(io)?;
+        f.sync_all().map_err(io)?;
     }
-    std::fs::rename(&tmp, path).map_err(CursorError::Io)
+    std::fs::rename(&tmp, path).map_err(io)
 }
 
 /// A log as `eth_getLogs` returns it. An error names the field, never the value.
@@ -406,4 +418,150 @@ pub async fn scan_tick(
         ops,
         failures,
     }))
+}
+
+/// `TREASURY_V3_BACKFILL_BLOCKS`: TS backfills from `head - N` on a first start. The Rust scanner
+/// does not implement backfill, so a non-zero value refuses the start. Ignoring it would start the
+/// scan somewhere the operator did not ask for. Unset and `0` are accepted. An empty or non-numeric
+/// value is refused too, because its meaning cannot be told.
+pub fn check_backfill_env(value: Option<&str>) -> Result<(), String> {
+    const NAME: &str = "TREASURY_V3_BACKFILL_BLOCKS";
+    match value {
+        None => Ok(()),
+        Some(v) => match v.trim().parse::<u64>() {
+            Ok(0) => Ok(()),
+            Ok(_) => Err(format!(
+                "{NAME} is set to a non-zero value; the Rust scanner does not implement backfill and refuses to start. Unset it or set it to 0."
+            )),
+            Err(_) => Err(format!("{NAME} is not a whole number; refusing to start. Unset it or set it to 0.")),
+        },
+    }
+}
+
+/// The vote process's state file name prefix (the TS name is `treasury-v3-vote-<chain>.json`). The
+/// read-only scanner never opens a file with this prefix, and this module never writes one.
+pub const VOTE_STATE_PREFIX: &str = "treasury-v3-vote-";
+
+/// The read-only scanner's own cursor file, `treasury-v3-readonly-<chain>.json`. It is separate from
+/// the vote process's cursor, so a read-only run cannot move the cursor a voting process reads.
+#[derive(Clone, Debug)]
+pub struct ReadOnlyCursorStore {
+    path: PathBuf,
+}
+
+impl ReadOnlyCursorStore {
+    pub fn for_chain(dir: &Path, chain: &str) -> Result<Self, CursorError> {
+        Self::at(dir.join(format!("treasury-v3-readonly-{chain}.json")))
+    }
+
+    pub fn at(path: PathBuf) -> Result<Self, CursorError> {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if name.is_empty() || name.starts_with(VOTE_STATE_PREFIX) {
+            return Err(CursorError::Format(format!(
+                "state file {} refused: the read-only scanner must not use the vote state name",
+                path.display()
+            )));
+        }
+        Ok(Self { path })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn load(&self) -> Result<Option<Cursor>, CursorError> {
+        load_cursor(&self.path)
+    }
+
+    pub fn save(&self, c: &Cursor, now_unix: u64) -> Result<(), CursorError> {
+        save_cursor(&self.path, c, now_unix)
+    }
+}
+
+#[derive(Debug)]
+pub enum ScanRunError {
+    Cursor(CursorError),
+    Scan(ScanError),
+}
+
+impl std::fmt::Display for ScanRunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScanRunError::Cursor(e) => write!(f, "{e}"),
+            ScanRunError::Scan(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// The read-only scan loop: one cursor, kept in the read-only store, advanced one tick at a time.
+/// Nothing here votes or sends a transaction.
+pub struct ReadOnlyScanner {
+    rpc: Rpc,
+    address: Address,
+    store: ReadOnlyCursorStore,
+    deploy_block: u64,
+    chunk: u64,
+    chunks_per_tick: u64,
+    cursor: Option<Cursor>,
+}
+
+impl ReadOnlyScanner {
+    pub fn new(
+        rpc: Rpc,
+        address: Address,
+        store: ReadOnlyCursorStore,
+        deploy_block: u64,
+        chunk: u64,
+        chunks_per_tick: u64,
+    ) -> Self {
+        Self {
+            rpc,
+            address,
+            store,
+            deploy_block,
+            chunk,
+            chunks_per_tick,
+            cursor: None,
+        }
+    }
+
+    /// Load the saved cursor (a refused file is an error, see `CursorError`), clamp it to the deploy
+    /// block, and save it at once, as TS does.
+    pub fn start(&mut self, head: u64, now_unix: u64) -> Result<Cursor, CursorError> {
+        let c = start_cursor(self.store.load()?, self.deploy_block, head);
+        self.store.save(&c, now_unix)?;
+        self.cursor = Some(c);
+        Ok(c)
+    }
+
+    /// One tick. The in-memory cursor and its file move only when the tick succeeds.
+    pub async fn tick(&mut self, head: u64, now_unix: u64) -> Result<Option<Tick>, ScanRunError> {
+        let Some(mut c) = self.cursor else {
+            return Err(ScanRunError::Cursor(CursorError::Format(
+                "the read-only scanner was not started".into(),
+            )));
+        };
+        let t = scan_tick(
+            &self.rpc,
+            self.address,
+            &mut c,
+            head,
+            self.chunk,
+            self.chunks_per_tick,
+        )
+        .await
+        .map_err(ScanRunError::Scan)?;
+        self.store
+            .save(&c, now_unix)
+            .map_err(ScanRunError::Cursor)?;
+        self.cursor = Some(c);
+        Ok(t)
+    }
+
+    pub fn cursor(&self) -> Option<Cursor> {
+        self.cursor
+    }
 }

@@ -6,7 +6,8 @@ use alloy_primitives::Address;
 use alloy_sol_types::SolEvent;
 use conet_node::chain::Rpc;
 use conet_node::treasury_v3::{
-    load_cursor, save_cursor, scan_tick, start_cursor, ScanError, Window,
+    check_backfill_env, load_cursor, save_cursor, scan_tick, start_cursor, ReadOnlyCursorStore,
+    ReadOnlyScanner, ScanError, Window,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -382,4 +383,194 @@ async fn a_restart_between_ticks_neither_skips_nor_repeats_an_operation() {
         assert_eq!(g, w);
     }
     assert!(tick_no > 3, "the run must cross several restarts");
+}
+
+fn scratch(name: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!(
+        "conet-treasury-v3-ro-{}-{name}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+fn names(dir: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn the_backfill_variable_refuses_a_non_zero_or_unreadable_value() {
+    assert!(check_backfill_env(None).is_ok());
+    assert!(check_backfill_env(Some("0")).is_ok());
+    assert!(check_backfill_env(Some(" 0 ")).is_ok());
+    let e = check_backfill_env(Some("400")).unwrap_err();
+    assert!(
+        e.contains("TREASURY_V3_BACKFILL_BLOCKS") && e.contains("non-zero"),
+        "{e}"
+    );
+    for bad in ["", "  ", "abc", "-1"] {
+        let e = check_backfill_env(Some(bad)).unwrap_err();
+        assert!(e.contains("whole number"), "{bad:?}: {e}");
+    }
+}
+
+#[test]
+fn the_read_only_store_refuses_the_vote_state_name() {
+    let dir = scratch("store-name");
+    assert!(ReadOnlyCursorStore::at(dir.join("treasury-v3-vote-conet.json")).is_err());
+    assert!(ReadOnlyCursorStore::at(dir.join("treasury-v3-vote-base.json")).is_err());
+    let s = ReadOnlyCursorStore::for_chain(&dir, "conet").unwrap();
+    assert_eq!(
+        s.path().file_name().unwrap(),
+        "treasury-v3-readonly-conet.json"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_read_only_run_never_writes_the_vote_process_state() {
+    let (logs, _) = logs_from_fixture(false);
+    let head = 1000 + 300 * 20;
+    // With a vote state file present: its bytes must not change, and no other file is created.
+    let dir = scratch("vote-present");
+    let vote = dir.join("treasury-v3-vote-conet.json");
+    let sentinel = r#"{"version":1,"lastProcessedBlock":"777","scanTargetBlock":"999","updatedAt":"sentinel"}"#;
+    std::fs::write(&vote, sentinel).unwrap();
+    let n = node(logs.clone()).await;
+    let rpc = Rpc::new(&n.url).unwrap();
+    let store = ReadOnlyCursorStore::for_chain(&dir, "conet").unwrap();
+    let mut s = ReadOnlyScanner::new(rpc, treasury(), store, DEPLOY, 400, 4);
+    s.start(head, 1).unwrap();
+    while s.tick(head, 2).await.unwrap().is_some() {}
+    assert_eq!(
+        std::fs::read_to_string(&vote).unwrap(),
+        sentinel,
+        "the vote state changed"
+    );
+    assert_eq!(
+        names(&dir),
+        vec![
+            "treasury-v3-readonly-conet.json",
+            "treasury-v3-vote-conet.json"
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    // Without a vote state file: none is created.
+    let dir = scratch("vote-absent");
+    let n = node(logs).await;
+    let rpc = Rpc::new(&n.url).unwrap();
+    let store = ReadOnlyCursorStore::for_chain(&dir, "conet").unwrap();
+    let mut s = ReadOnlyScanner::new(rpc, treasury(), store, DEPLOY, 400, 4);
+    s.start(head, 1).unwrap();
+    while s.tick(head, 2).await.unwrap().is_some() {}
+    assert_eq!(names(&dir), vec!["treasury-v3-readonly-conet.json"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_corrupt_state_file_refuses_the_start_with_a_reason_and_no_content() {
+    let dir = scratch("corrupt-start");
+    let store = ReadOnlyCursorStore::for_chain(&dir, "conet").unwrap();
+    std::fs::write(
+        store.path(),
+        r#"{"version":1,"lastProcessedBlock":"SECRET-MARKER-123","scanTargetBlock":"5"}"#,
+    )
+    .unwrap();
+    let (logs, _) = logs_from_fixture(false);
+    let n = node(logs).await;
+    let rpc = Rpc::new(&n.url).unwrap();
+    let mut s = ReadOnlyScanner::new(rpc, treasury(), store.clone(), DEPLOY, 400, 4);
+    let err = s.start(2000, 1).unwrap_err().to_string();
+    assert!(
+        err.contains(store.path().to_str().unwrap()),
+        "does not name the file: {err}"
+    );
+    assert!(
+        err.contains("lastProcessedBlock is not a block number"),
+        "{err}"
+    );
+    assert!(
+        err.contains("delete the file to rescan from the deploy block"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("SECRET-MARKER-123"),
+        "echoes the file content: {err}"
+    );
+    assert!(s.cursor().is_none(), "a refused start must not scan");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn deleting_the_state_file_rescans_from_the_deploy_block() {
+    let (logs, expected) = logs_from_fixture(false);
+    let n = node(logs).await;
+    let rpc = Rpc::new(&n.url).unwrap();
+    let head = 1000 + 300 * 20;
+    let dir = scratch("rescan");
+    let store = ReadOnlyCursorStore::for_chain(&dir, "conet").unwrap();
+    let mut s = ReadOnlyScanner::new(rpc.clone(), treasury(), store.clone(), DEPLOY, 400, 4);
+    s.start(head, 1).unwrap();
+    let mut first = 0;
+    while let Some(t) = s.tick(head, 2).await.unwrap() {
+        first += t.ops.len();
+    }
+    assert_eq!(first, expected.len());
+    std::fs::remove_file(store.path()).unwrap();
+    let mut again = ReadOnlyScanner::new(rpc, treasury(), store, DEPLOY, 400, 4);
+    let c = again.start(head, 3).unwrap();
+    assert_eq!(
+        c.last_processed,
+        DEPLOY - 1,
+        "a missing file starts from the deploy block"
+    );
+    let mut second = 0;
+    while let Some(t) = again.tick(head, 4).await.unwrap() {
+        second += t.ops.len();
+    }
+    assert_eq!(
+        second,
+        expected.len(),
+        "the rescan delivers every operation again"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_scanner_restart_resumes_from_the_saved_cursor() {
+    let (logs, expected) = logs_from_fixture(false);
+    let n = node(logs).await;
+    let rpc = Rpc::new(&n.url).unwrap();
+    let head = 1000 + 300 * 20;
+    let dir = scratch("restart-scanner");
+    let store = ReadOnlyCursorStore::for_chain(&dir, "conet").unwrap();
+    let mut s = ReadOnlyScanner::new(rpc.clone(), treasury(), store.clone(), DEPLOY, 400, 4);
+    s.start(head, 1).unwrap();
+    let mut got = 0;
+    // One tick, then the process "stops".
+    if let Some(t) = s.tick(head, 2).await.unwrap() {
+        got += t.ops.len();
+    }
+    drop(s);
+    let mut s = ReadOnlyScanner::new(rpc, treasury(), store, DEPLOY, 400, 4);
+    let resumed = s.start(head, 3).unwrap();
+    assert!(
+        resumed.last_processed > DEPLOY - 1,
+        "the restart must not start over"
+    );
+    while let Some(t) = s.tick(head, 4).await.unwrap() {
+        got += t.ops.len();
+    }
+    assert_eq!(
+        got,
+        expected.len(),
+        "a restart neither skips nor repeats an operation"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
