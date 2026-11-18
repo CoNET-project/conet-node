@@ -58,6 +58,31 @@ fn valueless_flag(args: &[String]) -> Option<&'static str> {
     })
 }
 
+/// `--allow-uid`: the only peer uid the signer accepts. Required for `serve`. Missing, empty,
+/// non-numeric, negative or above u32 refuses to start; the check is never skipped.
+fn allow_uid_from(value: Option<&str>) -> Result<u32, String> {
+    let v = value.ok_or_else(|| "--allow-uid <uid> is required".to_string())?;
+    v.trim()
+        .parse::<u32>()
+        .map_err(|_| "--allow-uid must be a uid (0 to 4294967295)".to_string())
+}
+
+/// `--quota-state` and `--quota-config` go together. There is no built-in config. Neither flag:
+/// no quota ledger, so quota-gated requests are refused.
+fn quota_flags<'a>(
+    state: Option<&'a str>,
+    config: Option<&'a str>,
+) -> Result<Option<(&'a str, &'a str)>, String> {
+    match (state, config) {
+        (None, None) => Ok(None),
+        (Some(s), Some(c)) => Ok(Some((s, c))),
+        (Some(_), None) => {
+            Err("--quota-state needs --quota-config (no default quota is used)".into())
+        }
+        (None, Some(_)) => Err("--quota-config needs --quota-state".into()),
+    }
+}
+
 fn flag(name: &str) -> bool {
     std::env::args().any(|a| a == name)
 }
@@ -149,6 +174,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("topup ledger created");
         }
         Some("serve") => {
+            // Required: the peer-uid check is the only gate on who may connect. It is never off.
+            let allow_uid = allow_uid_from(arg("--allow-uid").as_deref())?;
             let socket = PathBuf::from(arg("--socket").ok_or("--socket <path>")?);
             let cfg = server::SignerConfig {
                 keystore_file: std::fs::read_to_string(
@@ -159,15 +186,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .ok_or("--verifying-contract <NodeRegistryV2 address>")?,
                 allow_bind: flag("--allow-bind"),
                 anchor_node_id: arg("--anchor-node-id"),
-                allow_uid: arg("--allow-uid").and_then(|s| s.parse().ok()),
-                quota: match arg("--quota-state") {
+                allow_uid: Some(allow_uid),
+                // The built-in quota defaults are N6 proposals, pending approval, so they are never
+                // used: a quota ledger needs an explicit config file.
+                quota: match quota_flags(
+                    arg("--quota-state").as_deref(),
+                    arg("--quota-config").as_deref(),
+                )? {
                     None => None,
-                    Some(state) => {
-                        // Defaults are N6 proposals, pending user approval; a config file overrides them.
-                        let qc = match arg("--quota-config") {
-                            Some(f) => serde_json::from_str(&std::fs::read_to_string(f)?)?,
-                            None => si_signer::quota::QuotaConfig::default(),
-                        };
+                    Some((state, config)) => {
+                        let qc = serde_json::from_str(&std::fs::read_to_string(config)?)?;
                         Some((qc, PathBuf::from(state)))
                     }
                 },
@@ -213,7 +241,54 @@ fn set_mode(path: &std::path::Path, mode: u32) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod arg_tests {
-    use super::{arg_in, valueless_flag, VALUE_FLAGS};
+    use super::{allow_uid_from, arg_in, quota_flags, valueless_flag, VALUE_FLAGS};
+
+    extern "C" {
+        fn getuid() -> u32;
+    }
+
+    /// The uid of the test process itself.
+    fn current_uid() -> u32 {
+        // SAFETY: getuid has no preconditions and cannot fail.
+        unsafe { getuid() }
+    }
+
+    #[test]
+    fn allow_uid_accepts_the_current_process_uid() {
+        let uid = current_uid();
+        assert_eq!(allow_uid_from(Some(&uid.to_string())), Ok(uid));
+        assert_eq!(allow_uid_from(Some(&format!(" {uid} "))), Ok(uid));
+    }
+
+    #[test]
+    fn allow_uid_refuses_missing_empty_invalid_and_out_of_range_values() {
+        for bad in [
+            None,
+            Some(""),
+            Some("   "),
+            Some("abc"),
+            Some("-1"),
+            Some("4294967296"),
+            Some("1.5"),
+        ] {
+            assert!(allow_uid_from(bad).is_err(), "{bad:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn quota_flags_go_together_and_have_no_default() {
+        assert_eq!(quota_flags(None, None), Ok(None));
+        assert_eq!(quota_flags(Some("/s"), Some("/c")), Ok(Some(("/s", "/c"))));
+        assert!(quota_flags(Some("/s"), None).is_err());
+        assert!(quota_flags(None, Some("/c")).is_err());
+    }
+
+    #[test]
+    fn the_uid_and_quota_refusals_name_no_value() {
+        let secret = "/secret/path";
+        let msg = quota_flags(Some(secret), None).unwrap_err();
+        assert!(!msg.contains(secret));
+    }
 
     /// Every value flag this binary reads through `arg()`. `--allow-bind` is a switch (`flag()`).
     const FLAGS: [&str; 11] = [
@@ -354,12 +429,17 @@ mod arg_tests {
 
     #[test]
     fn an_absent_value_flag_is_unchanged_and_starts() {
-        // The flag not appearing at all: no refusal, and arg() still reports it as absent.
-        for f in FLAGS {
+        // The flag not appearing at all: no valueless refusal, and arg() reports it as absent.
+        // --allow-uid is the exception: it is required, so its absence is refused by
+        // allow_uid_from (see allow_uid_refuses_missing_empty_invalid_and_out_of_range_values).
+        for f in FLAGS.into_iter().filter(|f| *f != "--allow-uid") {
             let a = argv(&["bin", "serve", "--other", "x"]);
             assert_eq!(valueless_flag(&a), None, "{f} absent");
             assert_eq!(arg_in(&a, f), None, "{f} absent");
         }
+        let a = argv(&["bin", "serve", "--other", "x"]);
+        assert_eq!(valueless_flag(&a), None);
+        assert!(allow_uid_from(arg_in(&a, "--allow-uid").as_deref()).is_err());
     }
 
     #[test]
