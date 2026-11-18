@@ -1,0 +1,12 @@
+Source of the two TypeScript files in this directory (copied byte for byte with git show):
+
+  repository : CoNET-SI
+  commit     : 215afb185dcf0884cbf7f187833308e09ce284fd
+  subject    : fix(si): send Beamio API calls to beamio.ca, refuse retired beamio.app
+  blob       : src/vote/treasuryV3Listen.ts  014febd8b30b8a64bc5397a6d3ae7dc4055f7c9e
+  blob       : src/vote/treasuryAddresses.ts 30490d761391060c2a6a47d540c151b8eca7d63c
+
+Check: git hash-object treasuryV3Listen.ts treasuryAddresses.ts must print the two blob hashes above.
+Pinned generator dependency: ethers 6.17.0 (package-lock.json). Its transitive packages include ws,
+which ethers loads for its WebSocket provider class. This fixture generator never creates a
+WebSocket connection; it only encodes logs and parses them. Recorded as an indirect dependency.

@@ -111,3 +111,74 @@ async fn a_200_with_a_result_is_read_and_a_200_with_an_error_is_an_error() {
     assert!(rpc.block_number().await.is_err());
     let _: Value = json!(null);
 }
+
+/// A JSON-RPC revert answered with HTTP 500, as some nodes do. The message and `data` must survive.
+const REVERT_500: &str = r#"{"jsonrpc":"2.0","id":1,"error":{"code":3,"message":"execution reverted","data":"0x2c2e6b3c"}}"#;
+
+#[tokio::test]
+async fn a_500_with_a_json_rpc_revert_keeps_the_message_and_data() {
+    let s = stub(500, None, REVERT_500).await;
+    let rpc = Rpc::new(&s.url).unwrap();
+    let err = rpc
+        .block_number()
+        .await
+        .expect_err("a 500 must stay an error");
+    assert!(
+        err.0.contains("execution reverted"),
+        "message lost: {}",
+        err.0
+    );
+    // The revert data is read from this JSON text by service_order::revert_name.
+    let v: Value = serde_json::from_str(&err.0).expect("error text is JSON");
+    assert_eq!(v["data"], "0x2c2e6b3c");
+}
+
+#[tokio::test]
+async fn a_500_json_rpc_error_without_revert_keeps_its_message() {
+    let s = stub(
+        500,
+        None,
+        r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"header not found"}}"#,
+    )
+    .await;
+    let rpc = Rpc::new(&s.url).unwrap();
+    let err = rpc
+        .block_number()
+        .await
+        .expect_err("a 500 must stay an error");
+    assert!(
+        err.0.contains("header not found"),
+        "message lost: {}",
+        err.0
+    );
+}
+
+#[tokio::test]
+async fn a_non_json_rpc_non_2xx_reports_only_the_http_code_and_not_the_body() {
+    let s = stub(502, None, "<html>upstream-secret-body</html>").await;
+    let rpc = Rpc::new(&s.url).unwrap();
+    let err = rpc
+        .block_number()
+        .await
+        .expect_err("a 502 must stay an error");
+    assert_eq!(err.0, "rpc HTTP 502");
+    assert!(!err.0.contains("upstream-secret-body"));
+}
+
+#[tokio::test]
+async fn address_pgp_unknown_key_is_none_when_the_revert_arrives_as_a_500() {
+    use conet_node::chain::{AddressPgp, UserRoutes};
+    // Unknown key: AddressPGP reverts. The 500 answer must still read as "no route", not an error.
+    let s = stub(500, None, REVERT_500).await;
+    let pgp = AddressPgp::new(Rpc::new(&s.url).unwrap());
+    assert_eq!(pgp.route_of_user_key("0x00").await.unwrap(), None);
+    // A 500 that is not a revert stays an error.
+    let other = stub(
+        500,
+        None,
+        r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"header not found"}}"#,
+    )
+    .await;
+    let pgp = AddressPgp::new(Rpc::new(&other.url).unwrap());
+    assert!(pgp.route_of_user_key("0x00").await.is_err());
+}

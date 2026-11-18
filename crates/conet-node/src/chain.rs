@@ -79,10 +79,18 @@ impl Rpc {
             .await
             .map_err(ce)?;
         let status = resp.status();
+        let bytes = resp.bytes().await.map_err(ce)?;
         if !status.is_success() {
+            // A JSON-RPC error object keeps its message (revert data is read from it), the same as
+            // on a 200. Any other non-2xx body is not echoed: only the HTTP code is reported.
+            if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+                if let Some(e) = v.get("error") {
+                    return Err(ChainError(e.to_string()));
+                }
+            }
             return Err(ChainError(format!("rpc HTTP {}", status.as_u16())));
         }
-        let v: Value = resp.json().await.map_err(ce)?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(ce)?;
         if let Some(e) = v.get("error") {
             return Err(ChainError(e.to_string()));
         }

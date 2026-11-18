@@ -41,6 +41,17 @@ start. This is intended (fail closed).
 | `CONET_MANIFEST_URL_1`, `CONET_MANIFEST_URL_2` | `conet-updater.service`, `--manifest-url` | updater refuses to start |
 | `CONET_NODE_WALLET` | `conet-updater.service`, `--node-id` | updater refuses to start |
 
+`--rpc` (`CONET_RPC`) must be the final URL. The JSON-RPC client does not follow redirects, so a URL
+that answers with a 3xx makes every chain read fail. Before a start, confirm that the URL answers
+without a redirect (expect `200 0`, meaning HTTP 200 and zero redirects):
+
+```sh
+curl -sS -o /dev/null -w '%{http_code} %{num_redirects}\n' -X POST \
+  -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
+  "$CONET_RPC"
+```
+
 ### Flags that are absent or invalid
 
 - `conet-signer --allow-uid` (required for `serve`): missing, non-numeric, negative, or above

@@ -1,46 +1,78 @@
 // Generates tests/fixtures/treasury_v3_bridge_operation.json. The expected values come from the
-// TypeScript parser in CoNET-SI at a given revision (src/vote/treasuryV3Listen.ts,
-// parseBridgeOperation), run here on logs encoded with the same ABI.
+// TypeScript parser in CoNET-SI at commit 215afb18 (src/vote/treasuryV3Listen.ts, parseBridgeOperation),
+// run on logs encoded with the same ABI.
 //
-// Usage (node 22.18 or later; type stripping runs the TypeScript source):
+// Inputs are the two TypeScript files copied verbatim into this directory (see PROVENANCE.txt).
+// Their git blob hashes are checked against the pinned values below before anything runs.
+// ethers is pinned to 6.17.0 by package.json and package-lock.json in this directory.
+//
+// Usage (node 22.18 or later; type stripping runs the TypeScript source). Run `npm ci` here first,
+// or pass another directory that holds the locked ethers 6.17.0:
 //   node --no-warnings --experimental-strip-types gen-fixtures.mjs \
-//     --ts-repo <CoNET-SI checkout> --rev <git revision> \
-//     --node-modules <dir containing ethers 6.17.0> --work <empty scratch dir> \
-//     --out <fixture path>
+//     --work <empty scratch dir> --out <fixture path> [--node-modules <dir>] [--ts-repo <CoNET-SI checkout>]
 //
-// The TS files are read from git (`git show <rev>:<path>`), never from a working tree. Four
-// exports are added in the scratch copy only, so the tests can call the TS parser. The fixture's
-// `source` field records the revision and the git blob hash of each TS file. Each replacement must
-// match exactly once, or the script stops.
+// --ts-repo is optional. When given, the copies are also compared with `git show <commit>:<path>`.
+// Four exports are added in the scratch copy only, so the tests can call the TS parser. Each
+// replacement must match exactly once, or the script stops.
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-function arg(name) {
-  const i = process.argv.indexOf(name);
-  if (i < 0 || !process.argv[i + 1]) throw new Error(`missing ${name}`);
-  return process.argv[i + 1];
-}
-const tsRepo = arg('--ts-repo');
-const rev = arg('--rev');
-const nodeModules = path.resolve(arg('--node-modules'));
-const work = path.resolve(arg('--work'));
-const out = path.resolve(arg('--out'));
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const COMMIT = '215afb185dcf0884cbf7f187833308e09ce284fd';
 const LISTENER = 'src/vote/treasuryV3Listen.ts';
 const ADDRESSES = 'src/vote/treasuryAddresses.ts';
+const COPY = { [LISTENER]: 'treasuryV3Listen.ts', [ADDRESSES]: 'treasuryAddresses.ts' };
+const PINNED_BLOB = {
+  [LISTENER]: '014febd8b30b8a64bc5397a6d3ae7dc4055f7c9e',
+  [ADDRESSES]: '30490d761391060c2a6a47d540c151b8eca7d63c',
+};
 
-const git = (...a) => execFileSync('git', ['-C', tsRepo, ...a], { encoding: 'utf8', maxBuffer: 1 << 26 });
-const blobOf = (p) => git('rev-parse', `${rev}:${p}`).trim();
-const textOf = (p) => git('show', `${rev}:${p}`);
-const commit = git('rev-parse', `${rev}^{commit}`).trim();
+function arg(name, required = true) {
+  const i = process.argv.indexOf(name);
+  if (i < 0) {
+    if (required) throw new Error(`missing ${name}`);
+    return null;
+  }
+  const v = process.argv[i + 1];
+  if (!v || v.startsWith('--')) throw new Error(`missing value for ${name}`);
+  return v;
+}
+const work = path.resolve(arg('--work'));
+const out = path.resolve(arg('--out'));
+const nodeModules = path.resolve(arg('--node-modules', false) ?? path.join(HERE, 'node_modules'));
+const tsRepo = arg('--ts-repo', false);
+const commit = COMMIT;
+const rev = COMMIT;
+
+// Git blob hash of a buffer: sha1("blob <len>\0" + content).
+const gitBlob = (buf) =>
+  crypto.createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${buf.length}\0`), buf])).digest('hex');
+const copyText = {};
+for (const p of [LISTENER, ADDRESSES]) {
+  const buf = fs.readFileSync(path.join(HERE, COPY[p]));
+  const h = gitBlob(buf);
+  if (h !== PINNED_BLOB[p]) throw new Error(`${COPY[p]} blob ${h}, expected ${PINNED_BLOB[p]}`);
+  copyText[p] = buf.toString('utf8');
+}
+if (tsRepo) {
+  const git = (...a) => execFileSync('git', ['-C', tsRepo, ...a], { encoding: 'utf8', maxBuffer: 1 << 26 });
+  if (git('rev-parse', `${rev}^{commit}`).trim() !== commit) throw new Error(`${rev} is not ${commit}`);
+  for (const p of [LISTENER, ADDRESSES]) {
+    if (git('rev-parse', `${rev}:${p}`).trim() !== PINNED_BLOB[p]) throw new Error(`${p} differs at ${rev}`);
+    if (git('show', `${rev}:${p}`) !== copyText[p]) throw new Error(`${COPY[p]} copy differs from git`);
+  }
+}
+const blobOf = (p) => PINNED_BLOB[p];
 
 function patch(src, from, to) {
   const n = src.split(from).length - 1;
   if (n !== 1) throw new Error(`expected one match for ${JSON.stringify(from)}, found ${n}`);
   return src.replace(from, to);
 }
-let listener = textOf(LISTENER);
+let listener = copyText[LISTENER];
 listener = patch(listener, "from './treasuryAddresses'", "from './treasuryAddresses.ts'");
 listener = patch(listener, '\nconst TREASURY_V3_ABI = [', '\nexport const TREASURY_V3_ABI = [');
 listener = patch(listener, '\nconst BRIDGE_OPERATION_TOPIC = ', '\nexport const BRIDGE_OPERATION_TOPIC = ');
@@ -48,7 +80,7 @@ listener = patch(listener, '\nfunction parseBridgeOperation(', '\nexport functio
 
 fs.mkdirSync(work, { recursive: true });
 fs.writeFileSync(path.join(work, 'treasuryV3Listen.ts'), listener);
-fs.writeFileSync(path.join(work, 'treasuryAddresses.ts'), textOf(ADDRESSES));
+fs.writeFileSync(path.join(work, 'treasuryAddresses.ts'), copyText[ADDRESSES]);
 const link = path.join(work, 'node_modules');
 if (!fs.existsSync(link)) fs.symlinkSync(nodeModules, link);
 

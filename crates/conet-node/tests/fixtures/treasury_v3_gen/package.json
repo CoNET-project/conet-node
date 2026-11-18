@@ -1,0 +1,10 @@
+{
+  "name": "treasury-v3-fixture-gen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pins the ethers version used by gen-fixtures.mjs. Not part of the node build.",
+  "type": "module",
+  "dependencies": {
+    "ethers": "6.17.0"
+  }
+}
