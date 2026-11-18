@@ -1,0 +1,37 @@
+Source of the files in this directory (CoNET-SI commit 215afb185dcf0884cbf7f187833308e09ce284fd):
+
+  src/util/epoch_info_managerABI.json  blob 986557201eaf3ec258d13260a6b4722b2e0aa080  copied verbatim (currentInfo outputs)
+  src/util/nodeRestartABI.json         blob c46de677f087d3f89a1c6f757f9733e6cd711ec5  copied verbatim (restartBlockNumber output)
+  src/util/localNodeCommand.ts         full-file blob 0f2b038e8584ab2c9d56e544ebea7401301215c5
+                                       (pointer only; the full file is not stored here)
+                                       lines 1354-1358 are stored as an EXCERPT in localNodeCommand.ts,
+                                       verbatim, tabs kept; excerpt SHA256
+                                       d674732159bca51f4e894d9f6185d5ac3bb96c0d4f037c0f6ef6467276d7b821
+                                       (the lines after the marker line, each newline-terminated)
+
+Checks: `git hash-object` on the two ABI copies must print their blobs above. The generator checks
+the excerpt SHA256 and the two ABI blobs, and stops on any mismatch.
+
+Scope of the Rust reader (crates/conet-node/src/epoch.rs):
+- validatorMining, implemented: the message construction (TS 1354), the nodeWallet recovery (1355),
+  and the comparison at 1357 (a mismatch disconnects in TS) as validator_matches.
+- Not implemented, all after line 1358 in TS:
+  1. nodeDomain routerInfo lookup, node table refresh, Restart() and getGuardianNodeWallet (1366-1397)
+  2. nodeInfo.wallet comparison (1398-1404)
+  3. validatorWallet check on minerResponseHash (1405-1409)
+  4. CurrentEpoch window: an epoch more than 5 behind CurrentEpoch is refused (1414-1419)
+  5. isUser pool branch with timers (1421-1437)
+  6. refusal of any epoch behind CurrentEpoch (1438-1441)
+  7. validatorMinerPool.set and the 200 response (1443-1445)
+- The currentInfo and restartBlockNumber reads are read-only. The TS 60 s restart watchdog and the
+  upgrade/reboot command are not ported.
+
+Offline boundary:
+- Regenerating needs `npm ci --offline` to succeed (dependencies from the local npm cache; the locked
+  tarballs must already be in it), or a registry. Run it in the generator directory first. Both
+  generators were run after `npm ci --offline` in a scratch copy and reproduce the committed
+  fixtures byte for byte.
+- On a fresh offline machine with an empty npm cache, pre-fill the cache with the locked versions,
+  or replace the dependency with a vendored copy of the locked ethers tree.
+- ws 8.21.0 is an indirect dependency of ethers. These generators only encode and decode, and never
+  create a WebSocket connection.

@@ -4,8 +4,9 @@
 // Sources (CoNET-SI commit 215afb18, copied verbatim here, blob hashes checked below):
 //   epoch_info_managerABI.json  -> currentInfo() outputs, used by checkCurrentRate()
 //   nodeRestartABI.json         -> restartBlockNumber() output, used by getRestart()
-// validatorMining (src/util/localNodeCommand.ts, blob 0f2b038e...) is not imported: that module
-// pulls in the whole node runtime. The generator evaluates the same two expressions it uses:
+// localNodeCommand.ts is an EXCERPT (lines 1354-1358 at 215afb18, verbatim), not the full file. Its
+// SHA256 is checked below. The full file is not stored here; its git blob is 0f2b038e... (a pointer).
+// The generator evaluates the two validatorMining expressions in the excerpt, re-typed below:
 //   message = JSON.stringify({ epoch: validatorData.epoch.toString(), wallet: wallet.toLowerCase() })
 //   nodeWallet = ethers.verifyMessage(message, validatorData.hash).toLowerCase()
 //
@@ -21,6 +22,17 @@ const PINNED = {
   'epoch_info_managerABI.json': '986557201eaf3ec258d13260a6b4722b2e0aa080',
   'nodeRestartABI.json': 'c46de677f087d3f89a1c6f757f9733e6cd711ec5',
 };
+// The excerpt is checked by SHA256 of the lines after its marker line (see the file header).
+const EXCERPT = 'localNodeCommand.ts';
+const EXCERPT_MARKER = '// ---- excerpt begins ----\n';
+const EXCERPT_SHA256 = 'd674732159bca51f4e894d9f6185d5ac3bb96c0d4f037c0f6ef6467276d7b821';
+{
+  const txt = fs.readFileSync(path.join(HERE, EXCERPT), 'utf8');
+  const at = txt.indexOf(EXCERPT_MARKER);
+  if (at < 0) throw new Error('excerpt marker missing');
+  const h = crypto.createHash('sha256').update(txt.slice(at + EXCERPT_MARKER.length)).digest('hex');
+  if (h !== EXCERPT_SHA256) throw new Error('excerpt sha256 ' + h + ', expected ' + EXCERPT_SHA256);
+}
 const gitBlob = (buf) =>
   crypto.createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${buf.length}\0`), buf])).digest('hex');
 for (const [f, want] of Object.entries(PINNED)) {

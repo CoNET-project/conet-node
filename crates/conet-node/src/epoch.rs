@@ -3,9 +3,18 @@
 //! contract, and the `validatorMining` signature check.
 //!
 //! Nothing in this module writes setup, runs a command, or restarts a service. The TS code runs
-//! `sudo systemctl restart conet.service` on a 60 s watchdog and `/home/.../upgrade && sudo reboot`
+//! `sudo systemctl restart conet.service` on a 60 s watchdog, and an upgrade-and-reboot command
 //! when a newer restart block is seen. Those actions are not ported. `restart_advice` reports the
 //! decision only, and the caller decides what to do with it.
+//!
+//! Scope of the `validatorMining` port: the message construction and the nodeWallet recovery
+//! (TS lines 1354-1355), and the comparison at line 1357 (a mismatch disconnects in TS), which is
+//! `validator_matches`. Not in this module, all after line 1358: the nodeDomain routerInfo lookup and
+//! table refresh (1366-1397), the nodeInfo.wallet comparison (1398-1404), the validatorWallet check on
+//! minerResponseHash (1405-1409), the CurrentEpoch window that refuses an epoch more than 5 behind
+//! (1414-1419), the isUser pool branch (1421-1437), the refusal of any epoch behind CurrentEpoch
+//! (1438-1441), and the validatorMinerPool.set and response (1443-1445). See
+//! `tests/fixtures/epoch_readonly_gen/PROVENANCE.txt`.
 use crate::chain::{ChainError, Rpc};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{sol, SolCall};
