@@ -9,6 +9,7 @@ pub mod chain;
 pub mod commands;
 pub mod deliver;
 pub mod egress;
+pub mod epoch;
 pub mod exit;
 pub mod http;
 pub mod limits;

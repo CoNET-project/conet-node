@@ -1,0 +1,101 @@
+{
+  "schema": "epoch-readonly/1",
+  "source": {
+    "repo": "CoNET-SI",
+    "commit": "215afb185dcf0884cbf7f187833308e09ce284fd",
+    "files": {
+      "src/util/epoch_info_managerABI.json": "986557201eaf3ec258d13260a6b4722b2e0aa080",
+      "src/util/nodeRestartABI.json": "c46de677f087d3f89a1c6f757f9733e6cd711ec5",
+      "src/util/localNodeCommand.ts": "0f2b038e8584ab2c9d56e544ebea7401301215c5"
+    },
+    "ethers": "6.17.0",
+    "generator": "tests/fixtures/epoch_readonly_gen/gen-epoch-fixtures.mjs",
+    "signerNote": "public test key 1, fixture only"
+  },
+  "addresses": {
+    "epochInfo": "0x648f1a17269627C3d465fEa40b3C229f7CacE5cA",
+    "nodeRestart": "0x64c9c9d5CAAff0693F324E02fB9B7de907540DF1"
+  },
+  "currentInfo": [
+    {
+      "name": "running_epoch",
+      "returndata": "0x00000000000000000000000000000000000000000000000000000000000004d2000000000000000000000000000000000000000000000000000000000000001100000000000000000000000000000000000000000000000022b1c8c1227a00000000000000000000000000000000000000000000000000000000000000002694",
+      "expect": {
+        "epoch": "1234",
+        "totalMiners": "17",
+        "minerRateWei": "2500000000000000000",
+        "totalUsrs": "9876"
+      }
+    },
+    {
+      "name": "epoch_zero",
+      "returndata": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expect": {
+        "epoch": "0",
+        "totalMiners": "0",
+        "minerRateWei": "0",
+        "totalUsrs": "0"
+      }
+    },
+    {
+      "name": "max_values",
+      "returndata": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "expect": {
+        "epoch": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "totalMiners": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "minerRateWei": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "totalUsrs": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+      }
+    }
+  ],
+  "restartBlockNumber": [
+    {
+      "name": "no_restart_scheduled",
+      "returndata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "expect": {
+        "restartBlockNumber": "0"
+      }
+    },
+    {
+      "name": "restart_at_block",
+      "returndata": "0x00000000000000000000000000000000000000000000000000000000018cba80",
+      "expect": {
+        "restartBlockNumber": "26000000"
+      }
+    }
+  ],
+  "validatorMining": [
+    {
+      "name": "epoch_small",
+      "message": "{\"epoch\":\"5\",\"wallet\":\"0x1111111111111111111111111111111111111111\"}",
+      "hash": "0xd7e944105366f584487de1d92eb77bc9f58420df4088a0dc7848ac824794ee6a20823d091837a04a4a22c4a6ece813408ee7bb66e353a47f084b1c72a70371c81b",
+      "expect": {
+        "nodeWallet": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+      }
+    },
+    {
+      "name": "epoch_zero",
+      "message": "{\"epoch\":\"0\",\"wallet\":\"0xabcdef0123456789abcdef0123456789abcdef01\"}",
+      "hash": "0x009de8d1c9c81c1eba5e80dc12ec2759740cb10dc4240d5c92ebdbdc8cba8ed96004b3f548c12ebe533e7cc7df487745cd9a24f8f5a834e301b1346f1fc091e61c",
+      "expect": {
+        "nodeWallet": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+      }
+    },
+    {
+      "name": "epoch_beyond_u64",
+      "message": "{\"epoch\":\"1180591620717411303424\",\"wallet\":\"0x2222222222222222222222222222222222222222\"}",
+      "hash": "0x1db98c0b06dd691e00c8935fa6e648c99d44b5cde916bf8ab406e95c3026c5361a94e8557e7ff0914dd9b3878a39a41c94a9fa1c23c441fcefd8fa7e6cca05471c",
+      "expect": {
+        "nodeWallet": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+      }
+    },
+    {
+      "name": "epoch_changed_recovers_other_address",
+      "message": "{\"epoch\":\"6\",\"wallet\":\"0x1111111111111111111111111111111111111111\"}",
+      "hash": "0xd7e944105366f584487de1d92eb77bc9f58420df4088a0dc7848ac824794ee6a20823d091837a04a4a22c4a6ece813408ee7bb66e353a47f084b1c72a70371c81b",
+      "expect": {
+        "nodeWallet": "0xc14f120ef0495a74b0ae7f370a0e38bbac281816"
+      }
+    }
+  ]
+}
