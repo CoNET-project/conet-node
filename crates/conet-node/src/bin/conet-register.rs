@@ -82,7 +82,13 @@ fn address(name: &str) -> Res<Address> {
 }
 
 fn num<T: std::str::FromStr>(name: &str, default: Option<T>) -> Res<T> {
-    match arg(name) {
+    let a: Vec<String> = std::env::args().collect();
+    num_in(&a, name, default)
+}
+
+/// `num` over an argument list. With no default, a missing value is an error.
+fn num_in<T: std::str::FromStr>(args: &[String], name: &str, default: Option<T>) -> Res<T> {
+    match arg_in(args, name) {
         Some(v) => {
             let v = v.trim();
             // Accept 0x… for the service bits.
@@ -135,7 +141,7 @@ async fn reserved_input() -> Res<ReservedInput> {
         legacy_id: num("--legacy-id", None)?,
         operator: address("--operator")?,
         ip: need("--ip")?,
-        udp_port: num("--udp-port", Some(0))?,
+        udp_port: num("--udp-port", None)?,
         node_wallet,
         deadline: num("--deadline", Some(U256::from(now() + 3600)))?,
         armored_public: std::fs::read_to_string(need("--pgp-public")?)?,
@@ -159,10 +165,10 @@ async fn run() -> Res<Value> {
                 operator: address("--operator")?,
                 beneficiary: address("--beneficiary")?,
                 node_wallet: address("--node-wallet")?,
-                node_type: num("--node-type", Some(1u8))?,
-                ip: arg("--ip").unwrap_or_default(),
-                tcp_port: num("--tcp-port", Some(0))?,
-                udp_port: num("--udp-port", Some(0))?,
+                node_type: num("--node-type", None)?,
+                ip: need("--ip")?,
+                tcp_port: num("--tcp-port", None)?,
+                udp_port: num("--udp-port", None)?,
                 armored_public: std::fs::read_to_string(need("--pgp-public")?)?,
                 services: num("--services", None)?,
                 sponsor_node_id: num("--sponsor", None)?,
@@ -436,5 +442,50 @@ mod refusal_tests {
         let got = valueless_flag(&argv(&["bin", "x", "--operator", secret, "--sponsor"]));
         assert_eq!(got, Some("--sponsor"));
         assert!(!got.unwrap().contains(secret));
+    }
+}
+
+#[cfg(test)]
+mod required_field_tests {
+    use super::{arg_in, num_in};
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn node_type_ports_and_ip_are_required() {
+        let a = argv(&["bin", "request"]);
+        assert!(num_in::<u8>(&a, "--node-type", None).is_err());
+        assert!(num_in::<u16>(&a, "--tcp-port", None).is_err());
+        assert!(num_in::<u16>(&a, "--udp-port", None).is_err());
+        assert!(arg_in(&a, "--ip").is_none());
+        // Given, they parse.
+        let b = argv(&[
+            "bin",
+            "request",
+            "--node-type",
+            "1",
+            "--tcp-port",
+            "0",
+            "--udp-port",
+            "0",
+        ]);
+        assert_eq!(num_in::<u8>(&b, "--node-type", None).unwrap(), 1);
+        assert_eq!(num_in::<u16>(&b, "--tcp-port", None).unwrap(), 0);
+        assert_eq!(num_in::<u16>(&b, "--udp-port", None).unwrap(), 0);
+    }
+
+    #[test]
+    fn deadline_and_nonce_keep_their_bounded_defaults() {
+        let a = argv(&["bin", "request"]);
+        assert_eq!(num_in::<u64>(&a, "--nonce", Some(42)).unwrap(), 42);
+        assert_eq!(num_in::<u64>(&a, "--deadline", Some(7)).unwrap(), 7);
+    }
+
+    #[test]
+    fn a_non_numeric_value_is_an_error_not_the_default() {
+        let a = argv(&["bin", "request", "--tcp-port", "abc"]);
+        assert!(num_in::<u16>(&a, "--tcp-port", Some(0)).is_err());
     }
 }
