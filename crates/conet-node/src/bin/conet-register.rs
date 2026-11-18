@@ -33,95 +33,6 @@ fn arg_in(args: &[String], name: &str) -> Option<String> {
     (!v.starts_with("--")).then(|| v.clone())
 }
 
-#[cfg(test)]
-mod arg_tests {
-    use super::arg_in;
-
-    /// Every flag this binary reads (`--clear` is a switch; its own check also uses `any`).
-    const FLAGS: [&str; 21] = [
-        "--beneficiary",
-        "--bind-nonce",
-        "--bind-sig",
-        "--clear",
-        "--deadline",
-        "--ip",
-        "--legacy-id",
-        "--node-id",
-        "--node-sig",
-        "--node-type",
-        "--node-wallet",
-        "--nonce",
-        "--operator",
-        "--operator-sig",
-        "--pgp-public",
-        "--policy",
-        "--registry",
-        "--request",
-        "--rpc",
-        "--services",
-        "--sponsor",
-    ];
-
-    fn argv(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn every_flag_takes_a_normal_value() {
-        for f in FLAGS {
-            assert_eq!(
-                arg_in(&argv(&["bin", f, "v1"]), f),
-                Some("v1".into()),
-                "{f}"
-            );
-        }
-    }
-
-    #[test]
-    fn every_flag_missing_from_argv_is_none() {
-        for f in FLAGS {
-            assert_eq!(arg_in(&argv(&["bin", "--other", "x"]), f), None, "{f}");
-        }
-    }
-
-    #[test]
-    fn every_flag_at_the_end_has_no_value() {
-        for f in FLAGS {
-            assert_eq!(arg_in(&argv(&["bin", "--other", "x", f]), f), None, "{f}");
-        }
-    }
-
-    #[test]
-    fn every_flag_followed_by_a_flag_takes_no_value_and_the_next_flag_still_parses() {
-        for f in FLAGS {
-            let next = if f == "--rpc" { "--registry" } else { "--rpc" };
-            let a = argv(&["bin", f, next, "http://127.0.0.1:8545"]);
-            assert_eq!(arg_in(&a, f), None, "{f} took the next flag");
-            assert_eq!(
-                arg_in(&a, next),
-                Some("http://127.0.0.1:8545".into()),
-                "{next} after {f}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_single_dash_value_is_kept() {
-        assert_eq!(
-            arg_in(&argv(&["bin", "--node-type", "-1"]), "--node-type"),
-            Some("-1".into())
-        );
-    }
-
-    #[test]
-    fn an_empty_value_is_kept_for_the_caller_to_judge() {
-        assert_eq!(
-            arg_in(&argv(&["bin", "--ip", ""]), "--ip"),
-            Some(String::new())
-        );
-    }
-}
-
 fn need(name: &str) -> Res<String> {
     arg(name).ok_or_else(|| format!("missing {name}").into())
 }
@@ -310,5 +221,94 @@ async fn main() {
             eprintln!("conet-register: {e}");
             std::process::exit(2);
         }
+    }
+}
+
+#[cfg(test)]
+mod arg_tests {
+    use super::arg_in;
+
+    /// Every flag this binary reads (`--clear` is a switch; its own check also uses `any`).
+    const FLAGS: [&str; 21] = [
+        "--beneficiary",
+        "--bind-nonce",
+        "--bind-sig",
+        "--clear",
+        "--deadline",
+        "--ip",
+        "--legacy-id",
+        "--node-id",
+        "--node-sig",
+        "--node-type",
+        "--node-wallet",
+        "--nonce",
+        "--operator",
+        "--operator-sig",
+        "--pgp-public",
+        "--policy",
+        "--registry",
+        "--request",
+        "--rpc",
+        "--services",
+        "--sponsor",
+    ];
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_flag_takes_a_normal_value() {
+        for f in FLAGS {
+            assert_eq!(
+                arg_in(&argv(&["bin", f, "v1"]), f),
+                Some("v1".into()),
+                "{f}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_flag_missing_from_argv_is_none() {
+        for f in FLAGS {
+            assert_eq!(arg_in(&argv(&["bin", "--other", "x"]), f), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn every_flag_at_the_end_has_no_value() {
+        for f in FLAGS {
+            assert_eq!(arg_in(&argv(&["bin", "--other", "x", f]), f), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn every_flag_followed_by_a_flag_takes_no_value_and_the_next_flag_still_parses() {
+        for f in FLAGS {
+            let next = if f == "--rpc" { "--registry" } else { "--rpc" };
+            let a = argv(&["bin", f, next, "http://127.0.0.1:8545"]);
+            assert_eq!(arg_in(&a, f), None, "{f} took the next flag");
+            assert_eq!(
+                arg_in(&a, next),
+                Some("http://127.0.0.1:8545".into()),
+                "{next} after {f}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_dash_value_is_kept() {
+        assert_eq!(
+            arg_in(&argv(&["bin", "--node-type", "-1"]), "--node-type"),
+            Some("-1".into())
+        );
+    }
+
+    #[test]
+    fn an_empty_value_is_kept_for_the_caller_to_judge() {
+        assert_eq!(
+            arg_in(&argv(&["bin", "--ip", ""]), "--ip"),
+            Some(String::new())
+        );
     }
 }
