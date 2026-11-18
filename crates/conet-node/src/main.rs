@@ -24,11 +24,17 @@ use si_core::{NodeNotices, RouteDecryptor, WalletSigner};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// The value of flag `name`: the token after it. A flag with no value never takes the next flag
+/// (`--…`) as its value; that is what an empty `${VAR}` expanded by systemd looks like.
 fn arg(name: &str) -> Option<String> {
     let a: Vec<String> = std::env::args().collect();
-    a.iter()
-        .position(|x| x == name)
-        .and_then(|i| a.get(i + 1).cloned())
+    arg_in(&a, name)
+}
+
+fn arg_in(args: &[String], name: &str) -> Option<String> {
+    let i = args.iter().position(|x| x == name)?;
+    let v = args.get(i + 1)?;
+    (!v.starts_with("--")).then(|| v.clone())
 }
 
 /// (decryptor, wallet, notices, route key ID, retiring route key IDs)
@@ -394,4 +400,104 @@ fn egress_exit(
         .with_limits(limits)
         .with_gate(gate),
     ))
+}
+
+#[cfg(test)]
+mod arg_tests {
+    use super::arg_in;
+
+    /// Every flag `main` reads through `arg()`.
+    const FLAGS: [&str; 27] = [
+        "--acme-cache",
+        "--acme-contact",
+        "--acme-directory",
+        "--acme-directory-root",
+        "--acme-dns-daemon",
+        "--acme-mode",
+        "--api-base",
+        "--dev-route-key",
+        "--egress-policy",
+        "--health-listen",
+        "--listen",
+        "--mailbox-db",
+        "--max-body",
+        "--node-lens",
+        "--node-registry",
+        "--public-ip",
+        "--routes",
+        "--rpc",
+        "--signer-socket",
+        "--term-watch-secs",
+        "--tls-cert",
+        "--tls-domain",
+        "--tls-key",
+        "--tls-listen",
+        "--webrtc-cert",
+        "--webrtc-listen",
+        "--webrtc-public",
+    ];
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_flag_takes_a_normal_value() {
+        for f in FLAGS {
+            assert_eq!(
+                arg_in(&argv(&["bin", f, "v1"]), f),
+                Some("v1".into()),
+                "{f}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_flag_missing_from_argv_is_none() {
+        for f in FLAGS {
+            assert_eq!(arg_in(&argv(&["bin", "--other", "x"]), f), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn every_flag_at_the_end_has_no_value() {
+        for f in FLAGS {
+            assert_eq!(arg_in(&argv(&["bin", "--other", "x", f]), f), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn every_flag_followed_by_a_flag_takes_no_value_and_the_next_flag_still_parses() {
+        for f in FLAGS {
+            let next = if f == "--public-ip" {
+                "--listen"
+            } else {
+                "--public-ip"
+            };
+            let a = argv(&["bin", f, next, "203.0.113.7"]);
+            assert_eq!(arg_in(&a, f), None, "{f} took the next flag");
+            assert_eq!(
+                arg_in(&a, next),
+                Some("203.0.113.7".into()),
+                "{next} after {f}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_dash_value_is_kept() {
+        assert_eq!(
+            arg_in(&argv(&["bin", "--max-body", "-1"]), "--max-body"),
+            Some("-1".into())
+        );
+    }
+
+    #[test]
+    fn an_empty_value_is_kept_for_the_caller_to_judge() {
+        // A blank value is still a value here; push_disabled_reason treats it as not set.
+        assert_eq!(
+            arg_in(&argv(&["bin", "--api-base", ""]), "--api-base"),
+            Some(String::new())
+        );
+    }
 }
