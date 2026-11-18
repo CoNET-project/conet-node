@@ -26,13 +26,28 @@ Three services, three users:
 Beamio API pushes (offline-chat, voice-call, native-wake and device-registration calls to
 beamio.ca) run only when both `--rpc` and `--api-base` are passed. Without one of them the node
 prints `push disabled: --rpc not set` or `push disabled: --api-base not set` at start and sends no
-pushes. An empty or blank value counts as not set, for both flags, and the same check decides
-whether pushes run. Both are required items on every deployment:
+pushes. An empty or blank `--api-base` counts as not set, and the same check decides whether pushes
+run. An empty or blank `--rpc` is different: the node refuses to start (see below). Both are
+required items on every deployment:
 
 - `--rpc ${CONET_RPC}` is set to a non-empty URL, so the node runs with user routes.
 - `--api-base ${BEAMIO_API_BASE}` is set to a non-empty value. The value is audited only; the
   target is always https://beamio.ca.
 - The start output has neither `push disabled:` line.
+
+Empty values stop the start (fail closed, intended). Each unit passes these variables as flag
+values. When one is empty or blank, the process prints the flag name and refuses to start; nothing
+falls back to a default or to another source:
+
+- `CONET_RPC` (`conet-node.service`, `--rpc`): the node refuses to start.
+- `CONET_NODE_UID` (`conet-signer.service`, `--allow-uid`): the signer refuses to start. An empty
+  value used to leave the peer-uid check off, so it is now a start error.
+- `CONET_MANIFEST_URL_1` and `CONET_MANIFEST_URL_2` (`conet-updater.service`, `--manifest-url`):
+  the updater refuses to start.
+- `CONET_NODE_WALLET` (`conet-updater.service`, `--node-id`): the updater refuses to start.
+
+Set all four before the first start. Deleting a flag line from a unit is a different case: that
+flag is then absent, and the behaviour for an absent flag applies (see the push checks above).
 
 These are templates. Node addresses, accounts and key locations of real servers do not belong in
 this repository.
