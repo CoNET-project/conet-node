@@ -305,7 +305,7 @@ pub mod node_registry {
     }
 }
 
-/// Texts the node wallet signs for the Beamio API (CoNET-SI `util.ts`, rev 74c6cfd).
+/// Texts the node wallet signs for the Beamio API (CoNET-SI `src/util/util.ts`, rev 215afb1; notifyOfflineChat and nativeWakeable checked against it).
 pub mod api_texts {
     pub fn notify_offline_chat(pgp_key_id: &str, eoa: &str, timestamp: u64) -> String {
         [

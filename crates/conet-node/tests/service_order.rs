@@ -158,6 +158,68 @@ async fn wallet_rpc(
     (conet_node::chain::Rpc::new(&url).unwrap(), calls, gas)
 }
 
+/// Mock wallet chain whose `eth_call` never answers: the connection is held open without a
+/// response, so only the policy timeout can end the call. `eth_getCode` answers normally. Nothing
+/// blocks a runtime thread, so the timeout fires at the same point under any load.
+async fn hold_wallet_rpc(code: &str) -> (conet_node::chain::Rpc, Arc<AtomicUsize>) {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (c, code) = (calls.clone(), code.to_string());
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = l.accept().await else {
+                return;
+            };
+            let (c, code) = (c.clone(), code.clone());
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 4096];
+                let body = loop {
+                    let k = match s.read(&mut tmp).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(k) => k,
+                    };
+                    buf.extend_from_slice(&tmp[..k]);
+                    let text = String::from_utf8_lossy(&buf).to_string();
+                    if let Some(h) = text.find("\r\n\r\n") {
+                        let len = text[..h]
+                            .lines()
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap_or(0);
+                        if buf.len() >= h + 4 + len {
+                            break buf[h + 4..h + 4 + len].to_vec();
+                        }
+                    }
+                };
+                let req: Value = serde_json::from_slice(&body).unwrap();
+                match req["method"].as_str().unwrap_or("") {
+                    "eth_call" => {
+                        c.fetch_add(1, Ordering::SeqCst);
+                        // Hold the socket open and never answer.
+                        std::future::pending::<()>().await;
+                    }
+                    "eth_getCode" => {
+                        let out = json!({ "jsonrpc": "2.0", "id": 1, "result": code }).to_string();
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{out}",
+                            out.len()
+                        );
+                        let _ = s.write_all(resp.as_bytes()).await;
+                    }
+                    m => panic!("unexpected {m}"),
+                }
+            });
+        }
+    });
+    (conet_node::chain::Rpc::new(&url).unwrap(), calls)
+}
+
 const MAGIC: &str = "0x1626ba7e00000000000000000000000000000000000000000000000000000000";
 
 /// Node-side call mechanics of the ERC-1271 path only (allowlist before the call, gas cap,
@@ -214,11 +276,13 @@ async fn erc1271_path() {
         timeout: Duration::from_millis(200),
         ..policy.clone()
     };
-    let (rpc, _, _) = wallet_rpc(code, MAGIC, Duration::from_millis(800)).await;
+    let (rpc, calls) = hold_wallet_rpc(code).await;
     assert_eq!(
         verify_signature(&rpc, d, &sig, user, &slow).await,
         Err(Refuse::WalletCallFailed("timeout".into()))
     );
+    // The timeout came from the eth_call itself, not from the code read.
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]

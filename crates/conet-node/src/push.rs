@@ -674,4 +674,103 @@ mod tests {
             Err(ApiError::Transport)
         );
     }
+
+    // ---- review negatives (review copy only; not part of the commit) ----
+
+    #[tokio::test]
+    async fn review_full_3xx_matrix_refused_on_every_path() {
+        for status in [300u16, 301, 302, 303, 304, 307, 308] {
+            let landing = spawn_stub(200, None, r#"{"success":true,"nativeWakeable":true}"#).await;
+            let front = spawn_stub(status, Some(format!("{}/landing", landing.base())), "").await;
+            let client = ApiClient::new(Arc::new(RewriteTransport::new(front.base())));
+            assert_eq!(
+                client.voice_call_push(&voice_body()).await,
+                Err(ApiError::Redirect(status))
+            );
+            assert_eq!(
+                client.notify_offline_chat(&offline_body()).await,
+                Err(ApiError::Redirect(status))
+            );
+            assert_eq!(
+                client.register_push_device(&device_body()).await,
+                Err(ApiError::Redirect(status))
+            );
+            assert_eq!(
+                client.native_wakeable(&wake_body()).await,
+                None,
+                "status {status}"
+            );
+            assert_eq!(front.hits(), 4, "status {status}");
+            assert_eq!(
+                landing.hits(),
+                0,
+                "status {status}: redirect target contacted"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn review_3xx_without_location_is_still_refused() {
+        let front = spawn_stub(302, None, "").await;
+        let client = ApiClient::new(Arc::new(RewriteTransport::new(front.base())));
+        assert_eq!(
+            client.notify_offline_chat(&offline_body()).await,
+            Err(ApiError::Redirect(302))
+        );
+        assert_eq!(front.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn review_production_transport_refuses_each_redirect_status() {
+        for status in [301u16, 307, 308] {
+            let landing = spawn_stub(200, None, "{}").await;
+            let front = spawn_stub(status, Some(format!("{}/x", landing.base())), "").await;
+            let url = format!("{}/api/voiceCallPush", front.base());
+            let t = ReqwestTransport::new().unwrap();
+            let (got, _) = t.post_json(&url, &voice_body(), API_TIMEOUT).await.unwrap();
+            assert_eq!(got, status);
+            assert_eq!(front.hits(), 1, "status {status}");
+            assert_eq!(landing.hits(), 0, "status {status}: followed");
+        }
+    }
+
+    #[tokio::test]
+    async fn review_nativewakeable_bad_answers_are_unknown_not_false() {
+        let cases: [(u16, &'static str); 5] = [
+            (404, r#"{"success":true,"nativeWakeable":false}"#),
+            (400, r#"{"success":true,"nativeWakeable":false}"#),
+            (200, r#"{"success":true}"#),
+            (200, r#"{"success":true,"nativeWakeable":"true"}"#),
+            (200, r#"{"success":true,"nativeWakeable":null}"#),
+        ];
+        for (status, body) in cases {
+            let s = spawn_stub(status, None, body).await;
+            let c = ApiClient::new(Arc::new(RewriteTransport::new(s.base())));
+            assert_eq!(
+                c.native_wakeable(&wake_body()).await,
+                None,
+                "{status} {body}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn review_timeout_is_transport_error_not_empty_result() {
+        // Accepts the connection, never answers.
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let hold = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((s, _)) = l.accept().await {
+                held.push(s);
+            }
+        });
+        let c = ApiClient::new(Arc::new(RewriteTransport::new(format!("http://{addr}"))));
+        assert_eq!(
+            c.voice_call_push(&voice_body()).await,
+            Err(ApiError::Transport)
+        );
+        assert_eq!(c.native_wakeable(&wake_body()).await, None);
+        hold.abort();
+    }
 }
