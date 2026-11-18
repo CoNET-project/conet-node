@@ -37,6 +37,42 @@ fn arg_in(args: &[String], name: &str) -> Option<String> {
     (!v.starts_with("--")).then(|| v.clone())
 }
 
+/// Value flags that fail closed. Each one, when given without a usable value (last in argv,
+/// followed by another flag, empty, or blank), would otherwise fall back to a default, to a
+/// different route, key, storage or certificate source, or to a built-in address. The node
+/// refuses to start instead. Only the flag name is printed, never a value.
+const FAIL_CLOSED_FLAGS: [&str; 15] = [
+    "--signer-socket",
+    "--rpc",
+    "--node-registry",
+    "--node-lens",
+    "--mailbox-db",
+    "--listen",
+    "--health-listen",
+    "--tls-cert",
+    "--tls-key",
+    "--acme-mode",
+    "--tls-domain",
+    "--acme-contact",
+    "--acme-directory",
+    "--acme-directory-root",
+    "--webrtc-public",
+];
+
+/// True when a value is present and usable: not missing, not another flag, not blank.
+fn has_value(v: Option<&String>) -> bool {
+    v.is_some_and(|v| !v.starts_with("--") && !v.trim().is_empty())
+}
+
+/// The first fail-closed value flag that appears without a usable value. Name only.
+fn valueless_flag(args: &[String]) -> Option<&'static str> {
+    FAIL_CLOSED_FLAGS.iter().copied().find(|f| {
+        args.iter()
+            .enumerate()
+            .any(|(i, a)| a == f && !has_value(args.get(i + 1)))
+    })
+}
+
 /// A flag whose value counts only when it is non-blank. Used for `--rpc` and `--api-base`, so a
 /// blank value is treated as absent by the route choice and by the Beamio push gate alike.
 fn setting(name: &str) -> Option<String> {
@@ -117,6 +153,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => Err(format!("selftest failed: {e}").into()),
         };
+    }
+    let argv: Vec<String> = std::env::args().collect();
+    if let Some(flag) = valueless_flag(&argv) {
+        return Err(format!("{flag} is given without a value; refusing to start").into());
     }
     // One TLS crypto backend for the whole process (several may be compiled in through deps).
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -510,5 +550,85 @@ mod arg_tests {
             arg_in(&argv(&["bin", "--api-base", ""]), "--api-base"),
             Some(String::new())
         );
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::{valueless_flag, FAIL_CLOSED_FLAGS};
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_fail_closed_flag_without_a_value_refuses_to_start() {
+        for f in FAIL_CLOSED_FLAGS {
+            assert_eq!(valueless_flag(&argv(&["bin", f])), Some(f), "{f} at end");
+            assert_eq!(
+                valueless_flag(&argv(&["bin", f, "--public-ip", "203.0.113.7"])),
+                Some(f),
+                "{f} then flag"
+            );
+            assert_eq!(valueless_flag(&argv(&["bin", f, ""])), Some(f), "{f} empty");
+            assert_eq!(
+                valueless_flag(&argv(&["bin", f, " \t"])),
+                Some(f),
+                "{f} blank"
+            );
+        }
+    }
+
+    #[test]
+    fn every_fail_closed_flag_with_a_usable_value_starts() {
+        for f in FAIL_CLOSED_FLAGS {
+            assert_eq!(valueless_flag(&argv(&["bin", f, "v1"])), None, "{f}");
+            assert_eq!(valueless_flag(&argv(&["bin", f, "-1"])), None, "{f} -1");
+        }
+    }
+
+    #[test]
+    fn an_absent_flag_still_starts() {
+        for f in FAIL_CLOSED_FLAGS {
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "--other", "x"])),
+                None,
+                "{f} absent"
+            );
+        }
+    }
+
+    #[test]
+    fn a_blank_rpc_is_refused_not_turned_into_static_routes() {
+        assert_eq!(
+            valueless_flag(&argv(&["bin", "--rpc", "  ", "--routes", "/x"])),
+            Some("--rpc")
+        );
+    }
+
+    #[test]
+    fn flags_that_stay_off_or_keep_their_default_are_not_refused_here() {
+        // Valueless, these turn a feature off (stricter) or keep the value they had before, so
+        // the refusal list leaves them out. --api-base blank turns pushes off (see push gate).
+        for f in [
+            "--egress-policy",
+            "--tls-listen",
+            "--webrtc-listen",
+            "--api-base",
+            "--max-body",
+            "--term-watch-secs",
+            "--public-ip",
+            "--acme-staging",
+        ] {
+            assert_eq!(valueless_flag(&argv(&["bin", f])), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn the_refusal_names_the_flag_and_no_value() {
+        let secret = "0xSECRETpath";
+        let got = valueless_flag(&argv(&["bin", "--signer-socket", secret, "--rpc"]));
+        assert_eq!(got, Some("--rpc"));
+        assert!(!got.unwrap().contains(secret));
     }
 }
