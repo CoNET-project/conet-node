@@ -77,6 +77,15 @@ impl std::fmt::Display for ApiError {
     }
 }
 
+/// Startup notice when Beamio API pushes are off because `--api-base` is absent or blank. The
+/// message never includes the configured value. None when `--api-base` has a value.
+pub fn push_disabled_reason(api_base: Option<&str>) -> Option<&'static str> {
+    match api_base.map(str::trim) {
+        Some(v) if !v.is_empty() => None,
+        _ => Some("push disabled: --api-base not set"),
+    }
+}
+
 /// Audit of a configured base (`--api-base`, from `BEAMIO_API_BASE`). Returns the reason it is
 /// rejected, or None when it is acceptable (exactly `https://beamio.ca`, optional trailing `/`).
 /// The value itself is never logged.
@@ -493,6 +502,19 @@ mod tests {
             .ok_or(ApiError::Transport);
         let d = client.register_push_device(&device_body()).await;
         [a, b, c, d]
+    }
+
+    #[test]
+    fn startup_warns_when_api_base_is_absent_or_blank() {
+        let msg = "push disabled: --api-base not set";
+        assert_eq!(push_disabled_reason(None), Some(msg));
+        assert_eq!(push_disabled_reason(Some("")), Some(msg));
+        assert_eq!(push_disabled_reason(Some("   ")), Some(msg));
+        // A value, even a rejected one, is not a missing setting: the audit warns about it.
+        assert_eq!(push_disabled_reason(Some("https://beamio.ca")), None);
+        assert_eq!(push_disabled_reason(Some("https://beamio.app")), None);
+        // The message carries no configured value.
+        assert!(!msg.contains("http") && !msg.contains("beamio"));
     }
 
     #[test]
