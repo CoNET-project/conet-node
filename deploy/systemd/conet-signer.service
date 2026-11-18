@@ -16,7 +16,6 @@ StateDirectory=conet-signer
 StateDirectoryMode=0700
 ExecStart=/opt/conet-node/current/conet-signer serve \
   --keystore /var/lib/conet-signer/keystore.json \
-  --state /var/lib/conet-signer/statements.json \
   --socket /run/conet-signer/signer.sock \
   --verifying-contract ${CONET_NODE_REGISTRY} \
   --allow-uid ${CONET_NODE_UID}
