@@ -27,6 +27,46 @@ fn arg(name: &str) -> Option<String> {
     arg_in(&a, name)
 }
 
+/// The value flags of this binary. `--clear` is a switch and is not in this list.
+const VALUE_FLAGS: [&str; 22] = [
+    "--beneficiary",
+    "--bind-nonce",
+    "--bind-sig",
+    "--deadline",
+    "--ip",
+    "--legacy-id",
+    "--node-id",
+    "--node-sig",
+    "--node-type",
+    "--node-wallet",
+    "--nonce",
+    "--operator",
+    "--operator-sig",
+    "--pgp-public",
+    "--policy",
+    "--registry",
+    "--request",
+    "--rpc",
+    "--services",
+    "--sponsor",
+    "--tcp-port",
+    "--udp-port",
+];
+
+/// True when a value is present and usable: not missing, not another flag, not blank.
+fn has_value(v: Option<&String>) -> bool {
+    v.is_some_and(|v| !v.starts_with("--") && !v.trim().is_empty())
+}
+
+/// The first value flag that appears without a usable value. Returns the flag name only.
+fn valueless_flag(args: &[String]) -> Option<&'static str> {
+    VALUE_FLAGS.iter().copied().find(|f| {
+        args.iter()
+            .enumerate()
+            .any(|(i, a)| a == f && !has_value(args.get(i + 1)))
+    })
+}
+
 fn arg_in(args: &[String], name: &str) -> Option<String> {
     let i = args.iter().position(|x| x == name)?;
     let v = args.get(i + 1)?;
@@ -105,6 +145,12 @@ async fn reserved_input() -> Res<ReservedInput> {
 }
 
 async fn run() -> Res<Value> {
+    // Fail closed: a value flag given without a usable value stops the run. Nothing falls back to
+    // a default. Only the flag name is printed, never a value.
+    let argv: Vec<String> = std::env::args().collect();
+    if let Some(flag) = valueless_flag(&argv) {
+        return Err(format!("{flag} is given without a value; refusing to run").into());
+    }
     let cmd = std::env::args().nth(1).unwrap_or_default();
     Ok(match cmd.as_str() {
         "request" => {
@@ -229,7 +275,7 @@ mod arg_tests {
     use super::arg_in;
 
     /// Every flag this binary reads (`--clear` is a switch; its own check also uses `any`).
-    const FLAGS: [&str; 21] = [
+    const FLAGS: [&str; 23] = [
         "--beneficiary",
         "--bind-nonce",
         "--bind-sig",
@@ -251,6 +297,8 @@ mod arg_tests {
         "--rpc",
         "--services",
         "--sponsor",
+        "--tcp-port",
+        "--udp-port",
     ];
 
     fn argv(v: &[&str]) -> Vec<String> {
@@ -310,5 +358,83 @@ mod arg_tests {
             arg_in(&argv(&["bin", "--ip", ""]), "--ip"),
             Some(String::new())
         );
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::{valueless_flag, VALUE_FLAGS};
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_value_flag_without_a_value_refuses_to_run() {
+        for f in VALUE_FLAGS {
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "egress-policy", f])),
+                Some(f),
+                "{f} at end"
+            );
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "egress-policy", f, "--rpc", "http://x"])),
+                Some(f),
+                "{f} then flag"
+            );
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "egress-policy", f, ""])),
+                Some(f),
+                "{f} empty"
+            );
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "egress-policy", f, " \t"])),
+                Some(f),
+                "{f} blank"
+            );
+        }
+    }
+
+    #[test]
+    fn every_value_flag_with_a_usable_value_runs() {
+        for f in VALUE_FLAGS {
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "egress-policy", f, "v1"])),
+                None,
+                "{f}"
+            );
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "egress-policy", f, "-1"])),
+                None,
+                "{f} -1"
+            );
+        }
+    }
+
+    #[test]
+    fn clear_is_a_switch_and_an_absent_flag_still_runs() {
+        assert_eq!(
+            valueless_flag(&argv(&["bin", "egress-policy", "--clear"])),
+            None
+        );
+        assert_eq!(
+            valueless_flag(&argv(&["bin", "egress-policy", "--clear", "--rpc", "u"])),
+            None
+        );
+        for f in VALUE_FLAGS {
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "egress-policy", "--other", "x"])),
+                None,
+                "{f}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_refusal_names_the_flag_and_no_value() {
+        let secret = "0xSECRETaddress";
+        let got = valueless_flag(&argv(&["bin", "x", "--operator", secret, "--sponsor"]));
+        assert_eq!(got, Some("--sponsor"));
+        assert!(!got.unwrap().contains(secret));
     }
 }
