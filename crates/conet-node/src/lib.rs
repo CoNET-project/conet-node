@@ -27,6 +27,7 @@ pub mod stake_view;
 pub mod store;
 pub mod term_watch;
 pub mod tls;
+pub mod treasury_v3;
 pub mod voice;
 pub mod vote_book;
 pub mod vote_gate;
