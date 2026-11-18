@@ -37,11 +37,44 @@ fn arg_in(args: &[String], name: &str) -> Option<String> {
     (!v.starts_with("--")).then(|| v.clone())
 }
 
+/// `--public-ip`: a comma-separated list of IP addresses. Every entry must parse. An empty, blank
+/// or unparseable value refuses to start. With `--egress-policy` the list is required.
+fn public_ips_from(value: Option<&str>, egress_on: bool) -> Result<Vec<std::net::IpAddr>, String> {
+    let Some(v) = value else {
+        return if egress_on {
+            Err("--public-ip <ip[,ip...]> is required with --egress-policy".into())
+        } else {
+            Ok(vec![])
+        };
+    };
+    v.split(',')
+        .map(|entry| {
+            entry
+                .trim()
+                .parse()
+                .map_err(|_| "--public-ip: every entry must be an IP address".to_string())
+        })
+        .collect()
+}
+
+/// `--max-body`: a byte count. Absent keeps the default (256 KiB). Given but empty or not a
+/// number refuses to start, instead of silently keeping the default.
+fn max_body_from(value: Option<&str>) -> Result<Option<usize>, String> {
+    match value {
+        None => Ok(None),
+        Some(v) => v
+            .trim()
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|_| "--max-body must be a byte count".to_string()),
+    }
+}
+
 /// Value flags that fail closed. Each one, when given without a usable value (last in argv,
 /// followed by another flag, empty, or blank), would otherwise fall back to a default, to a
 /// different route, key, storage or certificate source, or to a built-in address. The node
 /// refuses to start instead. Only the flag name is printed, never a value.
-const FAIL_CLOSED_FLAGS: [&str; 15] = [
+const FAIL_CLOSED_FLAGS: [&str; 17] = [
     "--signer-socket",
     "--rpc",
     "--node-registry",
@@ -57,6 +90,8 @@ const FAIL_CLOSED_FLAGS: [&str; 15] = [
     "--acme-directory",
     "--acme-directory-root",
     "--webrtc-public",
+    "--public-ip",
+    "--max-body",
 ];
 
 /// True when a value is present and usable: not missing, not another flag, not blank.
@@ -228,9 +263,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for msg in push_disabled_reasons(api_base.as_deref(), user_routes.is_some()) {
         eprintln!("{msg}");
     }
+    // Public addresses: every entry must parse; with --egress-policy they are required. Checked
+    // here so a bad value stops the start even when the exit itself stays off.
+    let public_ips = public_ips_from(
+        arg("--public-ip").as_deref(),
+        arg("--egress-policy").is_some(),
+    )?;
     // SilentPass exit: needs a policy file and the chain (passport checks); off otherwise.
     if let (Some(url), Some(path)) = (setting("--rpc"), arg("--egress-policy")) {
-        if let Some(exit) = egress_exit(&url, &path, ctx.wallet.address())? {
+        if let Some(exit) = egress_exit(&url, &path, ctx.wallet.address(), public_ips)? {
             ctx.exit = Some(Arc::new(exit));
         }
     } else if arg("--egress-policy").is_some() {
@@ -240,7 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ctx.offers = offers;
     ctx.old_key_ids = old_key_ids;
     routes.set_own_aliases(&ctx.old_key_ids);
-    if let Some(b) = arg("--max-body").and_then(|v| v.parse().ok()) {
+    if let Some(b) = max_body_from(arg("--max-body").as_deref())? {
         ctx.limits.max_body_bytes = b;
     }
     if std::env::args().any(|a| a == "--no-legacy-chat-listen") {
@@ -383,6 +424,7 @@ fn egress_exit(
     rpc_url: &str,
     policy_path: &str,
     own_wallet: String,
+    public: Vec<std::net::IpAddr>,
 ) -> Result<Option<conet_node::exit::Exit>, Box<dyn std::error::Error>> {
     use conet_node::egress::{self, ChainGate, LimitSet, Limits, StartRefusal};
     use conet_node::exit::{ChainPassport, DnsResolver, EgressPolicy, Exit};
@@ -431,10 +473,6 @@ fn egress_exit(
         connect_secs: num("--exit-connect-secs").map(|v: usize| v as u64),
     };
     let limits = Limits::layered(&operator, &policy.limits);
-    let public: Vec<std::net::IpAddr> = arg("--public-ip")
-        .into_iter()
-        .filter_map(|s| s.parse().ok())
-        .collect();
     eprintln!("{}", egress::RISK_NOTICE);
     tracing::warn!(
         cid = %conet_node::register::cid_text(&cid),
@@ -615,13 +653,62 @@ mod refusal_tests {
             "--tls-listen",
             "--webrtc-listen",
             "--api-base",
-            "--max-body",
             "--term-watch-secs",
-            "--public-ip",
             "--acme-staging",
         ] {
             assert_eq!(valueless_flag(&argv(&["bin", f])), None, "{f}");
         }
+    }
+
+    #[test]
+    fn public_ip_is_strict_and_required_with_the_egress_policy() {
+        use super::public_ips_from;
+        // Absent: fine without the egress policy, required with it.
+        assert_eq!(public_ips_from(None, false), Ok(vec![]));
+        assert!(public_ips_from(None, true).is_err());
+        // A valid address, or a comma-separated list of them.
+        assert_eq!(
+            public_ips_from(Some("203.0.113.7"), true),
+            Ok(vec!["203.0.113.7".parse().unwrap()])
+        );
+        assert_eq!(
+            public_ips_from(Some("203.0.113.7, 2001:db8::1"), false)
+                .unwrap()
+                .len(),
+            2
+        );
+        // Empty, blank, unparseable, or any single bad entry refuses.
+        for bad in [
+            "",
+            "   ",
+            "not-an-ip",
+            "203.0.113.7,",
+            "203.0.113.7,bogus",
+            "203.0.113.999",
+        ] {
+            assert!(
+                public_ips_from(Some(bad), false).is_err(),
+                "{bad:?} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn max_body_is_strict_and_defaults_only_when_absent() {
+        use super::max_body_from;
+        assert_eq!(max_body_from(None), Ok(None));
+        assert_eq!(max_body_from(Some("1024")), Ok(Some(1024)));
+        for bad in ["", "   ", "abc", "-1", "1.5"] {
+            assert!(max_body_from(Some(bad)).is_err(), "{bad:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn the_default_max_body_is_256_kib() {
+        assert_eq!(
+            conet_node::http::Limits::default().max_body_bytes,
+            256 * 1024
+        );
     }
 
     #[test]
