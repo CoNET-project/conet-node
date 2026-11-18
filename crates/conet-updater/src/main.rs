@@ -41,6 +41,20 @@ const VALUE_FLAGS: [&str; 11] = [
     "--trusted-key",
 ];
 
+/// `release verify --threshold`: required, a whole number of at least 1. A missing or invalid value
+/// refuses instead of defaulting to 1. (A threshold of 0 would accept a manifest with no signature.)
+fn threshold_from(value: Option<&str>) -> Result<usize, String> {
+    let v = value.ok_or_else(|| "--threshold <k> is required for release verify".to_string())?;
+    let k: usize = v
+        .trim()
+        .parse()
+        .map_err(|_| "--threshold must be a whole number".to_string())?;
+    if k == 0 {
+        return Err("--threshold must be at least 1".into());
+    }
+    Ok(k)
+}
+
 /// True when a value is present and usable: not missing, not another flag, not blank.
 fn has_value(v: Option<&String>) -> bool {
     v.is_some_and(|v| !v.starts_with("--") && !v.trim().is_empty())
@@ -215,7 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mpath = PathBuf::from(arg("--manifest").ok_or("--manifest <manifest.json>")?);
             let m = std::fs::read(&mpath)?;
             let s = std::fs::read(mpath.with_extension("json.sig"))?;
-            let threshold = arg("--threshold").and_then(|t| t.parse().ok()).unwrap_or(1);
+            let threshold = threshold_from(arg("--threshold").as_deref())?;
             match manifest::verify(&m, &s, &trusted()?, threshold) {
                 Ok(v) => println!("ok: {} {}", v.product, v.version),
                 Err(e) => return Err(format!("{e:?}").into()),
@@ -392,5 +406,27 @@ mod refusal_tests {
         let got = valueless_flag(&argv(&["bin", "run", "--manifest-url", secret, "--target"]));
         assert_eq!(got, Some("--target"));
         assert!(!got.unwrap().contains(secret));
+    }
+}
+
+#[cfg(test)]
+mod threshold_tests {
+    use super::threshold_from;
+
+    #[test]
+    fn threshold_must_be_given_and_positive() {
+        assert_eq!(threshold_from(Some("2")), Ok(2));
+        assert_eq!(threshold_from(Some(" 3 ")), Ok(3));
+        assert!(threshold_from(None).is_err(), "missing threshold defaulted");
+        for bad in ["", "   ", "abc", "-1", "1.5", "0"] {
+            assert!(threshold_from(Some(bad)).is_err(), "{bad:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn the_threshold_refusal_names_no_value() {
+        let secret = "SECRET-7";
+        let msg = threshold_from(Some(secret)).unwrap_err();
+        assert!(!msg.contains(secret));
     }
 }
