@@ -10,3 +10,12 @@ Check: git hash-object treasuryV3Listen.ts treasuryAddresses.ts must print the t
 Pinned generator dependency: ethers 6.17.0 (package-lock.json). Its transitive packages include ws,
 which ethers loads for its WebSocket provider class. This fixture generator never creates a
 WebSocket connection; it only encodes logs and parses them. Recorded as an indirect dependency.
+
+Offline boundary:
+- Installing the pinned dependency needs `npm ci` in this directory, which reads the npm registry
+  (https://registry.npmjs.org) or an npm cache that already holds the locked tarballs.
+- On a fresh offline machine, either pre-fill the npm cache with these locked versions before
+  running `npm ci`, or replace the dependency with a vendored copy of the locked ethers tree.
+- The 444579d regeneration was run with ethers 6.17.0 from a local installed directory (the
+  script checks the version), not from a clean `npm ci`. The lockfile was checked offline with
+  `npm ls --package-lock-only --all`.
