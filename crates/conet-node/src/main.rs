@@ -16,7 +16,7 @@
 //! operator must say `--egress-no-chain-check` (V6 era). Operator limits:
 //! `--exit-max-per-wallet`, `--exit-max-conns`, `--exit-idle-secs`, `--exit-connect-secs`.
 use conet_node::chain::{AddressPgp, GuardianV6, NodeSource, Rpc, UserRoutes};
-use conet_node::push::{push_disabled_reasons, BeamioApi, Push};
+use conet_node::push::{push_disabled_reasons, push_enabled, setting_is_set, BeamioApi, Push};
 use conet_node::route::{RouteTable, StaticRoutes};
 use conet_node::store::{DiskStore, MailboxStore, MemoryOffers, MemoryStore, OfferStore};
 use conet_node::{mailbox::Mailbox, server, watcher};
@@ -35,6 +35,12 @@ fn arg_in(args: &[String], name: &str) -> Option<String> {
     let i = args.iter().position(|x| x == name)?;
     let v = args.get(i + 1)?;
     (!v.starts_with("--")).then(|| v.clone())
+}
+
+/// A flag whose value counts only when it is non-blank. Used for `--rpc` and `--api-base`, so a
+/// blank value is treated as absent by the route choice and by the Beamio push gate alike.
+fn setting(name: &str) -> Option<String> {
+    arg(name).filter(|v| setting_is_set(Some(v.as_str())))
 }
 
 /// (decryptor, wallet, notices, route key ID, retiring route key IDs)
@@ -138,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut source: Option<Arc<dyn NodeSource>> = None;
     let (routes, user_routes): (Arc<RouteTable>, Option<Arc<dyn UserRoutes>>) =
-        if let Some(url) = arg("--rpc") {
+        if let Some(url) = setting("--rpc") {
             let rpc = Rpc::new(&url)?;
             source = Some(match (arg("--node-registry"), arg("--node-lens")) {
                 (Some(reg), Some(lens)) => {
@@ -167,18 +173,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         routes.clone(),
         store.clone(),
     );
-    if let (Some(base), Some(ur)) = (arg("--api-base"), user_routes.clone()) {
+    let api_base = setting("--api-base");
+    if let (true, Some(base), Some(ur)) = (
+        push_enabled(api_base.as_deref(), user_routes.is_some()),
+        api_base.as_deref(),
+        user_routes.clone(),
+    ) {
         let node_wallet = ctx.wallet.address();
         let api: Arc<dyn Push> =
-            Arc::new(Arc::new(BeamioApi::new(&base, notices, ur, node_wallet)?));
+            Arc::new(Arc::new(BeamioApi::new(base, notices, ur, node_wallet)?));
         ctx.mailbox = Arc::new(Mailbox::new(store, api.clone()));
         ctx.push = api;
     }
-    for msg in push_disabled_reasons(arg("--api-base").as_deref(), user_routes.is_some()) {
+    for msg in push_disabled_reasons(api_base.as_deref(), user_routes.is_some()) {
         eprintln!("{msg}");
     }
     // SilentPass exit: needs a policy file and the chain (passport checks); off otherwise.
-    if let (Some(url), Some(path)) = (arg("--rpc"), arg("--egress-policy")) {
+    if let (Some(url), Some(path)) = (setting("--rpc"), arg("--egress-policy")) {
         if let Some(exit) = egress_exit(&url, &path, ctx.wallet.address())? {
             ctx.exit = Some(Arc::new(exit));
         }
@@ -212,7 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(watcher::run(src, routes, ctx.chain.clone(), opts));
     }
     // Stake term watch (read-only, log lines only): with a NodeRegistryV2.
-    if let (Some(url), Some(reg)) = (arg("--rpc"), arg("--node-registry")) {
+    if let (Some(url), Some(reg)) = (setting("--rpc"), arg("--node-registry")) {
         let every = arg("--term-watch-secs")
             .and_then(|v| v.parse().ok())
             .unwrap_or(600u64)

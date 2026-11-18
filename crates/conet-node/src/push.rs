@@ -77,12 +77,24 @@ impl std::fmt::Display for ApiError {
     }
 }
 
-/// Startup notices for Beamio API pushes that are off, one per missing setting. A missing
-/// `--api-base` (absent or blank) and a missing `--rpc` (static routes, so no user routes) each
-/// switch pushes off. The messages never include a configured value.
+/// A startup setting is set only when it has a non-blank value. `main` uses this for `--rpc` and
+/// `--api-base` (blank counts as absent), and the push gate and the startup notices below use it
+/// through `push_enabled`, so the gate and the notices cannot disagree.
+pub fn setting_is_set(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !v.trim().is_empty())
+}
+
+/// Beamio API pushes run only when `--api-base` is set and user routes exist (`--rpc` is set).
+pub fn push_enabled(api_base: Option<&str>, has_user_routes: bool) -> bool {
+    setting_is_set(api_base) && has_user_routes
+}
+
+/// Startup notices for Beamio API pushes that are off, one per missing setting. A missing or
+/// blank `--api-base` and a missing `--rpc` (static routes, so no user routes) each switch pushes
+/// off; this is empty exactly when `push_enabled` is true. The messages never include a value.
 pub fn push_disabled_reasons(api_base: Option<&str>, has_user_routes: bool) -> Vec<&'static str> {
     let mut out = Vec::new();
-    if !matches!(api_base.map(str::trim), Some(v) if !v.is_empty()) {
+    if !setting_is_set(api_base) {
         out.push("push disabled: --api-base not set");
     }
     if !has_user_routes {
@@ -507,6 +519,45 @@ mod tests {
             .ok_or(ApiError::Transport);
         let d = client.register_push_device(&device_body()).await;
         [a, b, c, d]
+    }
+
+    #[test]
+    fn a_blank_setting_is_unset_and_the_gate_agrees_with_the_notices() {
+        // (value, is it set): empty, blank and a real value.
+        let cases: [(Option<&str>, bool); 7] = [
+            (None, false),
+            (Some(""), false),
+            (Some("   "), false),
+            (Some("\t\n"), false),
+            (Some("https://beamio.ca"), true),
+            (Some(" https://beamio.ca "), true),
+            // A rejected value is still set; the base audit warns about it, not this check.
+            (Some("https://beamio.app"), true),
+        ];
+        let base = "push disabled: --api-base not set";
+        let rpc = "push disabled: --rpc not set";
+        for (api, is_set) in cases {
+            assert_eq!(setting_is_set(api), is_set, "{api:?}");
+            for routes in [true, false] {
+                let reasons = push_disabled_reasons(api, routes);
+                // The gate (push_enabled) and the notices come from the same predicate.
+                assert_eq!(
+                    push_enabled(api, routes),
+                    reasons.is_empty(),
+                    "{api:?} routes={routes}"
+                );
+                assert_eq!(
+                    push_enabled(api, routes),
+                    is_set && routes,
+                    "{api:?} routes={routes}"
+                );
+                assert_eq!(reasons.contains(&base), !is_set, "{api:?} routes={routes}");
+                assert_eq!(reasons.contains(&rpc), !routes, "{api:?} routes={routes}");
+                for m in &reasons {
+                    assert!(!m.contains("http") && !m.contains("beamio"), "{m}");
+                }
+            }
+        }
     }
 
     #[test]
