@@ -2,6 +2,8 @@
 //! `src/vote/treasuryV3Listen.ts`: the event decode (`parseBridgeOperation`), the scan window
 //! planning (`runChain` / `tick` / `getLogsChunked`) and the cursor state file (`loadState` /
 //! `saveState`). No RPC calls and no votes here: the vote is a separate, later step.
+use crate::chain::Rpc;
+use alloy_primitives::hex;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolEvent};
 use serde_json::{json, Value};
@@ -285,4 +287,123 @@ pub fn save_cursor(path: &Path, c: &Cursor, updated_at_unix: u64) -> Result<(), 
         f.sync_all().map_err(CursorError::Io)?;
     }
     std::fs::rename(&tmp, path).map_err(CursorError::Io)
+}
+
+/// A log as `eth_getLogs` returns it. An error names the field, never the value.
+pub fn raw_log_from_rpc(v: &Value) -> Result<RawLog, &'static str> {
+    let topics = v["topics"]
+        .as_array()
+        .ok_or("topics")?
+        .iter()
+        .map(|t| {
+            t.as_str()
+                .and_then(|s| s.parse::<B256>().ok())
+                .ok_or("topics")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let data = hex::decode(v["data"].as_str().ok_or("data")?.trim_start_matches("0x"))
+        .map_err(|_| "data")?;
+    let transaction_hash = v["transactionHash"]
+        .as_str()
+        .and_then(|s| s.parse::<B256>().ok())
+        .ok_or("transactionHash")?;
+    let block_number = v["blockNumber"]
+        .as_str()
+        .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        .ok_or("blockNumber")?;
+    Ok(RawLog {
+        topics,
+        data,
+        transaction_hash,
+        block_number,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScanError {
+    /// The RPC call failed or answered with something that is not a log list. The cursor must
+    /// not move: the caller keeps its copy and retries the same window later.
+    Rpc(String),
+}
+
+impl std::fmt::Display for ScanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScanError::Rpc(e) => write!(f, "treasury v3 scan: {e}"),
+        }
+    }
+}
+
+/// One tick that fetched a window. `ops` holds the decoded Initiated operations in node order.
+/// When any log failed (a malformed log, a foreign address, a decode error), `ops` is empty and
+/// the window is fetched again whole, so no operation is delivered twice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tick {
+    pub window: Window,
+    pub ops: Vec<BridgeOp>,
+    pub failures: usize,
+}
+
+/// One TS tick, read-only. Fetches the window's logs chunk by chunk with `eth_getLogs`, filtered
+/// by the Treasury address and the BridgeOperation topic, decodes each log, and advances the
+/// cursor only when every log decoded. `Ok(None)` when there is nothing to fetch. On `Err` the
+/// caller discards its cursor copy. The caller persists the cursor only after `Ok`.
+pub async fn scan_tick(
+    rpc: &Rpc,
+    address: alloy_primitives::Address,
+    cursor: &mut Cursor,
+    head: u64,
+    chunk: u64,
+    chunks_per_tick: u64,
+) -> Result<Option<Tick>, ScanError> {
+    let Some(window) = next_window(cursor, head, chunk, chunks_per_tick) else {
+        return Ok(None);
+    };
+    let addr = address.to_checksum(None);
+    let topic0 = format!("{:#x}", BridgeOperation::SIGNATURE_HASH);
+    let mut ops = Vec::new();
+    let mut failures = 0usize;
+    for r in chunk_ranges(window, chunk) {
+        let logs = rpc
+            .call(
+                "eth_getLogs",
+                json!([{
+                    "address": addr,
+                    "topics": [topic0],
+                    "fromBlock": format!("0x{:x}", r.from),
+                    "toBlock": format!("0x{:x}", r.to),
+                }]),
+            )
+            .await
+            .map_err(|e| ScanError::Rpc(e.0))?;
+        let list = logs
+            .as_array()
+            .ok_or_else(|| ScanError::Rpc("eth_getLogs did not return a list".into()))?;
+        for l in list {
+            let from_treasury = l["address"]
+                .as_str()
+                .is_some_and(|a| a.eq_ignore_ascii_case(&addr));
+            if !from_treasury {
+                failures += 1;
+                continue;
+            }
+            match raw_log_from_rpc(l)
+                .map_err(|_| ())
+                .and_then(|raw| decode(&raw).map_err(|_| ()))
+            {
+                Ok(Some(op)) => ops.push(op),
+                Ok(None) => {}
+                Err(()) => failures += 1,
+            }
+        }
+    }
+    advance(cursor, window.to, failures);
+    if failures > 0 {
+        ops.clear();
+    }
+    Ok(Some(Tick {
+        window,
+        ops,
+        failures,
+    }))
 }
