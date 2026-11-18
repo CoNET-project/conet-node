@@ -29,6 +29,35 @@ fn arg_in(args: &[String], name: &str) -> Option<String> {
     let v = args.get(i + 1)?;
     (!v.starts_with("--")).then(|| v.clone())
 }
+/// The value flags this binary reads through `arg()`. `--allow-bind` is a switch (`flag()`).
+const VALUE_FLAGS: [&str; 11] = [
+    "--allow-uid",
+    "--anchor-node-id",
+    "--insecure-kek-file",
+    "--keystore",
+    "--pgp-key",
+    "--quota-config",
+    "--quota-state",
+    "--socket",
+    "--topup-config",
+    "--topup-state",
+    "--verifying-contract",
+];
+
+/// True when a value is present and usable: not missing, not another flag, not blank.
+fn has_value(v: Option<&String>) -> bool {
+    v.is_some_and(|v| !v.starts_with("--") && !v.trim().is_empty())
+}
+
+/// The first value flag that appears without a usable value. Returns the flag name only.
+fn valueless_flag(args: &[String]) -> Option<&'static str> {
+    VALUE_FLAGS.iter().copied().find(|f| {
+        args.iter()
+            .enumerate()
+            .any(|(i, a)| a == f && !has_value(args.get(i + 1)))
+    })
+}
+
 fn flag(name: &str) -> bool {
     std::env::args().any(|a| a == name)
 }
@@ -38,6 +67,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    // Fail closed: a value flag given without a usable value stops the start. Nothing falls back
+    // to a default or to "not configured". Only the flag name is printed, never a value.
+    let argv: Vec<String> = std::env::args().collect();
+    if let Some(flag) = valueless_flag(&argv) {
+        return Err(format!("{flag} is given without a value; refusing to start").into());
+    }
     let kek_path = arg("--insecure-kek-file").map(PathBuf::from);
     if kek_path.is_some() {
         eprintln!("WARNING: --insecure-kek-file is for tests only; production uses systemd-creds");
@@ -178,7 +213,7 @@ fn set_mode(path: &std::path::Path, mode: u32) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod arg_tests {
-    use super::arg_in;
+    use super::{arg_in, valueless_flag, VALUE_FLAGS};
 
     /// Every value flag this binary reads through `arg()`. `--allow-bind` is a switch (`flag()`).
     const FLAGS: [&str; 11] = [
@@ -256,5 +291,98 @@ mod arg_tests {
             arg_in(&argv(&["bin", "--quota-state", ""]), "--quota-state"),
             Some(String::new())
         );
+    }
+
+    #[test]
+    fn the_value_list_is_the_one_arg_reads() {
+        assert_eq!(VALUE_FLAGS, FLAGS);
+    }
+
+    #[test]
+    fn every_value_flag_without_a_value_refuses_to_start() {
+        // (argv tail after the flag, why) -- each must return that flag's name.
+        for f in FLAGS {
+            // last in argv
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "serve", f])),
+                Some(f),
+                "{f} at end"
+            );
+            // followed by another flag
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "serve", f, "--socket", "/run/s.sock"])),
+                Some(f),
+                "{f} then flag"
+            );
+            // empty string
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "serve", f, ""])),
+                Some(f),
+                "{f} empty"
+            );
+            // whitespace only
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "serve", f, "   "])),
+                Some(f),
+                "{f} blank"
+            );
+            // a tab/newline-only value is blank too
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "serve", f, "\t\n"])),
+                Some(f),
+                "{f} tab"
+            );
+        }
+    }
+
+    #[test]
+    fn every_value_flag_with_a_usable_value_starts() {
+        for f in FLAGS {
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "serve", f, "v1"])),
+                None,
+                "{f}"
+            );
+            // a single-dash value is a value
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "serve", f, "-1"])),
+                None,
+                "{f} -1"
+            );
+        }
+    }
+
+    #[test]
+    fn an_absent_value_flag_is_unchanged_and_starts() {
+        // The flag not appearing at all: no refusal, and arg() still reports it as absent.
+        for f in FLAGS {
+            let a = argv(&["bin", "serve", "--other", "x"]);
+            assert_eq!(valueless_flag(&a), None, "{f} absent");
+            assert_eq!(arg_in(&a, f), None, "{f} absent");
+        }
+    }
+
+    #[test]
+    fn a_switch_without_a_value_is_not_refused() {
+        // --allow-bind is a switch read through flag(); it takes no value.
+        assert_eq!(
+            valueless_flag(&argv(&["bin", "serve", "--allow-bind"])),
+            None
+        );
+    }
+
+    #[test]
+    fn the_refusal_names_the_flag_and_nothing_else() {
+        // Only the static flag name comes back, so no configured value can appear in the message.
+        let secret = "SECRET-PATH-XYZ";
+        let got = valueless_flag(&argv(&[
+            "bin",
+            "serve",
+            "--keystore",
+            secret,
+            "--quota-state",
+        ]));
+        assert_eq!(got, Some("--quota-state"));
+        assert!(!got.unwrap().contains(secret));
     }
 }
