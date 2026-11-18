@@ -10,15 +10,111 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// Values of flag `name`: the token after each occurrence. A flag with no value never takes the
+/// next flag (`--…`) as its value; that is what an empty `${VAR}` expanded by systemd looks like.
 fn args(name: &str) -> Vec<String> {
     let a: Vec<String> = std::env::args().collect();
+    values_in(&a, name)
+}
+fn values_in(a: &[String], name: &str) -> Vec<String> {
     a.windows(2)
-        .filter(|w| w[0] == name)
+        .filter(|w| w[0] == name && !w[1].starts_with("--"))
         .map(|w| w[1].clone())
         .collect()
 }
 fn arg(name: &str) -> Option<String> {
     args(name).into_iter().next()
+}
+
+#[cfg(test)]
+mod arg_tests {
+    use super::values_in;
+
+    /// Every flag `main` reads through `arg()` or `args()`.
+    const FLAGS: [&str; 11] = [
+        "--health-url",
+        "--key",
+        "--manifest",
+        "--manifest-url",
+        "--node-id",
+        "--out",
+        "--restart-cmd",
+        "--root",
+        "--target",
+        "--threshold",
+        "--trusted-key",
+    ];
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+    fn first(a: &[String], name: &str) -> Option<String> {
+        values_in(a, name).into_iter().next()
+    }
+
+    #[test]
+    fn every_flag_takes_a_normal_value() {
+        for f in FLAGS {
+            assert_eq!(first(&argv(&["bin", f, "v1"]), f), Some("v1".into()), "{f}");
+        }
+    }
+
+    #[test]
+    fn every_flag_missing_from_argv_is_none() {
+        for f in FLAGS {
+            assert_eq!(first(&argv(&["bin", "--other", "x"]), f), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn every_flag_at_the_end_has_no_value() {
+        for f in FLAGS {
+            assert_eq!(first(&argv(&["bin", "--other", "x", f]), f), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn every_flag_followed_by_a_flag_takes_no_value_and_the_next_flag_still_parses() {
+        for f in FLAGS {
+            let next = if f == "--root" { "--target" } else { "--root" };
+            let a = argv(&["bin", f, next, "/opt/x"]);
+            assert_eq!(first(&a, f), None, "{f} took the next flag");
+            assert_eq!(first(&a, next), Some("/opt/x".into()), "{next} after {f}");
+        }
+    }
+
+    #[test]
+    fn a_single_dash_value_is_kept() {
+        assert_eq!(
+            first(&argv(&["bin", "--threshold", "-1"]), "--threshold"),
+            Some("-1".into())
+        );
+    }
+
+    #[test]
+    fn an_empty_value_is_kept_for_the_caller_to_judge() {
+        assert_eq!(
+            first(&argv(&["bin", "--restart-cmd", ""]), "--restart-cmd"),
+            Some(String::new())
+        );
+    }
+
+    #[test]
+    fn repeated_flags_yield_every_valid_value_in_order() {
+        let a = argv(&[
+            "bin",
+            "--trusted-key",
+            "k1",
+            "--trusted-key",
+            "--root",
+            "--trusted-key",
+            "k2",
+        ]);
+        assert_eq!(
+            values_in(&a, "--trusted-key"),
+            vec!["k1".to_string(), "k2".to_string()]
+        );
+    }
 }
 
 /// Release public keys and threshold are compiled into this binary (security §3.2): a candidate
