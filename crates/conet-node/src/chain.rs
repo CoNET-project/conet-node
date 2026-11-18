@@ -56,8 +56,11 @@ pub struct Rpc {
 
 impl Rpc {
     pub fn new(url: &str) -> Result<Self, ChainError> {
+        // Redirects are never followed: a 3xx would send the read to a host the operator did not
+        // configure. A non-2xx answer is an error, never read as a result.
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(ce)?;
         Ok(Self {
@@ -68,16 +71,18 @@ impl Rpc {
 
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, ChainError> {
         let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
-        let v: Value = self
+        let resp = self
             .http
             .post(&self.url)
             .json(&body)
             .send()
             .await
-            .map_err(ce)?
-            .json()
-            .await
             .map_err(ce)?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(ChainError(format!("rpc HTTP {}", status.as_u16())));
+        }
+        let v: Value = resp.json().await.map_err(ce)?;
         if let Some(e) = v.get("error") {
             return Err(ChainError(e.to_string()));
         }
