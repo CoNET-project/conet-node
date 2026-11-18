@@ -73,6 +73,16 @@ the line only suggested a state file that was never used.
 These are templates. Node addresses, accounts and key locations of real servers do not belong in
 this repository.
 
+## conet-register (operator tool, not a deployment unit)
+
+`conet-register` prints NodeRegistryV2 registration data for operators. It is run by hand and never
+sends a transaction, so no unit file starts it. Its required flags are `--ip`, `--tcp-port`,
+`--udp-port` (request and reserved-bind) and `--node-type` (request). None of them defaults any
+more. `--node-type` used to default to 1 (TCP), and the ports used to default to 0. Scripts that
+omit these flags now fail on purpose. This is a deliberate strictness: a registration must state
+its address, ports and node type. `--nonce` and `--deadline` keep bounded defaults (current time,
+and now+3600).
+
 ## Node security rules (project AGENTS.md, 2026-11-08)
 
 Every project node follows the repository root `AGENTS.md`. How the conet-node installation

@@ -3,11 +3,14 @@
 //!
 //! ```text
 //! conet-register request  --registry A --operator A --beneficiary A --node-wallet A --ip IP
-//!                         --tcp-port N [--udp-port N] --pgp-public FILE --services N
-//!                         --sponsor ID [--node-type 1] [--nonce N] [--deadline UNIX]
+//!                         --tcp-port N --udp-port N --pgp-public FILE --services N
+//!                         --sponsor ID --node-type N [--nonce N] [--deadline UNIX]
 //! conet-register register-for --request FILE --operator-sig HEX --node-sig HEX
-//! conet-register reserved-bind --legacy-id N --operator A --ip IP [--udp-port N] --node-wallet A
+//! conet-register reserved-bind --legacy-id N --operator A --ip IP --udp-port N --node-wallet A
 //!                         --pgp-public FILE --services N --bind-nonce N [--deadline UNIX]
+//! Required, no defaults: --ip, --tcp-port, --udp-port and --node-type (--node-type no longer
+//! defaults to 1). Old scripts that omit them fail on purpose. --nonce and --deadline keep their
+//! bounded defaults (current time; now+3600).
 //! conet-register reserved --(same as reserved-bind) --bind-sig HEX
 //! conet-register egress-policy --node-id N (--policy FILE | --clear)
 //! ```
