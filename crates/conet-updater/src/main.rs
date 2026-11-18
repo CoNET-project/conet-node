@@ -26,6 +26,35 @@ fn arg(name: &str) -> Option<String> {
     args(name).into_iter().next()
 }
 
+/// The value flags of this binary, including the repeated ones read through `args()`.
+const VALUE_FLAGS: [&str; 11] = [
+    "--health-url",
+    "--key",
+    "--manifest",
+    "--manifest-url",
+    "--node-id",
+    "--out",
+    "--restart-cmd",
+    "--root",
+    "--target",
+    "--threshold",
+    "--trusted-key",
+];
+
+/// True when a value is present and usable: not missing, not another flag, not blank.
+fn has_value(v: Option<&String>) -> bool {
+    v.is_some_and(|v| !v.starts_with("--") && !v.trim().is_empty())
+}
+
+/// The first value flag that appears without a usable value. Returns the flag name only.
+fn valueless_flag(args: &[String]) -> Option<&'static str> {
+    VALUE_FLAGS.iter().copied().find(|f| {
+        args.iter()
+            .enumerate()
+            .any(|(i, a)| a == f && !has_value(args.get(i + 1)))
+    })
+}
+
 /// Release public keys and threshold are compiled into this binary (security §3.2): a candidate
 /// release cannot bring its own keys, and changing keys takes a release signed by the old ones.
 /// Build with CONET_RELEASE_KEYS="hex,hex,..." CONET_RELEASE_THRESHOLD=k. Without them, `run`
@@ -110,6 +139,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let a: Vec<String> = std::env::args().collect();
+    // Fail closed: a value flag given without a usable value stops the start. Nothing falls back
+    // to a default. Only the flag name is printed, never a value.
+    if let Some(flag) = valueless_flag(&a) {
+        return Err(format!("{flag} is given without a value; refusing to start").into());
+    }
     match (a.get(1).map(String::as_str), a.get(2).map(String::as_str)) {
         (Some("run"), _) => {
             let (keys, threshold) = compiled_keys();
@@ -292,5 +326,71 @@ mod arg_tests {
             values_in(&a, "--trusted-key"),
             vec!["k1".to_string(), "k2".to_string()]
         );
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::{valueless_flag, VALUE_FLAGS};
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_value_flag_without_a_value_refuses_to_start() {
+        for f in VALUE_FLAGS {
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "run", f])),
+                Some(f),
+                "{f} at end"
+            );
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "run", f, "--root", "/opt/x"])),
+                Some(f),
+                "{f} then flag"
+            );
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "run", f, ""])),
+                Some(f),
+                "{f} empty"
+            );
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "run", f, "  \t"])),
+                Some(f),
+                "{f} blank"
+            );
+        }
+    }
+
+    #[test]
+    fn every_value_flag_with_a_usable_value_starts() {
+        for f in VALUE_FLAGS {
+            assert_eq!(valueless_flag(&argv(&["bin", "run", f, "v1"])), None, "{f}");
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "run", f, "-1"])),
+                None,
+                "{f} -1"
+            );
+        }
+    }
+
+    #[test]
+    fn an_absent_flag_still_starts() {
+        for f in VALUE_FLAGS {
+            assert_eq!(
+                valueless_flag(&argv(&["bin", "run", "--other", "x"])),
+                None,
+                "{f}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_refusal_names_the_flag_and_no_value() {
+        let secret = "https://secret.example/manifest.json";
+        let got = valueless_flag(&argv(&["bin", "run", "--manifest-url", secret, "--target"]));
+        assert_eq!(got, Some("--target"));
+        assert!(!got.unwrap().contains(secret));
     }
 }
