@@ -32,6 +32,17 @@ const EXCERPT_SHA256 = 'd674732159bca51f4e894d9f6185d5ac3bb96c0d4f037c0f6ef64672
   if (at < 0) throw new Error('excerpt marker missing');
   const h = crypto.createHash('sha256').update(txt.slice(at + EXCERPT_MARKER.length)).digest('hex');
   if (h !== EXCERPT_SHA256) throw new Error('excerpt sha256 ' + h + ', expected ' + EXCERPT_SHA256);
+  // The header must state the same digest, so the two cannot drift apart.
+  if (!txt.slice(0, at).includes(EXCERPT_SHA256)) throw new Error('excerpt header does not state the pinned sha256');
+  // The two validatorMining expressions the generator re-types must appear verbatim as whole lines
+  // (normal form, leading tab as in the TS source).
+  const lines = txt.slice(at + EXCERPT_MARKER.length).split('\n');
+  for (const want of [
+    '\tconst message = {epoch: validatorData.epoch.toString(), wallet}',
+    '\tconst nodeWallet = ethers.verifyMessage(JSON.stringify(message), validatorData.hash).toLowerCase()',
+  ]) {
+    if (!lines.includes(want)) throw new Error('excerpt is missing the expression line: ' + want);
+  }
 }
 const gitBlob = (buf) =>
   crypto.createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${buf.length}\0`), buf])).digest('hex');
