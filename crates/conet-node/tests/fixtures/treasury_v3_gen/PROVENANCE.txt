@@ -19,3 +19,14 @@ Offline boundary:
 - The 444579d regeneration was reproduced with `npm ci --offline` (dependencies from the local npm
   cache), with the script asserting ethers 6.17.0. The lockfile was also checked offline with
   `npm ls --package-lock-only --all`.
+
+isMiner fixture (tests/fixtures/treasury_v3_isminer.json):
+- Generator: gen-isminer-fixtures.mjs in this directory. It reads treasuryV3Listen.ts (blob
+  014febd8b30b8a64bc5397a6d3ae7dc4055f7c9e, checked), finds the ABI line
+  `function isMiner(address account) view returns (bool)` exactly once, and encodes and decodes with
+  ethers 6.17.0 from package-lock.json.
+- Scope: calldata and return-data decoding and the strict bool rule only. No vote is built and no
+  signer is involved. The treasury deployment address is not verified here; the Rust test uses an
+  address only as a stub argument.
+- Reproduce with `npm ci --offline` in this directory, then
+  `node --no-warnings gen-isminer-fixtures.mjs --out <path>`.

@@ -29,6 +29,7 @@ pub mod store;
 pub mod term_watch;
 pub mod tls;
 pub mod treasury_v3;
+pub mod treasury_v3_miner;
 pub mod voice;
 pub mod vote_book;
 pub mod vote_gate;

@@ -1,0 +1,88 @@
+{
+  "schema": "treasury-v3-isminer/1",
+  "source": {
+    "repo": "CoNET-SI",
+    "commit": "215afb185dcf0884cbf7f187833308e09ce284fd",
+    "file": "src/vote/treasuryV3Listen.ts",
+    "blob": "014febd8b30b8a64bc5397a6d3ae7dc4055f7c9e",
+    "abiLine": "function isMiner(address account) view returns (bool)",
+    "ethers": "6.17.0",
+    "generator": "tests/fixtures/treasury_v3_gen/gen-isminer-fixtures.mjs"
+  },
+  "selector": "0x701b70ac",
+  "calls": [
+    {
+      "name": "lower_case",
+      "account": "0x1111111111111111111111111111111111111111",
+      "calldata": "0x701b70ac0000000000000000000000001111111111111111111111111111111111111111"
+    },
+    {
+      "name": "checksummed",
+      "account": "0xabCDeF0123456789AbcdEf0123456789aBCDEF01",
+      "calldata": "0x701b70ac000000000000000000000000abcdef0123456789abcdef0123456789abcdef01"
+    },
+    {
+      "name": "zero_address",
+      "account": "0x0000000000000000000000000000000000000000",
+      "calldata": "0x701b70ac0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "returns": [
+    {
+      "name": "true",
+      "data": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "expect": {
+        "value": true
+      }
+    },
+    {
+      "name": "false",
+      "data": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "expect": {
+        "value": false
+      }
+    },
+    {
+      "name": "empty",
+      "data": "0x",
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "name": "short_31_bytes",
+      "data": "0x00000000000000000000000000000000000000000000000000000000000001",
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "name": "long_33_bytes",
+      "data": "0x000000000000000000000000000000000000000000000000000000000000000100",
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "name": "value_two",
+      "data": "0x0000000000000000000000000000000000000000000000000000000000000002",
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "name": "high_bit_set",
+      "data": "0x0100000000000000000000000000000000000000000000000000000000000000",
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "name": "all_ones",
+      "data": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "expect": {
+        "error": true
+      }
+    }
+  ]
+}
