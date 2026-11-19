@@ -43,6 +43,9 @@ pub async fn serve(answer: Answer) -> String {
                 let result = answer(req["method"].as_str().unwrap(), &req["params"]);
                 let out = match result.get("__rpc_error") {
                     Some(e) => json!({ "jsonrpc": "2.0", "id": 1, "error": e }),
+                    None if result.get("__omit_result").and_then(Value::as_bool) == Some(true) => {
+                        json!({ "jsonrpc": "2.0", "id": 1 })
+                    }
                     None => json!({ "jsonrpc": "2.0", "id": 1, "result": result }),
                 }
                 .to_string();

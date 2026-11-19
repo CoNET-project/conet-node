@@ -286,6 +286,21 @@ async fn a_bad_log_holds_the_cursor_and_the_same_window_is_fetched_again() {
 }
 
 #[tokio::test]
+async fn an_empty_get_logs_result_is_explicit_no_records_and_advances_the_cursor() {
+    let n = node(vec![]).await;
+    let rpc = Rpc::new(&n.url).unwrap();
+    let head = DEPLOY + 10;
+    let mut cursor = start_cursor(None, DEPLOY, head);
+    let tick = scan_tick(&rpc, treasury(), &mut cursor, head, 400, 4)
+        .await
+        .unwrap()
+        .expect("a window was queried");
+    assert_eq!(tick.failures, 0);
+    assert!(tick.ops.is_empty());
+    assert!(cursor.last_processed >= DEPLOY);
+}
+
+#[tokio::test]
 async fn an_rpc_error_leaves_the_cursor_unchanged_and_the_retry_delivers_everything() {
     let (logs, expected) = logs_from_fixture(false);
     let n = node(logs).await;

@@ -15,7 +15,7 @@
 //! (1414-1419), the isUser pool branch (1421-1437), the refusal of any epoch behind CurrentEpoch
 //! (1438-1441), and the validatorMinerPool.set and response (1443-1445). See
 //! `tests/fixtures/epoch_readonly_gen/PROVENANCE.txt`.
-use crate::chain::{ChainError, Rpc};
+use crate::chain::{parse_rpc_data, ChainError, Rpc};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{sol, SolCall};
 use serde_json::json;
@@ -90,8 +90,8 @@ pub async fn read_restart_block(rpc: &Rpc) -> Result<Option<U256>, ChainError> {
     let code = rpc
         .call("eth_getCode", json!([NODE_RESTART_ADDR, "latest"]))
         .await?;
-    let code = code.as_str().unwrap_or("0x");
-    if code == "0x" || code.is_empty() {
+    let code = parse_rpc_data(&code, "eth_getCode")?;
+    if code.is_empty() {
         return Ok(None);
     }
     let raw = rpc

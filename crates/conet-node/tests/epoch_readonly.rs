@@ -85,7 +85,7 @@ fn a_short_or_garbage_return_is_an_error_not_a_default() {
 
 /// Loopback node: `eth_getCode` answers `code` for the restart contract, and `eth_call` answers the
 /// fixture return data per target address. Records every method called.
-async fn epoch_node(code: &'static str, calls: Arc<Mutex<Vec<String>>>) -> String {
+async fn epoch_node(code: Value, calls: Arc<Mutex<Vec<String>>>) -> String {
     let fx = fixture();
     let info = fx["currentInfo"][0]["returndata"]
         .as_str()
@@ -103,7 +103,7 @@ async fn epoch_node(code: &'static str, calls: Arc<Mutex<Vec<String>>>) -> Strin
                     params[0].as_str().unwrap().to_ascii_lowercase(),
                     NODE_RESTART_ADDR
                 );
-                json!(code)
+                code.clone()
             }
             "eth_call" => {
                 let to = params[0]["to"].as_str().unwrap().to_ascii_lowercase();
@@ -124,7 +124,7 @@ async fn epoch_node(code: &'static str, calls: Arc<Mutex<Vec<String>>>) -> Strin
 #[tokio::test]
 async fn reads_current_info_from_the_epoch_contract_only() {
     let calls = Arc::new(Mutex::new(vec![]));
-    let url = epoch_node("0x6080", calls.clone()).await;
+    let url = epoch_node(json!("0x6080"), calls.clone()).await;
     let rpc = Rpc::new(&url).unwrap();
     let fx = fixture();
     let want = &fx["currentInfo"][0]["expect"];
@@ -137,7 +137,7 @@ async fn reads_current_info_from_the_epoch_contract_only() {
 #[tokio::test]
 async fn restart_block_is_none_when_the_contract_has_no_code() {
     let calls = Arc::new(Mutex::new(vec![]));
-    let url = epoch_node("0x", calls.clone()).await;
+    let url = epoch_node(json!("0x"), calls.clone()).await;
     let rpc = Rpc::new(&url).unwrap();
     assert_eq!(read_restart_block(&rpc).await.unwrap(), None);
     // TS returns before reading restartBlockNumber when there is no code.
@@ -147,13 +147,38 @@ async fn restart_block_is_none_when_the_contract_has_no_code() {
 #[tokio::test]
 async fn restart_block_is_read_when_the_contract_has_code() {
     let calls = Arc::new(Mutex::new(vec![]));
-    let url = epoch_node("0x6080", calls.clone()).await;
+    let url = epoch_node(json!("0x6080"), calls.clone()).await;
     let rpc = Rpc::new(&url).unwrap();
     let fx = fixture();
     let want = u(fx["restartBlockNumber"][1]["expect"]["restartBlockNumber"]
         .as_str()
         .unwrap());
     assert_eq!(read_restart_block(&rpc).await.unwrap(), Some(want));
+}
+
+#[tokio::test]
+async fn malformed_or_missing_get_code_results_are_errors_not_no_contract() {
+    for code in [
+        json!(null),
+        json!(false),
+        json!(0),
+        json!({}),
+        json!([]),
+        json!("0x0g"),
+    ] {
+        let calls = Arc::new(Mutex::new(vec![]));
+        let url = epoch_node(code.clone(), calls).await;
+        let rpc = Rpc::new(&url).unwrap();
+        assert!(
+            read_restart_block(&rpc).await.is_err(),
+            "code result={code}"
+        );
+    }
+
+    let calls = Arc::new(Mutex::new(vec![]));
+    let url = epoch_node(json!({ "__omit_result": true }), calls).await;
+    let rpc = Rpc::new(&url).unwrap();
+    assert!(read_restart_block(&rpc).await.is_err());
 }
 
 #[test]

@@ -138,24 +138,93 @@ async fn wallet_rpc(
     Arc<AtomicUsize>,
     Arc<Mutex<Vec<String>>>,
 ) {
+    wallet_rpc_values(json!(code), json!(answer), delay).await
+}
+
+async fn wallet_rpc_values(
+    code: Value,
+    answer: Value,
+    delay: Duration,
+) -> (
+    conet_node::chain::Rpc,
+    Arc<AtomicUsize>,
+    Arc<Mutex<Vec<String>>>,
+) {
     let calls = Arc::new(AtomicUsize::new(0));
     let gas = Arc::new(Mutex::new(vec![]));
     let (c, g) = (calls.clone(), gas.clone());
-    let (code, answer) = (code.to_string(), answer.to_string());
     let url = common::serve(Arc::new(move |m: &str, p: &Value| match m {
-        "eth_getCode" => json!(code),
+        "eth_getCode" => code.clone(),
         "eth_call" => {
             c.fetch_add(1, Ordering::SeqCst);
             g.lock()
                 .unwrap()
                 .push(p[0]["gas"].as_str().unwrap_or("").to_string());
             std::thread::sleep(delay);
-            json!(answer)
+            answer.clone()
         }
         m => panic!("unexpected {m}"),
     }))
     .await;
     (conet_node::chain::Rpc::new(&url).unwrap(), calls, gas)
+}
+
+#[tokio::test]
+async fn malformed_code_and_erc1271_results_remain_rpc_failures() {
+    let code = "0x6080604052";
+    let code_hash = alloy_primitives::keccak256(hexb(code));
+    let user = Address::repeat_byte(0xbe);
+    let policy = WalletPolicy {
+        accepted_code_hashes: vec![code_hash],
+        gas_cap: 150_000,
+        timeout: Duration::from_secs(2),
+    };
+    let d = B256::repeat_byte(7);
+    let sig = vec![1u8; 130];
+
+    let (rpc, _, _) = wallet_rpc_values(json!(null), json!(MAGIC), Duration::ZERO).await;
+    assert!(matches!(
+        verify_1271(&rpc, d, &sig, user, &policy).await,
+        Err(Refuse::WalletCallFailed(message)) if message.contains("eth_getCode")
+    ));
+
+    let (rpc, _, _) = wallet_rpc_values(
+        json!({ "__omit_result": true }),
+        json!(MAGIC),
+        Duration::ZERO,
+    )
+    .await;
+    assert!(matches!(
+        verify_1271(&rpc, d, &sig, user, &policy).await,
+        Err(Refuse::WalletCallFailed(message))
+            if message.contains("JSON-RPC response has neither result nor error")
+    ));
+
+    let (rpc, _, _) = wallet_rpc_values(json!(code), json!(null), Duration::ZERO).await;
+    assert!(matches!(
+        verify_1271(&rpc, d, &sig, user, &policy).await,
+        Err(Refuse::WalletCallFailed(message)) if message.contains("eth_call")
+    ));
+
+    let (rpc, _, _) = wallet_rpc_values(
+        json!(code),
+        json!({ "__omit_result": true }),
+        Duration::ZERO,
+    )
+    .await;
+    assert!(matches!(
+        verify_1271(&rpc, d, &sig, user, &policy).await,
+        Err(Refuse::WalletCallFailed(message))
+            if message.contains("JSON-RPC response has neither result nor error")
+    ));
+
+    let (rpc, _, _) = wallet_rpc_values(json!("0x"), json!(MAGIC), Duration::ZERO).await;
+    assert_eq!(
+        verify_1271(&rpc, d, &sig, user, &policy).await,
+        Err(Refuse::BadSignature(
+            "no code (undeployed wallets are refused)"
+        ))
+    );
 }
 
 /// Mock wallet chain whose `eth_call` never answers: the connection is held open without a
@@ -495,10 +564,11 @@ async fn settle_simulation_names_the_revert() {
     let url = common::serve(Arc::new(move |m: &str, p: &Value| {
         assert_eq!(m, "eth_call");
         s2.lock().unwrap().push(p[0].clone());
-        if m2.load(Ordering::SeqCst) == 0 {
-            json!({ "__rpc_error": { "code": 3, "message": "execution reverted", "data": revert_hex } })
-        } else {
-            json!(ok_hex)
+        match m2.load(Ordering::SeqCst) {
+            0 => json!({ "__rpc_error": { "code": 3, "message": "execution reverted", "data": revert_hex } }),
+            1 => json!(ok_hex),
+            2 => json!(null),
+            _ => json!({ "__omit_result": true }),
         }
     }))
     .await;
@@ -524,6 +594,17 @@ async fn settle_simulation_names_the_revert() {
         simulate_settle(&rpc, token, from, &o, &auth).await,
         Ok((U256::from(1_025_000u64), U256::from(500_000_000u64)))
     );
+    mode.store(2, Ordering::SeqCst);
+    assert!(matches!(
+        simulate_settle(&rpc, token, from, &o, &auth).await,
+        Err(Refuse::Simulated(message)) if message.contains("eth_call result is not a hex data string")
+    ));
+    mode.store(3, Ordering::SeqCst);
+    assert!(matches!(
+        simulate_settle(&rpc, token, from, &o, &auth).await,
+        Err(Refuse::Simulated(message))
+            if message.contains("JSON-RPC response has neither result nor error")
+    ));
     assert_eq!(draft::error_name(&[0xde, 0xad, 0xbe, 0xef]), None);
 }
 

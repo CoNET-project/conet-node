@@ -2,6 +2,7 @@
 //! `mailbox_listen`, `gossip_delivery_ack`, `wallet_online_query`, `wallet_native_wake_query`,
 //! `push_device_register`. Everything else is refused like SI's `default` branch, until its
 //! line lands (voice/UDP: line C; proxy, mining: decided per Q3).
+use crate::chain::ChainError;
 use crate::http;
 use crate::mailbox::{random_instance_id, sealed_frame, Listener, LISTEN_QUEUE};
 use crate::server::Conn;
@@ -16,6 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
+use tracing::warn;
 
 fn now() -> i64 {
     SystemTime::now()
@@ -46,14 +48,34 @@ async fn not_found(stream: &mut Conn) {
     let _ = stream.write_all(&http::not_found()).await;
 }
 
-async fn is_my_route(ctx: &NodeCtx, user: &str) -> bool {
+async fn is_my_route(ctx: &NodeCtx, user: &str) -> Result<bool, ChainError> {
     match &ctx.user_routes {
-        Some(r) => r
-            .is_my_route(user, &ctx.wallet.address())
-            .await
-            .unwrap_or(false),
-        None => false,
+        Some(r) => r.is_my_route(user, &ctx.wallet.address()).await,
+        None => Ok(false),
     }
+}
+
+async fn route_status(stream: &mut Conn, ctx: &NodeCtx, user: &str) -> Option<bool> {
+    match is_my_route(ctx, user).await {
+        Ok(owned) => Some(owned),
+        Err(e) => {
+            warn!(%e, "route ownership lookup unavailable");
+            let _ = stream
+                .write_all(&http::service_unavailable(
+                    r#"{"ok":false,"error":"route_lookup_unavailable"}"#,
+                ))
+                .await;
+            None
+        }
+    }
+}
+
+async fn lookup_unavailable(stream: &mut Conn) {
+    let _ = stream
+        .write_all(&http::service_unavailable(
+            r#"{"ok":false,"error":"route_lookup_unavailable"}"#,
+        ))
+        .await;
 }
 
 pub async fn dispatch(
@@ -90,11 +112,21 @@ async fn delivery_ack(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
     if !eth::is_address(&wallet) || !hash_ok || !fresh(&c["timestamp"]) {
         return not_found(stream).await;
     }
-    if !is_my_route(ctx, &wallet).await {
+    let Some(is_route) = route_status(stream, ctx, &wallet).await else {
+        return;
+    };
+    if !is_route {
         return reply(stream, json!({ "ok": false, "error": "not_my_route" })).await;
     }
     let key = match &ctx.user_routes {
-        Some(r) => r.user_key_of_wallet(&wallet).await.ok().flatten(),
+        Some(r) => match r.user_key_of_wallet(&wallet).await {
+            Ok(key) => key,
+            Err(e) => {
+                warn!(%e, "wallet PGP key lookup unavailable");
+                lookup_unavailable(stream).await;
+                return;
+            }
+        },
         None => None,
     };
     let Some(key) = key else {
@@ -128,7 +160,10 @@ async fn online_query(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
         )
         .await;
     }
-    if !is_my_route(ctx, &target).await {
+    let Some(is_route) = route_status(stream, ctx, &target).await else {
+        return;
+    };
+    if !is_route {
         return reply(
             stream,
             json!({ "ok": false, "error": "not_my_route", "wallet": target, "online": false }),
@@ -175,7 +210,10 @@ async fn native_wake_query(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
         .await;
     }
     let target = target.to_lowercase();
-    if !is_my_route(ctx, &target).await {
+    let Some(is_route) = route_status(stream, ctx, &target).await else {
+        return;
+    };
+    if !is_route {
         return reply(stream, json!({ "ok": false, "error": "not_my_route", "wallet": target, "nativeWakeable": false })).await;
     }
     match ctx.push.native_wakeable(&target).await {
@@ -204,7 +242,10 @@ async fn push_device_register(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
         )
         .await;
     }
-    if !is_my_route(ctx, eoa).await {
+    let Some(is_route) = route_status(stream, ctx, eoa).await else {
+        return;
+    };
+    if !is_route {
         return reply(stream, json!({ "ok": false, "error": "not_my_route" })).await;
     }
     let pgp = s(c, "pgpKeyId");
@@ -252,7 +293,14 @@ async fn mailbox_listen(mut stream: Conn, peer: SocketAddr, c: Value, ctx: Arc<N
         .map(str::to_string)
         .unwrap_or_else(random_instance_id);
     let user_key = match &ctx.user_routes {
-        Some(r) => r.user_key_of_wallet(&wallet).await.ok().flatten(),
+        Some(r) => match r.user_key_of_wallet(&wallet).await {
+            Ok(user_key) => user_key,
+            Err(e) => {
+                warn!(%e, "wallet PGP key lookup unavailable");
+                lookup_unavailable(&mut stream).await;
+                return;
+            }
+        },
         None => None,
     };
     let epoch = ctx.chain.block.load(Ordering::Relaxed);

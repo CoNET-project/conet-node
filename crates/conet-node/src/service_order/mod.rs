@@ -9,7 +9,7 @@
 //! time, and the ordered precheck. Every draft field, view and error name is in [`draft`].
 pub mod draft;
 
-use crate::chain::{ChainError, Rpc};
+use crate::chain::{parse_rpc_data, ChainError, Rpc};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{Eip712Domain, SolCall};
 use draft::{FreeClosedMode, ReceiptView, SettlementConfig, SettlementOrder, Source};
@@ -212,7 +212,7 @@ pub async fn verify_1271(
         .call("eth_getCode", serde_json::json!([user, "latest"]))
         .await
         .map_err(|e| Refuse::WalletCallFailed(e.0))?;
-    let code = hex::decode(code.as_str().unwrap_or("0x").trim_start_matches("0x"))
+    let code = parse_rpc_data(&code, "eth_getCode")
         .map_err(|e| Refuse::WalletCallFailed(e.to_string()))?;
     if code.is_empty() {
         return Err(Refuse::BadSignature(
@@ -240,8 +240,8 @@ pub async fn verify_1271(
         .await
         .map_err(|_| Refuse::WalletCallFailed("timeout".into()))?
         .map_err(|e| Refuse::WalletCallFailed(e.0))?;
-    let raw = hex::decode(v.as_str().unwrap_or("0x").trim_start_matches("0x"))
-        .map_err(|e| Refuse::WalletCallFailed(e.to_string()))?;
+    let raw =
+        parse_rpc_data(&v, "eth_call").map_err(|e| Refuse::WalletCallFailed(e.to_string()))?;
     if raw.len() >= 4 && raw[..4] == ERC1271_MAGIC {
         Ok(())
     } else {
@@ -497,8 +497,8 @@ pub async fn simulate_settle(
         .await;
     match r {
         Ok(v) => {
-            let raw = hex::decode(v.as_str().unwrap_or("0x").trim_start_matches("0x"))
-                .map_err(|e| Refuse::Simulated(e.to_string()))?;
+            let raw =
+                parse_rpc_data(&v, "eth_call").map_err(|e| Refuse::Simulated(e.to_string()))?;
             let out = draft::IThirdPartyStableLedger::settleCall::abi_decode_returns(&raw)
                 .map_err(|e| Refuse::Simulated(e.to_string()))?;
             Ok((out.userPaid, out.gbSent))

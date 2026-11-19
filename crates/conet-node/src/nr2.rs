@@ -6,11 +6,11 @@
 //! - [`Nr2Reader`]: single reads (own node id, egress policy pointer).
 //!
 //! Nothing here sends a transaction. Calls never set `from`.
-use crate::chain::{BoxFut, ChainError, ChainNode, NodeSource, Rpc, TableSnapshot};
+use crate::chain::{checked_u64, BoxFut, ChainError, ChainNode, NodeSource, Rpc, TableSnapshot};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use serde_json::json;
+use serde_json::{json, Value};
 use si_proto::node_registry as nr;
 use std::sync::Mutex;
 
@@ -65,6 +65,8 @@ pub enum RowSkip {
     Inactive,
     /// Malformed: IP not canonical, PGP not decodable, or key ID not the key's first subkey.
     Bad(&'static str),
+    /// The ABI returned a node ID that cannot be represented by the forwarding API.
+    InvalidNodeId,
 }
 
 /// One `NodeView` row → a forwarding entry. Pure, so the rules are unit-tested.
@@ -88,8 +90,10 @@ pub fn node_row(v: &NodeRegistryLens::NodeView) -> Result<ChainNode, RowSkip> {
     if !key_id.eq_ignore_ascii_case(&hex::encode(v.keyId)) {
         return Err(RowSkip::Bad("key_id"));
     }
+    let id =
+        checked_u64(v.nodeId, "NodeRegistryV2 row node id").map_err(|_| RowSkip::InvalidNodeId)?;
     Ok(ChainNode {
-        id: v.nodeId.try_into().unwrap_or(u64::MAX),
+        id,
         key_id: key_id.to_uppercase(),
         ip: ip.to_string(),
         pgp_armored: armored,
@@ -101,7 +105,9 @@ pub fn node_row(v: &NodeRegistryLens::NodeView) -> Result<ChainNode, RowSkip> {
 }
 
 /// Rows of one table read, sorted into the forwarding set and the counters.
-pub fn sort_rows(rows: &[NodeRegistryLens::NodeView]) -> (Vec<ChainNode>, usize, usize) {
+pub fn sort_rows(
+    rows: &[NodeRegistryLens::NodeView],
+) -> Result<(Vec<ChainNode>, usize, usize), ChainError> {
     let (mut nodes, mut rejected, mut skipped) = (vec![], 0, 0);
     let mut seen = std::collections::HashSet::new();
     for r in rows {
@@ -114,11 +120,14 @@ pub fn sort_rows(rows: &[NodeRegistryLens::NodeView]) -> (Vec<ChainNode>, usize,
                     rejected += 1;
                 }
             }
+            Err(RowSkip::InvalidNodeId) => {
+                return Err(ChainError("NodeRegistryV2 row node id exceeds u64".into()));
+            }
             Err(RowSkip::Bad(_)) => rejected += 1,
             Err(_) => skipped += 1,
         }
     }
-    (nodes, rejected, skipped)
+    Ok((nodes, rejected, skipped))
 }
 
 #[derive(Clone)]
@@ -157,7 +166,7 @@ impl Nr2Reader {
                 None,
             )
             .await?;
-        Ok(id.try_into().unwrap_or(0))
+        checked_u64(id, "NodeRegistryV2 node id")
     }
 
     /// `(cid bytes, version, updatedAt)`; empty cid = no policy.
@@ -227,8 +236,15 @@ impl Nr2Source {
                 }]),
             )
             .await?;
-        Ok(v.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+        has_log_events(&v)
     }
+}
+
+fn has_log_events(v: &Value) -> Result<bool, ChainError> {
+    let logs = v
+        .as_array()
+        .ok_or_else(|| ChainError("eth_getLogs result is not an array".into()))?;
+    Ok(!logs.is_empty())
 }
 
 impl NodeSource for Nr2Source {
@@ -277,11 +293,11 @@ impl NodeSource for Nr2Source {
                 if *first_version.get_or_insert(r.version) != r.version {
                     return Err(ChainError("tableVersion moved during the read".into()));
                 }
-                let total: u64 = r.total.try_into().unwrap_or(u64::MAX);
+                let total = checked_u64(r.total, "NodeRegistryV2 total")?;
                 start += r.out.len() as u64;
                 rows.extend(r.out);
                 if start >= total || rows.is_empty() {
-                    let (nodes, rejected, _skipped) = sort_rows(&rows);
+                    let (nodes, rejected, _skipped) = sort_rows(&rows)?;
                     let s = self.scan.lock().expect("scan");
                     return Ok(TableSnapshot {
                         version: format!("{}/{}", first_version.unwrap_or_default(), s.changes),
@@ -302,6 +318,27 @@ mod tests {
     use super::*;
     use alloy_primitives::FixedBytes;
     use alloy_sol_types::SolStruct;
+
+    #[test]
+    fn node_id_conversion_preserves_explicit_zero_and_rejects_overflow() {
+        assert_eq!(checked_u64(U256::ZERO, "id").unwrap(), 0);
+        assert_eq!(checked_u64(U256::from(7), "id").unwrap(), 7);
+        assert!(checked_u64(U256::MAX, "id").is_err());
+    }
+
+    #[test]
+    fn get_logs_requires_an_array_and_keeps_empty_array_as_no_events() {
+        assert!(!has_log_events(&serde_json::json!([])).unwrap());
+        assert!(has_log_events(&serde_json::json!([{}])).unwrap());
+        for malformed in [
+            serde_json::json!(null),
+            serde_json::json!(false),
+            serde_json::json!(0),
+            serde_json::json!({}),
+        ] {
+            assert!(has_log_events(&malformed).is_err(), "{malformed}");
+        }
+    }
 
     fn golden() -> serde_json::Value {
         let p = concat!(
@@ -388,8 +425,13 @@ mod tests {
             v.nodeType = nr::TYPE_MOBILE;
             v
         }];
-        let (nodes, rejected, skipped) = sort_rows(&rows);
+        let (nodes, rejected, skipped) = sort_rows(&rows).unwrap();
         assert_eq!((nodes.len(), rejected, skipped), (1, 1, 1));
+
+        let mut overflow = view(armored, kid);
+        overflow.nodeId = U256::MAX;
+        assert_eq!(node_row(&overflow), Err(RowSkip::InvalidNodeId));
+        assert!(sort_rows(&[overflow]).is_err());
     }
 
     #[test]

@@ -144,6 +144,16 @@ pub fn ok_200(body: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// A temporary upstream lookup failure; never represent it as an empty or absent result.
+pub fn service_unavailable(body: &str) -> Vec<u8> {
+    format!(
+        "HTTP/1.1 503 Service Unavailable\r\nServer: nginx/1.18.0\r\nDate: {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n{CORS}\r\n{body}",
+        date(),
+        body.len()
+    )
+    .into_bytes()
+}
+
 /// SI `distorySocket`: an nginx-looking 404 page.
 pub fn not_found() -> Vec<u8> {
     let header = "404 Not Found";

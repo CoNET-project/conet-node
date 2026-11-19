@@ -92,6 +92,11 @@ impl NodeCtx {
 
     /// Cached route, else ask AddressPGP once (negative answers cached briefly).
     pub async fn resolve(&self, key_id: &str) -> Resolved {
+        self.resolve_with_timeout(key_id, Duration::from_secs(5))
+            .await
+    }
+
+    async fn resolve_with_timeout(&self, key_id: &str, timeout: Duration) -> Resolved {
         let r = self.routes.resolve(key_id);
         if r != Resolved::NoRoute || self.routes.recently_unknown(key_id) {
             return r;
@@ -99,17 +104,63 @@ impl NodeCtx {
         let Some(ur) = &self.user_routes else {
             return r;
         };
-        match tokio::time::timeout(Duration::from_secs(5), ur.routes_of_user_key(key_id)).await {
-            Ok(Ok(Some(route))) => {
-                self.routes.set_user_routes(key_id, route);
-                self.routes.resolve(key_id)
+        match resolve_user_route(&self.routes, ur.as_ref(), key_id, timeout).await {
+            Ok(route) => route,
+            Err(LookupFailure::Rpc(e)) => {
+                warn!(%e, "route lookup failed");
+                Resolved::LookupUnavailable
             }
-            Ok(Ok(None)) => {
-                self.routes.mark_unknown(key_id);
-                Resolved::NoRoute
+            Err(LookupFailure::Timeout) => {
+                warn!(key_id, "route lookup timed out");
+                Resolved::LookupUnavailable
             }
-            _ => Resolved::NoRoute,
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LookupFailure {
+    Rpc(String),
+    Timeout,
+}
+
+async fn lookup_user_routes(
+    routes: &dyn UserRoutes,
+    key_id: &str,
+    timeout: Duration,
+) -> Result<Option<crate::route::UserRoute>, LookupFailure> {
+    match tokio::time::timeout(timeout, routes.routes_of_user_key(key_id)).await {
+        Ok(Ok(route)) => Ok(route),
+        Ok(Err(e)) => Err(LookupFailure::Rpc(e.to_string())),
+        Err(_) => Err(LookupFailure::Timeout),
+    }
+}
+
+async fn resolve_user_route(
+    table: &RouteTable,
+    source: &dyn UserRoutes,
+    key_id: &str,
+    timeout: Duration,
+) -> Result<Resolved, LookupFailure> {
+    match lookup_user_routes(source, key_id, timeout).await? {
+        Some(route) => {
+            table.set_user_routes(key_id, route);
+            Ok(table.resolve(key_id))
+        }
+        None => {
+            table.mark_unknown(key_id);
+            Ok(Resolved::NoRoute)
+        }
+    }
+}
+
+fn route_error_response(resolved: &Resolved) -> Option<Vec<u8>> {
+    match resolved {
+        Resolved::NoRoute => Some(http::ok_200(r#"{"ok":false,"error":"no_route"}"#)),
+        Resolved::LookupUnavailable => Some(http::service_unavailable(
+            r#"{"ok":false,"error":"route_lookup_unavailable"}"#,
+        )),
+        _ => None,
     }
 }
 
@@ -208,65 +259,68 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
             armor,
             no_push,
             hops,
-        } => match ctx.resolve(&key_id).await {
-            Resolved::Plan(plan) => {
-                crate::deliver::deliver(stream, plan, key_id, armor, no_push, hops, ctx).await;
+        } => {
+            let resolved = ctx.resolve(&key_id).await;
+            if let Some(response) = route_error_response(&resolved) {
+                let _ = stream.write_all(&response).await;
+                return;
             }
-            Resolved::NoRoute => {
-                let _ = stream
-                    .write_all(&http::ok_200(r#"{"ok":false,"error":"no_route"}"#))
-                    .await;
-            }
-            Resolved::Local => {
-                let hop_bytes = Node::verified_hop_bytes(&hops, now_secs());
-                ctx.mailbox.deliver(
-                    &key_id,
-                    Stored {
-                        armor,
-                        no_push,
-                        hop_bytes,
-                        hops: hops.len(),
-                    },
-                );
-                let _ = stream.write_all(&http::ok_200("")).await;
-            }
-            Resolved::Remote(addr) => {
-                // The wallet may be the signer client (blocking socket call): keep it off I/O threads.
-                let c = ctx.clone();
-                let (k, a, h) = (key_id.clone(), armor.clone(), hops);
-                let header = tokio::task::spawn_blocking(move || {
-                    let node = Node {
-                        route: LocalRoute {
-                            key: &*c.decryptor,
-                            key_id: &c.key_id,
-                            old_key_ids: &c.old_key_ids,
+            match resolved {
+                Resolved::Plan(plan) => {
+                    crate::deliver::deliver(stream, plan, key_id, armor, no_push, hops, ctx).await;
+                }
+                Resolved::Local => {
+                    let hop_bytes = Node::verified_hop_bytes(&hops, now_secs());
+                    ctx.mailbox.deliver(
+                        &key_id,
+                        Stored {
+                            armor,
+                            no_push,
+                            hop_bytes,
+                            hops: hops.len(),
                         },
-                        wallet: &*c.wallet,
-                        write_keys: WriteKeys::new(),
-                    };
-                    node.forward_header(&h, &k, &a, now_secs())
-                })
-                .await
-                .unwrap_or(Err("join"));
-                match header {
-                    Ok(header) => {
-                        forward(
-                            stream,
-                            addr,
-                            &header,
-                            &armor,
-                            &req.leftover,
-                            ctx.connect_timeout,
-                        )
-                        .await
-                    }
-                    Err(reason) => {
-                        debug!(reason, "forward refused");
-                        let _ = stream.shutdown().await;
+                    );
+                    let _ = stream.write_all(&http::ok_200("")).await;
+                }
+                Resolved::Remote(addr) => {
+                    // The wallet may be the signer client (blocking socket call): keep it off I/O threads.
+                    let c = ctx.clone();
+                    let (k, a, h) = (key_id.clone(), armor.clone(), hops);
+                    let header = tokio::task::spawn_blocking(move || {
+                        let node = Node {
+                            route: LocalRoute {
+                                key: &*c.decryptor,
+                                key_id: &c.key_id,
+                                old_key_ids: &c.old_key_ids,
+                            },
+                            wallet: &*c.wallet,
+                            write_keys: WriteKeys::new(),
+                        };
+                        node.forward_header(&h, &k, &a, now_secs())
+                    })
+                    .await
+                    .unwrap_or(Err("join"));
+                    match header {
+                        Ok(header) => {
+                            forward(
+                                stream,
+                                addr,
+                                &header,
+                                &armor,
+                                &req.leftover,
+                                ctx.connect_timeout,
+                            )
+                            .await
+                        }
+                        Err(reason) => {
+                            debug!(reason, "forward refused");
+                            let _ = stream.shutdown().await;
+                        }
                     }
                 }
+                Resolved::NoRoute | Resolved::LookupUnavailable => unreachable!("handled above"),
             }
-        },
+        }
         Step::Command {
             command, signed, ..
         } => crate::commands::dispatch(stream, peer, command, signed, ctx).await,
@@ -341,5 +395,259 @@ pub async fn serve_health(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::
             };
             let _ = s.write_all(&body).await;
         });
+    }
+}
+
+#[cfg(test)]
+mod rpc_state_tests {
+    use super::*;
+    use crate::chain::BoxFut;
+    use crate::route::UserRoute;
+
+    #[derive(Clone, Copy)]
+    enum Reply {
+        Missing,
+        Error,
+        Wait,
+        Route,
+    }
+
+    struct Routes(Reply);
+
+    impl UserRoutes for Routes {
+        fn route_of_user_key<'a>(
+            &'a self,
+            _: &'a str,
+        ) -> BoxFut<'a, Result<Option<String>, crate::chain::ChainError>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn routes_of_user_key<'a>(
+            &'a self,
+            _: &'a str,
+        ) -> BoxFut<'a, Result<Option<UserRoute>, crate::chain::ChainError>> {
+            Box::pin(async move {
+                match self.0 {
+                    Reply::Missing => Ok(None),
+                    Reply::Route => Ok(Some(UserRoute::single("node"))),
+                    Reply::Error => Err(crate::chain::ChainError("rpc unavailable".into())),
+                    Reply::Wait => {
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        Ok(None)
+                    }
+                }
+            })
+        }
+
+        fn user_key_of_wallet<'a>(
+            &'a self,
+            _: &'a str,
+        ) -> BoxFut<'a, Result<Option<String>, crate::chain::ChainError>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn wallet_of_user_key<'a>(
+            &'a self,
+            _: &'a str,
+        ) -> BoxFut<'a, Result<Option<String>, crate::chain::ChainError>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn is_my_route<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a str,
+        ) -> BoxFut<'a, Result<bool, crate::chain::ChainError>> {
+            Box::pin(async { Ok(false) })
+        }
+    }
+
+    struct TestDeps;
+    impl RouteDecryptor for TestDeps {
+        fn decrypt(&self, _: &str) -> si_crypto::Result<Vec<u8>> {
+            panic!("not called by route resolution tests")
+        }
+    }
+    impl WalletSigner for TestDeps {
+        fn address(&self) -> String {
+            "0x0000000000000000000000000000000000000001".into()
+        }
+        fn sign_message(&self, _: &str) -> si_crypto::Result<String> {
+            panic!("not called by route resolution tests")
+        }
+    }
+    impl NodeNotices for TestDeps {
+        fn sign_epoch(&self, _: u64) -> si_crypto::Result<String> {
+            panic!("not called by route resolution tests")
+        }
+        fn sign_offline_chat(&self, _: &str, _: &str, _: u64) -> si_crypto::Result<String> {
+            panic!("not called by route resolution tests")
+        }
+        fn sign_native_wakeable(&self, _: &str, _: u64) -> si_crypto::Result<String> {
+            panic!("not called by route resolution tests")
+        }
+        fn sign_voice_call_push(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: i64,
+            _: i64,
+        ) -> si_crypto::Result<String> {
+            panic!("not called by route resolution tests")
+        }
+        fn sign_webrtc_endpoint(
+            &self,
+            _: &str,
+            _: &str,
+            _: u16,
+            _: &str,
+            _: i64,
+        ) -> si_crypto::Result<String> {
+            panic!("not called by route resolution tests")
+        }
+        fn sign_acme_dns01(&self, _: &str, _: &str, _: &str, _: i64) -> si_crypto::Result<String> {
+            panic!("not called by route resolution tests")
+        }
+    }
+
+    fn context(routes: Reply) -> NodeCtx {
+        let table = Arc::new(RouteTable::new("self", Duration::from_secs(60)));
+        table.replace_nodes([("node".into(), "127.0.0.1:9100".parse().unwrap())]);
+        let deps = Arc::new(TestDeps);
+        let mut ctx = NodeCtx::new(
+            "self".into(),
+            deps.clone(),
+            deps.clone(),
+            deps,
+            table,
+            Arc::new(crate::store::MemoryStore::default()),
+        );
+        ctx.user_routes = Some(Arc::new(Routes(routes)));
+        ctx
+    }
+
+    #[tokio::test]
+    async fn route_lookup_failure_is_not_cached_and_explicit_missing_is_cached() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct ErrorThenMissing(AtomicUsize);
+        impl UserRoutes for ErrorThenMissing {
+            fn route_of_user_key<'a>(
+                &'a self,
+                _: &'a str,
+            ) -> BoxFut<'a, Result<Option<String>, crate::chain::ChainError>> {
+                Box::pin(async { Ok(None) })
+            }
+
+            fn routes_of_user_key<'a>(
+                &'a self,
+                _: &'a str,
+            ) -> BoxFut<'a, Result<Option<UserRoute>, crate::chain::ChainError>> {
+                Box::pin(async move {
+                    if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                        Err(crate::chain::ChainError("rpc unavailable".into()))
+                    } else {
+                        Ok(None)
+                    }
+                })
+            }
+
+            fn user_key_of_wallet<'a>(
+                &'a self,
+                _: &'a str,
+            ) -> BoxFut<'a, Result<Option<String>, crate::chain::ChainError>> {
+                Box::pin(async { Ok(None) })
+            }
+
+            fn wallet_of_user_key<'a>(
+                &'a self,
+                _: &'a str,
+            ) -> BoxFut<'a, Result<Option<String>, crate::chain::ChainError>> {
+                Box::pin(async { Ok(None) })
+            }
+
+            fn is_my_route<'a>(
+                &'a self,
+                _: &'a str,
+                _: &'a str,
+            ) -> BoxFut<'a, Result<bool, crate::chain::ChainError>> {
+                Box::pin(async { Ok(false) })
+            }
+        }
+
+        let table = RouteTable::new("own", Duration::from_secs(60));
+        let source = ErrorThenMissing(AtomicUsize::new(0));
+        assert_eq!(
+            resolve_user_route(&table, &source, "key", Duration::from_secs(1)).await,
+            Err(LookupFailure::Rpc("chain: rpc unavailable".into()))
+        );
+        assert!(!table.recently_unknown("key"));
+        assert_eq!(
+            resolve_user_route(&table, &source, "key", Duration::from_secs(1)).await,
+            Ok(Resolved::NoRoute)
+        );
+        assert_eq!(source.0.load(Ordering::SeqCst), 2);
+        assert!(table.recently_unknown("key"));
+
+        assert_eq!(
+            lookup_user_routes(&Routes(Reply::Missing), "key", Duration::from_secs(1)).await,
+            Ok(None)
+        );
+        assert_eq!(
+            lookup_user_routes(&Routes(Reply::Error), "key", Duration::from_secs(1)).await,
+            Err(LookupFailure::Rpc("chain: rpc unavailable".into()))
+        );
+        assert_eq!(
+            lookup_user_routes(&Routes(Reply::Wait), "key", Duration::from_millis(1)).await,
+            Err(LookupFailure::Timeout)
+        );
+        let failed_table = RouteTable::new("own", Duration::from_secs(60));
+        assert!(matches!(
+            resolve_user_route(
+                &failed_table,
+                &Routes(Reply::Wait),
+                "timeout-key",
+                Duration::from_millis(1)
+            )
+            .await,
+            Err(LookupFailure::Timeout)
+        ));
+        assert!(!failed_table.recently_unknown("timeout-key"));
+    }
+
+    #[tokio::test]
+    async fn node_ctx_route_outcome_and_post_status_keep_three_states() {
+        let valid = context(Reply::Route);
+        assert_eq!(
+            valid
+                .resolve_with_timeout("user", Duration::from_secs(1))
+                .await,
+            Resolved::Remote("127.0.0.1:9100".parse().unwrap())
+        );
+
+        let missing = context(Reply::Missing);
+        assert_eq!(
+            missing
+                .resolve_with_timeout("absent", Duration::from_secs(1))
+                .await,
+            Resolved::NoRoute
+        );
+        assert!(missing.routes.recently_unknown("absent"));
+        let missing_response = route_error_response(&Resolved::NoRoute).unwrap();
+        assert!(String::from_utf8_lossy(&missing_response).starts_with("HTTP/1.1 200 OK"));
+
+        for source in [Reply::Error, Reply::Wait] {
+            let ctx = context(source);
+            let outcome = ctx
+                .resolve_with_timeout("uncertain", Duration::from_millis(1))
+                .await;
+            assert_eq!(outcome, Resolved::LookupUnavailable);
+            assert!(!ctx.routes.recently_unknown("uncertain"));
+            let response = route_error_response(&outcome).unwrap();
+            assert!(
+                String::from_utf8_lossy(&response).starts_with("HTTP/1.1 503 Service Unavailable")
+            );
+        }
     }
 }

@@ -4,6 +4,7 @@
 //! listen bound to this relay's route key. Chunks are opaque blobs plus a 16-byte locator; the
 //! relay checks the write-key MAC and forwards them. It never decrypts media, never stores it,
 //! and never pushes it.
+use crate::chain::ChainError;
 use crate::server::{Conn, NodeCtx};
 use crate::store::Stored;
 use crate::{http, route::Resolved};
@@ -16,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
+use tracing::warn;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -369,22 +371,35 @@ pub async fn offer_store(mut stream: Conn, c: Value, ctx: Arc<NodeCtx>) {
             .map(|mut k| k.remove(0));
         if let Some(key) = key {
             // Delivered only when the callee's mailbox is this node; stored without a chat push.
-            if ctx.resolve(&key).await == Resolved::Local {
-                ctx.mailbox.deliver(
-                    &key,
-                    Stored {
-                        armor: armor.clone(),
-                        no_push: true,
-                        hop_bytes: 0,
-                        hops: 0,
-                    },
-                );
-                out.insert("delivered".into(), json!(true));
+            match ctx.resolve(&key).await {
+                Resolved::Local => {
+                    ctx.mailbox.deliver(
+                        &key,
+                        Stored {
+                            armor: armor.clone(),
+                            no_push: true,
+                            hop_bytes: 0,
+                            hops: 0,
+                        },
+                    );
+                    out.insert("delivered".into(), json!(true));
+                }
+                Resolved::LookupUnavailable => {
+                    out.insert("deliveryError".into(), json!("route_lookup_unavailable"));
+                }
+                _ => {}
             }
-            if si_proto::js_number(c.get("push")) == Some(1.0)
-                && push_call(&c, &cid, &sid, &key, now, &ctx).await
-            {
-                out.insert("pushed".into(), json!(true));
+            if si_proto::js_number(c.get("push")) == Some(1.0) {
+                match push_call(&c, &cid, &sid, &key, now, &ctx).await {
+                    Ok(true) => {
+                        out.insert("pushed".into(), json!(true));
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        warn!(%e, "voice callee wallet lookup unavailable");
+                        out.insert("pushError".into(), json!("route_lookup_unavailable"));
+                    }
+                }
             }
         }
     }
@@ -399,24 +414,26 @@ async fn push_call(
     key: &str,
     now: i64,
     ctx: &NodeCtx,
-) -> bool {
+) -> Result<bool, ChainError> {
     let Some(expires_at) = c.get("expiresAt").and_then(Value::as_f64) else {
-        return false;
+        return Ok(false);
     };
     if expires_at <= now as f64 || expires_at > (now + 10 * 60_000) as f64 {
-        return false;
+        return Ok(false);
     }
     let Some(ts) = si_proto::js_number(c.get("pushTimestamp")) else {
-        return false;
+        return Ok(false);
     };
     if (now.div_euclid(1000) as f64 - ts).abs() > 600.0 {
-        return false;
+        return Ok(false);
     }
     let Some(ur) = &ctx.user_routes else {
-        return false;
+        return Ok(false);
     };
-    let Ok(Some(callee)) = ur.wallet_of_user_key(key).await else {
-        return false;
+    let callee = match ur.wallet_of_user_key(key).await {
+        Ok(Some(callee)) => callee,
+        Ok(None) => return Ok(false),
+        Err(e) => return Err(e),
     };
     ctx.push.voice_call(crate::push::VoiceCall {
         call_id: call_id.into(),
@@ -425,7 +442,7 @@ async fn push_call(
         expires_at: expires_at as i64,
         timestamp: ts as i64,
     });
-    true
+    Ok(true)
 }
 
 /// SI `handleVoiceOfferFetch`.

@@ -2,8 +2,7 @@
 //! `src/vote/treasuryV3Listen.ts`: the event decode (`parseBridgeOperation`), the scan window
 //! planning (`runChain` / `tick` / `getLogsChunked`) and the cursor state file (`loadState` /
 //! `saveState`). No RPC calls and no votes here: the vote is a separate, later step.
-use crate::chain::Rpc;
-use alloy_primitives::hex;
+use crate::chain::{checked_u64, parse_rpc_data, parse_rpc_quantity, Rpc};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolEvent};
 use serde_json::{json, Value};
@@ -308,21 +307,29 @@ pub fn raw_log_from_rpc(v: &Value) -> Result<RawLog, &'static str> {
         .ok_or("topics")?
         .iter()
         .map(|t| {
-            t.as_str()
-                .and_then(|s| s.parse::<B256>().ok())
-                .ok_or("topics")
+            let bytes = parse_rpc_data(t, "eth_getLogs topic").map_err(|_| "topics")?;
+            if bytes.len() != 32 {
+                return Err("topics");
+            }
+            Ok(B256::from_slice(&bytes))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let data = hex::decode(v["data"].as_str().ok_or("data")?.trim_start_matches("0x"))
-        .map_err(|_| "data")?;
-    let transaction_hash = v["transactionHash"]
-        .as_str()
-        .and_then(|s| s.parse::<B256>().ok())
-        .ok_or("transactionHash")?;
-    let block_number = v["blockNumber"]
-        .as_str()
-        .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-        .ok_or("blockNumber")?;
+    if topics.first() != Some(&BridgeOperation::SIGNATURE_HASH) {
+        return Err("topics");
+    }
+    let data = parse_rpc_data(&v["data"], "eth_getLogs data").map_err(|_| "data")?;
+    let hash = parse_rpc_data(&v["transactionHash"], "eth_getLogs transactionHash")
+        .map_err(|_| "transactionHash")?;
+    if hash.len() != 32 {
+        return Err("transactionHash");
+    }
+    let transaction_hash = B256::from_slice(&hash);
+    let block_number = checked_u64(
+        parse_rpc_quantity(&v["blockNumber"], "eth_getLogs blockNumber")
+            .map_err(|_| "blockNumber")?,
+        "eth_getLogs blockNumber",
+    )
+    .map_err(|_| "blockNumber")?;
     Ok(RawLog {
         topics,
         data,

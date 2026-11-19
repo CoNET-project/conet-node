@@ -84,24 +84,58 @@ impl Rpc {
             // A JSON-RPC error object keeps its message (revert data is read from it), the same as
             // on a 200. Any other non-2xx body is not echoed: only the HTTP code is reported.
             if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
-                if let Some(e) = v.get("error") {
-                    return Err(ChainError(e.to_string()));
+                if let Some(response) = v.as_object() {
+                    if response.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+                        && response.get("id").and_then(Value::as_i64) == Some(1)
+                        && !response.contains_key("result")
+                    {
+                        if let Some(e) = response.get("error") {
+                            if valid_rpc_error(e) {
+                                return Err(ChainError(e.to_string()));
+                            }
+                        }
+                    }
                 }
             }
             return Err(ChainError(format!("rpc HTTP {}", status.as_u16())));
         }
         let v: Value = serde_json::from_slice(&bytes).map_err(ce)?;
-        if let Some(e) = v.get("error") {
-            return Err(ChainError(e.to_string()));
+        let response = v
+            .as_object()
+            .ok_or_else(|| ChainError("JSON-RPC response is not an object".into()))?;
+        if response.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+            return Err(ChainError(
+                "JSON-RPC response has invalid jsonrpc version".into(),
+            ));
         }
-        v.get("result")
-            .cloned()
-            .ok_or_else(|| ChainError("no result".into()))
+        if response.get("id").and_then(Value::as_i64) != Some(1) {
+            return Err(ChainError(
+                "JSON-RPC response id does not match request".into(),
+            ));
+        }
+        match (response.get("result"), response.get("error")) {
+            (Some(result), None) => Ok(result.clone()),
+            (None, Some(error)) => {
+                if !valid_rpc_error(error) {
+                    return Err(ChainError("JSON-RPC error has invalid shape".into()));
+                }
+                Err(ChainError(error.to_string()))
+            }
+            (Some(_), Some(_)) => Err(ChainError(
+                "JSON-RPC response contains both result and error".into(),
+            )),
+            (None, None) => Err(ChainError(
+                "JSON-RPC response has neither result nor error".into(),
+            )),
+        }
     }
 
     pub async fn block_number(&self) -> Result<u64, ChainError> {
         let v = self.call("eth_blockNumber", json!([])).await?;
-        u64::from_str_radix(v.as_str().unwrap_or("0x0").trim_start_matches("0x"), 16).map_err(ce)
+        checked_u64(
+            parse_rpc_quantity(&v, "eth_blockNumber")?,
+            "eth_blockNumber",
+        )
     }
 
     /// `eth_call` without `from`. `block` = None means latest.
@@ -120,7 +154,7 @@ impl Rpc {
                 json!([{ "to": to, "data": format!("0x{}", hex::encode(data)) }, tag]),
             )
             .await?;
-        hex::decode(v.as_str().unwrap_or("0x").trim_start_matches("0x")).map_err(ce)
+        parse_rpc_data(&v, "eth_call")
     }
 
     /// Contract storage root at a block (any write changes it).
@@ -128,11 +162,71 @@ impl Rpc {
         let v = self
             .call("eth_getProof", json!([addr, [], format!("0x{block:x}")]))
             .await?;
-        v.get("storageHash")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| ChainError("no storageHash".into()))
+        let hash = v
+            .get("storageHash")
+            .ok_or_else(|| ChainError("no storageHash".into()))?;
+        let bytes = parse_rpc_data(hash, "eth_getProof.storageHash")?;
+        if bytes.len() != 32 {
+            return Err(ChainError(
+                "eth_getProof.storageHash is not 32 bytes".into(),
+            ));
+        }
+        Ok(format!("0x{}", hex::encode(bytes)))
     }
+}
+
+fn valid_rpc_error(error: &Value) -> bool {
+    error.as_object().is_some_and(|e| {
+        e.get("code").and_then(Value::as_i64).is_some()
+            && e.get("message").and_then(Value::as_str).is_some()
+    })
+}
+
+/// Decode an Ethereum JSON-RPC Quantity. Missing, non-string, unprefixed, empty, non-hex, and
+/// non-canonical leading-zero values are errors; a valid `0x0` remains a real zero.
+pub(crate) fn parse_rpc_quantity(v: &Value, method: &str) -> Result<U256, ChainError> {
+    let s = v
+        .as_str()
+        .ok_or_else(|| ChainError(format!("{method} result is not a hex quantity string")))?;
+    let digits = s
+        .strip_prefix("0x")
+        .ok_or_else(|| ChainError(format!("{method} result is not 0x-prefixed")))?;
+    if digits.is_empty()
+        || (digits.len() > 1 && digits.starts_with('0'))
+        || !digits.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(ChainError(format!(
+            "{method} result is not a canonical hex quantity"
+        )));
+    }
+    U256::from_str_radix(digits, 16).map_err(ce)
+}
+
+pub(crate) fn checked_u64(value: U256, field: &str) -> Result<u64, ChainError> {
+    u64::try_from(value).map_err(|_| ChainError(format!("{field} exceeds u64")))
+}
+
+/// Decode Ethereum JSON-RPC DATA. `0x` is a valid empty byte string (for example, no contract
+/// code); a missing or non-string result is an error and must not be treated as empty data.
+pub(crate) fn parse_rpc_data(v: &Value, method: &str) -> Result<Vec<u8>, ChainError> {
+    let s = v
+        .as_str()
+        .ok_or_else(|| ChainError(format!("{method} result is not a hex data string")))?;
+    let digits = s
+        .strip_prefix("0x")
+        .ok_or_else(|| ChainError(format!("{method} result is not 0x-prefixed")))?;
+    hex::decode(digits).map_err(ce)
+}
+
+// AddressPGP.sol::getRouteKeyIDByUserPgpKeyID uses `require(user != address(0), "user not found")`.
+// Only its exact ABI Error(string) data proves a missing user; provider prose is not evidence.
+const ADDRESS_PGP_UNKNOWN_USER_REVERT_DATA: &str = "0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e75736572206e6f7420666f756e64000000000000000000000000000000000000";
+
+fn address_pgp_unknown_user_revert(error: &ChainError) -> bool {
+    serde_json::from_str::<Value>(&error.0)
+        .ok()
+        .and_then(|value| value.get("data").and_then(Value::as_str).map(str::to_owned))
+        .is_some_and(|data| data.eq_ignore_ascii_case(ADDRESS_PGP_UNKNOWN_USER_REVERT_DATA))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -270,7 +364,7 @@ impl NodeSource for GuardianV6 {
                 }
                 start += rows.len() as u64;
                 for r in rows {
-                    let id: u64 = r.id.try_into().unwrap_or(u64::MAX);
+                    let id = checked_u64(r.id, "GuardianNodesInfoV6 node id")?;
                     if !seen.insert(r.ip_addr.trim().to_ascii_lowercase()) {
                         continue;
                     }
@@ -363,7 +457,7 @@ impl UserRoutes for AddressPgp {
                 .await
             {
                 Ok(r) => Ok(Some(r.to_uppercase()).filter(|s| !s.is_empty())),
-                Err(e) if e.0.contains("execution reverted") => Ok(None),
+                Err(e) if address_pgp_unknown_user_revert(&e) => Ok(None),
                 Err(e) => Err(e),
             }
         })
@@ -413,6 +507,67 @@ impl UserRoutes for AddressPgp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rpc_quantity_requires_a_typed_canonical_value_and_preserves_zero() {
+        assert_eq!(
+            parse_rpc_quantity(&json!("0x0"), "eth_blockNumber").unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            parse_rpc_quantity(&json!("0x2a"), "eth_blockNumber").unwrap(),
+            U256::from(42)
+        );
+        for malformed in [
+            json!(null),
+            json!(false),
+            json!(0),
+            json!({}),
+            json!([]),
+            json!("0x"),
+            json!("2a"),
+            json!("0x00"),
+            json!("0xgg"),
+        ] {
+            assert!(
+                parse_rpc_quantity(&malformed, "eth_blockNumber").is_err(),
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
+    fn u64_conversion_keeps_zero_and_rejects_overflow() {
+        assert_eq!(checked_u64(U256::ZERO, "id").unwrap(), 0);
+        assert_eq!(checked_u64(U256::from(u64::MAX), "id").unwrap(), u64::MAX);
+        assert!(checked_u64(U256::from(u64::MAX) + U256::from(1), "id").is_err());
+    }
+
+    #[test]
+    fn rpc_data_distinguishes_empty_data_from_malformed_results() {
+        assert_eq!(
+            parse_rpc_data(&json!("0x"), "eth_call").unwrap(),
+            Vec::<u8>::new()
+        );
+        assert_eq!(
+            parse_rpc_data(&json!("0x6080"), "eth_getCode").unwrap(),
+            vec![0x60, 0x80]
+        );
+        for malformed in [
+            json!(null),
+            json!(false),
+            json!(0),
+            json!({}),
+            json!([]),
+            json!("6080"),
+            json!("0x0g"),
+        ] {
+            assert!(
+                parse_rpc_data(&malformed, "eth_call").is_err(),
+                "{malformed}"
+            );
+        }
+    }
 
     #[test]
     fn node_compatible_base64() {

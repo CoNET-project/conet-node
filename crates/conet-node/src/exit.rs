@@ -10,7 +10,7 @@
 //! - On top of those compiled rules: the provider's policy file and the layered limits
 //!   (`egress.rs`, Q66); the exit closes to new connections while the policy differs from the
 //!   chain pointer.
-use crate::chain::{BoxFut, Rpc};
+use crate::chain::{BoxFut, ChainError, Rpc};
 use crate::http;
 use crate::server::{Conn, NodeCtx};
 use alloy_primitives::{Address, U256};
@@ -23,7 +23,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tracing::debug;
+use tracing::{debug, warn};
+
+fn ce<E: std::fmt::Display>(error: E) -> ChainError {
+    ChainError(error.to_string())
+}
 
 // ---------------------------------------------------------------- target policy
 
@@ -200,7 +204,7 @@ pub const PASSPORT_CONTRACTS: [&str; 2] = [
 ];
 
 pub trait Passport: Send + Sync {
-    fn is_paid<'a>(&'a self, wallet: &'a str) -> BoxFut<'a, bool>;
+    fn is_paid<'a>(&'a self, wallet: &'a str) -> BoxFut<'a, Result<bool, ChainError>>;
 }
 
 /// SI `_checkNFT`: an NFT id and `expires` (seconds) not in the past.
@@ -224,7 +228,7 @@ impl ChainPassport {
 }
 
 impl Passport for ChainPassport {
-    fn is_paid<'a>(&'a self, wallet: &'a str) -> BoxFut<'a, bool> {
+    fn is_paid<'a>(&'a self, wallet: &'a str) -> BoxFut<'a, Result<bool, ChainError>> {
         Box::pin(async move {
             let w = wallet.to_lowercase();
             if self
@@ -235,35 +239,45 @@ impl Passport for ChainPassport {
                 .map(|t| t.elapsed() < Duration::from_secs(1800))
                 .unwrap_or(false)
             {
-                return true;
+                return Ok(true);
             }
             let Ok(to) = w.parse::<Address>() else {
-                return false;
+                return Ok(false);
             };
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+                .map_err(ce)?
+                .as_secs();
+            let mut failure = None;
             for c in PASSPORT_CONTRACTS {
-                let Ok(raw) = self
+                let raw = match self
                     .rpc
                     .eth_call(c, getCurrentPassportCall { to }.abi_encode(), None)
                     .await
-                else {
-                    continue;
+                {
+                    Ok(raw) => raw,
+                    Err(e) => {
+                        failure = Some(e);
+                        continue;
+                    }
                 };
-                if let Ok(r) = getCurrentPassportCall::abi_decode_returns(&raw) {
-                    if passport_valid(r._0, r._1, now) {
+                match getCurrentPassportCall::abi_decode_returns(&raw) {
+                    Ok(r) if passport_valid(r._0, r._1, now) => {
                         let mut cache = self.cache.lock().expect("passport");
                         if cache.len() > 100_000 {
                             cache.clear();
                         }
                         cache.insert(w, Instant::now());
-                        return true;
+                        return Ok(true);
                     }
+                    Ok(_) => {}
+                    Err(e) => failure = Some(ce(e)),
                 }
             }
-            false
+            match failure {
+                Some(error) => Err(error),
+                None => Ok(false),
+            }
         })
     }
 }
@@ -409,10 +423,23 @@ pub async fn handle(mut stream: Conn, command: Value, ctx: Arc<NodeCtx>) {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_lowercase();
-    if !exit.passport.is_paid(&wallet).await {
-        let _ = stream.write_all(&http::payment_required()).await;
-        let _ = stream.shutdown().await;
-        return;
+    match exit.passport.is_paid(&wallet).await {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = stream.write_all(&http::payment_required()).await;
+            let _ = stream.shutdown().await;
+            return;
+        }
+        Err(e) => {
+            warn!(%e, "passport status unavailable");
+            let _ = stream
+                .write_all(&http::service_unavailable(
+                    r#"{"ok":false,"error":"payment_status_unavailable"}"#,
+                ))
+                .await;
+            let _ = stream.shutdown().await;
+            return;
+        }
     }
     let Some((host, port, buffer)) = request_target(&command) else {
         let _ = stream.write_all(&http::not_found()).await;

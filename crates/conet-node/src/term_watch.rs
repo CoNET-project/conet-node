@@ -12,7 +12,7 @@
 //! - renewed (read-time or written): the next end;
 //! - ended without renewal (stakeStop, or read-time not in term): the stop, the latest full
 //!   amount to top up to, and the recovery precheck (`VoteReader::recovery_view`).
-use crate::chain::{ChainError, Rpc};
+use crate::chain::{checked_u64, parse_rpc_quantity, ChainError, Rpc};
 use crate::nr2::{NodeRegistryV2, Nr2Reader};
 use crate::stake_term::{advise, renewal_precheck, Advice, Reminders, Renewal, TermView};
 use alloy_primitives::U256;
@@ -134,16 +134,16 @@ pub async fn read(r: &Nr2Reader, node_id: u64) -> Result<TermReads, ChainError> 
         .rpc
         .call("eth_getBlockByNumber", serde_json::json!(["latest", false]))
         .await?;
-    let hex = |k: &str| -> Result<u64, ChainError> {
-        u64::from_str_radix(
-            b[k].as_str()
-                .ok_or_else(|| ce(format!("block {k}")))?
-                .trim_start_matches("0x"),
-            16,
+    let quantity = |k: &str| -> Result<u64, ChainError> {
+        let raw = b
+            .get(k)
+            .ok_or_else(|| ce(format!("eth_getBlockByNumber missing {k}")))?;
+        checked_u64(
+            parse_rpc_quantity(raw, &format!("eth_getBlockByNumber.{k}"))?,
+            k,
         )
-        .map_err(ce)
     };
-    let (block, now) = (Some(hex("number")?), hex("timestamp")?);
+    let (block, now) = (Some(quantity("number")?), quantity("timestamp")?);
     let id = U256::from(node_id);
     let reg = r.registry.as_str();
     let t = r
@@ -165,7 +165,7 @@ pub async fn read(r: &Nr2Reader, node_id: u64) -> Result<TermReads, ChainError> 
         now,
         term_end: t.termEnd,
         term_base: t.termBase,
-        term_length: t.termLength as u64,
+        term_length: u64::from(t.termLength),
         stake_stop: t.stakeStop,
         in_term: s.inTerm,
         read_base: s.termBase.try_into().map_err(ce)?,
@@ -179,7 +179,7 @@ async fn balance(rpc: &Rpc, wallet: &str) -> Result<u128, ChainError> {
     let v = rpc
         .call("eth_getBalance", serde_json::json!([wallet, "latest"]))
         .await?;
-    u128::from_str_radix(v.as_str().unwrap_or("0x0").trim_start_matches("0x"), 16).map_err(ce)
+    u128::try_from(parse_rpc_quantity(&v, "eth_getBalance")?).map_err(ce)
 }
 
 /// The background task: finds this node's id from its wallet, then reads every `every`. A read
@@ -222,7 +222,13 @@ async fn recovery_hint(reader: &Nr2Reader, wallet: &str, node_id: u64, now: u64)
         rpc: reader.rpc.clone(),
         registry: reader.registry.clone(),
     };
-    let fee = balance(&reader.rpc, wallet).await.unwrap_or(0);
+    let fee = match balance(&reader.rpc, wallet).await {
+        Ok(fee) => fee,
+        Err(e) => {
+            warn!(%e, "term: recovery balance read unavailable");
+            return;
+        }
+    };
     match vr.recovery_view(node_id, now, fee).await {
         Ok(v) => {
             let b = crate::online_gate::precheck_recovery(&v);

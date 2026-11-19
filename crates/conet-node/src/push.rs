@@ -315,8 +315,13 @@ impl Push for Arc<BeamioApi> {
     fn offline_chat(&self, user_key: String) {
         let me = self.clone();
         tokio::spawn(async move {
-            let Ok(Some(eoa)) = me.routes.wallet_of_user_key(&user_key).await else {
-                return;
+            let eoa = match me.routes.wallet_of_user_key(&user_key).await {
+                Ok(Some(eoa)) => eoa,
+                Ok(None) => return,
+                Err(e) => {
+                    warn!(%e, "offline-chat wallet lookup unavailable");
+                    return;
+                }
             };
             let ts = now();
             let n = me.notices.clone();

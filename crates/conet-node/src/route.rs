@@ -20,6 +20,8 @@ pub enum Resolved {
     Local,
     Remote(SocketAddr),
     NoRoute,
+    /// Route lookup failed or timed out; this must not be cached or reported as an absent route.
+    LookupUnavailable,
     /// A user key with more than one mailbox slot.
     Plan(DeliveryPlan),
 }

@@ -28,9 +28,12 @@ fn wallet(g: &Value, n: &str) -> EthKey {
 
 struct Paid(String);
 impl Passport for Paid {
-    fn is_paid<'a>(&'a self, w: &'a str) -> BoxFut<'a, bool> {
+    fn is_paid<'a>(
+        &'a self,
+        w: &'a str,
+    ) -> BoxFut<'a, Result<bool, conet_node::chain::ChainError>> {
         let ok = w.eq_ignore_ascii_case(&self.0);
-        Box::pin(async move { ok })
+        Box::pin(async move { Ok(ok) })
     }
 }
 struct Loopback;

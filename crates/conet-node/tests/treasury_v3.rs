@@ -2,11 +2,12 @@
 //! logs and the output of the TS `parseBridgeOperation` on them; the Rust decoder must match it
 //! field by field. Also: cursor planning, restart resume and the state file. No network, no ports.
 use alloy_primitives::{hex, B256};
+use alloy_sol_types::SolEvent;
 use conet_node::treasury_v3::{
-    advance, chunk_ranges, decode, load_cursor, next_window, save_cursor, start_cursor, Cursor,
-    CursorError, RawLog, Window,
+    advance, chunk_ranges, decode, load_cursor, next_window, raw_log_from_rpc, save_cursor,
+    start_cursor, BridgeOperation, Cursor, CursorError, RawLog, Window,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::PathBuf;
 
 fn fixture() -> Value {
@@ -30,6 +31,53 @@ fn raw_log(v: &Value) -> RawLog {
         transaction_hash: v["transactionHash"].as_str().unwrap().parse().unwrap(),
         block_number: v["blockNumber"].as_u64().unwrap(),
     }
+}
+
+fn rpc_log(data: Value, block_number: Value) -> Value {
+    json!({
+        "topics": [format!("{:#x}", BridgeOperation::SIGNATURE_HASH)],
+        "data": data,
+        "transactionHash": format!("0x{}", "cd".repeat(32)),
+        "blockNumber": block_number,
+    })
+}
+
+#[test]
+fn raw_rpc_logs_require_canonical_data_and_quantity_fields() {
+    let empty = rpc_log(json!("0x"), json!("0x0"));
+    let parsed = raw_log_from_rpc(&empty).unwrap();
+    assert!(parsed.data.is_empty());
+    assert_eq!(parsed.block_number, 0);
+
+    let nonempty = rpc_log(json!("0x1234"), json!("0x2a"));
+    let parsed = raw_log_from_rpc(&nonempty).unwrap();
+    assert_eq!(parsed.data, [0x12, 0x34]);
+    assert_eq!(parsed.block_number, 42);
+
+    for bad_data in ["1234", "0x1", "0xgg"] {
+        assert_eq!(
+            raw_log_from_rpc(&rpc_log(json!(bad_data), json!("0x1"))),
+            Err("data")
+        );
+    }
+    for bad_block in ["1", "0x", "0x01", "0xgg", "0x10000000000000000"] {
+        assert_eq!(
+            raw_log_from_rpc(&rpc_log(json!("0x"), json!(bad_block))),
+            Err("blockNumber")
+        );
+    }
+    let mut bad_topic = empty.clone();
+    bad_topic["topics"] = json!(["0xab"]);
+    assert_eq!(raw_log_from_rpc(&bad_topic), Err("topics"));
+    let mut missing_topic = empty.clone();
+    missing_topic["topics"] = json!([]);
+    assert_eq!(raw_log_from_rpc(&missing_topic), Err("topics"));
+    let mut foreign_topic = empty.clone();
+    foreign_topic["topics"] = json!([format!("0x{}", "ab".repeat(32))]);
+    assert_eq!(raw_log_from_rpc(&foreign_topic), Err("topics"));
+    let mut bad_hash = empty;
+    bad_hash["transactionHash"] = json!("0xcd");
+    assert_eq!(raw_log_from_rpc(&bad_hash), Err("transactionHash"));
 }
 
 #[test]
