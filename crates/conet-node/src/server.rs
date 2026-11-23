@@ -58,6 +58,11 @@ pub struct NodeCtx {
     /// CoNET chain RPC used for currentInfo by the signed mining_validator command. None = the
     /// route source has no RPC-backed epoch authority; the command reports unavailable.
     pub epoch_rpc: Option<crate::chain::Rpc>,
+    #[cfg(test)]
+    /// Optional injected validator wallet authority snapshot. None preserves the existing route
+    /// table lookup; there is no production configuration or remote source wired by default.
+    pub validator_wallet_source:
+        Option<Arc<dyn crate::validator_wallet_source::ValidatorWalletSource>>,
     pub validator_pools: Arc<crate::validator_mining::Pools>,
     pub mining_liveness: Arc<crate::mining_liveness::MiningLiveness>,
     /// Explicitly opt into CoNET mining SSE publishing; disabled by default.
@@ -102,6 +107,8 @@ impl NodeCtx {
             delivery: crate::deliver::DeliveryOpts::default(),
             fail_cache: Arc::new(crate::deliver::FailCache::default()),
             epoch_rpc: None,
+            #[cfg(test)]
+            validator_wallet_source: None,
             validator_pools: Arc::new(crate::validator_mining::Pools::default()),
             mining_liveness: Arc::new(crate::mining_liveness::MiningLiveness::default()),
             mining_liveness_enabled: false,

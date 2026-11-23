@@ -15,6 +15,8 @@ pub mod http;
 pub mod limits;
 pub mod mailbox;
 pub mod mining_liveness;
+#[cfg(test)]
+pub mod mining_telemetry;
 pub mod nr2;
 pub mod online_gate;
 pub mod probe_logic;
@@ -34,6 +36,8 @@ pub mod tls;
 pub mod treasury_v3;
 pub mod treasury_v3_miner;
 pub mod validator_mining;
+#[cfg(test)]
+pub mod validator_wallet_source;
 pub mod voice;
 pub mod vote_book;
 pub mod vote_gate;

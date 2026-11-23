@@ -78,6 +78,15 @@ async fn lookup_unavailable(stream: &mut Conn) {
         .await;
 }
 
+#[cfg(test)]
+async fn validator_wallet_source_failed(stream: &mut Conn) {
+    let _ = stream
+        .write_all(&http::service_unavailable(
+            r#"{"ok":false,"error":"validator_wallet_source_failure"}"#,
+        ))
+        .await;
+}
+
 async fn validator_pool_full(stream: &mut Conn) {
     let _ = stream
         .write_all(&http::service_unavailable(
@@ -160,7 +169,35 @@ async fn mining_validator(stream: &mut Conn, command: &Value, ctx: &NodeCtx) {
         return not_found(stream).await;
     }
     let domain = request_data["nodeDomain"].as_str().unwrap_or("").trim();
-    let domain_wallet = match ctx.routes.node_wallet(domain) {
+    #[cfg(test)]
+    let lookup = match &ctx.validator_wallet_source {
+        Some(source) => source.lookup(domain),
+        None => Ok(ctx.routes.node_wallet(domain)),
+    };
+    #[cfg(not(test))]
+    let lookup = ctx.routes.node_wallet(domain);
+    #[cfg(test)]
+    let lookup = match lookup {
+        Ok(lookup) => lookup,
+        Err(error) => {
+            warn!(?error, "validator wallet authority lookup failed");
+            return validator_wallet_source_failed(stream).await;
+        }
+    };
+    #[cfg(test)]
+    let domain_wallet = match lookup {
+        crate::route::NodeWalletLookup::Known(wallet) => {
+            crate::validator_mining::DomainWallet::Known(wallet)
+        }
+        crate::route::NodeWalletLookup::NoRecord => {
+            return lookup_unavailable(stream).await;
+        }
+        crate::route::NodeWalletLookup::UnknownDomain => {
+            return not_found(stream).await;
+        }
+    };
+    #[cfg(not(test))]
+    let domain_wallet = match lookup {
         crate::route::NodeWalletLookup::Known(wallet) => {
             crate::validator_mining::DomainWallet::Known(wallet)
         }
@@ -822,6 +859,65 @@ mod validator_tests {
         Arc::new(ctx)
     }
 
+    fn ctx_with_wallet_source(
+        rpc: Option<crate::chain::Rpc>,
+        route_wallet: Option<String>,
+        source: Arc<dyn crate::validator_wallet_source::ValidatorWalletSource>,
+    ) -> Arc<NodeCtx> {
+        let mut ctx = ctx_with_rpc(rpc, route_wallet);
+        Arc::get_mut(&mut ctx)
+            .expect("context has not been cloned")
+            .validator_wallet_source = Some(source);
+        ctx
+    }
+
+    fn validator_request_data(
+        node_key: &si_crypto::eth::EthKey,
+        requester: &si_crypto::eth::EthKey,
+    ) -> Value {
+        let message = crate::epoch::validator_message("5", &requester.address()).unwrap();
+        let hash = node_key.sign_message(&message).unwrap();
+        let response_hash = requester.sign_message(&hash).unwrap();
+        serde_json::json!({
+            "epoch":"5", "nodeWallet":node_key.address(), "nodeDomain":"A1B2C3D4",
+            "hash":hash, "minerResponseHash":response_hash, "isUser":true
+        })
+    }
+
+    async fn send_validator_command(ctx: Arc<NodeCtx>, data: Value) -> String {
+        let requester = data["walletAddress"].as_str().unwrap_or_default();
+        let (server, mut client) = tokio::io::duplex(4096);
+        dispatch(
+            Box::new(server),
+            "127.0.0.1:1".parse().unwrap(),
+            serde_json::json!({
+                "command":"mining_validator",
+                "walletAddress":requester,
+                "requestData":data["requestData"].clone()
+            }),
+            true,
+            ctx,
+        )
+        .await;
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        String::from_utf8(response).unwrap()
+    }
+
+    struct FailedWalletSource;
+
+    impl crate::validator_wallet_source::ValidatorWalletSource for FailedWalletSource {
+        fn lookup(
+            &self,
+            _: &str,
+        ) -> Result<
+            crate::route::NodeWalletLookup,
+            crate::validator_wallet_source::ValidatorWalletSourceFailure,
+        > {
+            Err(crate::validator_wallet_source::ValidatorWalletSourceFailure)
+        }
+    }
+
     #[tokio::test]
     async fn mining_validator_rpc_error_is_unavailable_and_block_number_controls_freshness() {
         let error_url = rpc_url(vec![
@@ -913,5 +1009,103 @@ mod validator_tests {
         assert!(success_ctx
             .validator_pools
             .user_active(&requester.address(), Instant::now()));
+    }
+
+    #[tokio::test]
+    async fn injected_wallet_source_preserves_valid_no_record_unknown_and_failure_states() {
+        let node_key =
+            si_crypto::eth::EthKey::from_hex(&format!("0x{}", "00".repeat(31) + "01")).unwrap();
+        let requester =
+            si_crypto::eth::EthKey::from_hex(&format!("0x{}", "00".repeat(31) + "02")).unwrap();
+        let request_data = validator_request_data(&node_key, &requester);
+        let rpc_url = rpc_url(vec![
+            (
+                "eth_chainId".into(),
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:x}"}}"#,
+                    crate::chain::CONET_CHAIN_ID
+                ),
+            ),
+            (
+                "eth_blockNumber".into(),
+                r#"{"jsonrpc":"2.0","id":1,"result":"0xa"}"#.into(),
+            ),
+        ])
+        .await;
+        let rpc = || Some(crate::chain::Rpc::new(&rpc_url).unwrap());
+        let node_wallet = node_key.address();
+        let domain = "A1B2C3D4";
+
+        let known: Arc<dyn crate::validator_wallet_source::ValidatorWalletSource> = Arc::new(
+            crate::validator_wallet_source::InMemoryValidatorWalletSnapshot::try_new([(
+                domain.into(),
+                Some(node_wallet.clone()),
+            )])
+            .unwrap(),
+        );
+        let known_ctx = ctx_with_wallet_source(rpc(), None, known);
+        let valid = send_validator_command(
+            known_ctx.clone(),
+            serde_json::json!({
+                "walletAddress":requester.address(),
+                "requestData":request_data.clone()
+            }),
+        )
+        .await;
+        assert!(valid.starts_with("HTTP/1.1 200"), "{valid}");
+        assert!(known_ctx
+            .validator_pools
+            .user_active(&requester.address(), Instant::now()));
+
+        // A source-provided NoRecord must not fall back to a route-table Known value.
+        let no_record: Arc<dyn crate::validator_wallet_source::ValidatorWalletSource> = Arc::new(
+            crate::validator_wallet_source::InMemoryValidatorWalletSnapshot::try_new([(
+                domain.into(),
+                None,
+            )])
+            .unwrap(),
+        );
+        let no_record_ctx = ctx_with_wallet_source(rpc(), Some(node_wallet.clone()), no_record);
+        let no_record_reply = send_validator_command(
+            no_record_ctx,
+            serde_json::json!({
+                "walletAddress":requester.address(),
+                "requestData":request_data.clone()
+            }),
+        )
+        .await;
+        assert!(
+            no_record_reply.starts_with("HTTP/1.1 503"),
+            "{no_record_reply}"
+        );
+        assert!(no_record_reply.contains(r#""error":"route_lookup_unavailable""#));
+        assert!(!no_record_reply.contains("validator_wallet_source_failure"));
+
+        let unknown: Arc<dyn crate::validator_wallet_source::ValidatorWalletSource> =
+            Arc::new(crate::validator_wallet_source::InMemoryValidatorWalletSnapshot::default());
+        let unknown_ctx = ctx_with_wallet_source(rpc(), Some(node_wallet.clone()), unknown);
+        let unknown_reply = send_validator_command(
+            unknown_ctx,
+            serde_json::json!({
+                "walletAddress":requester.address(),
+                "requestData":request_data.clone()
+            }),
+        )
+        .await;
+        assert!(unknown_reply.starts_with("HTTP/1.1 404"), "{unknown_reply}");
+
+        // A source failure is distinct from NoRecord and must not fall back to a stale route entry.
+        let failed = ctx_with_wallet_source(rpc(), Some(node_wallet), Arc::new(FailedWalletSource));
+        let failed_reply = send_validator_command(
+            failed,
+            serde_json::json!({
+                "walletAddress":requester.address(),
+                "requestData":request_data
+            }),
+        )
+        .await;
+        assert!(failed_reply.starts_with("HTTP/1.1 503"), "{failed_reply}");
+        assert!(failed_reply.contains(r#""error":"validator_wallet_source_failure""#));
+        assert!(!failed_reply.contains("route_lookup_unavailable"));
     }
 }
