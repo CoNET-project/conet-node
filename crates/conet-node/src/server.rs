@@ -183,6 +183,7 @@ pub(crate) fn now_secs() -> i64 {
 
 pub async fn serve(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::Result<()> {
     tokio::spawn(ctx.voice.clone().sweep_loop());
+    tokio::spawn(ctx.validator_pools.clone().sweep_loop());
     let slots = Arc::new(Semaphore::new(ctx.max_connections));
     loop {
         let (stream, peer) = listener.accept().await?;

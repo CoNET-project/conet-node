@@ -112,15 +112,14 @@ async fn mining_validator(stream: &mut Conn, command: &Value, ctx: &NodeCtx) {
         Ok(crate::chain::CONET_CHAIN_ID) => {}
         Ok(_) | Err(_) => return lookup_unavailable(stream).await,
     }
-    let info = match crate::epoch::read_current_info(rpc).await {
-        Ok(info) => info,
+    // CoNET-SI `CurrentEpoch` is the current CoNET block number. `currentInfo().epoch` is a
+    // separate mining-rate field and must not be used for validator freshness.
+    let current_epoch = match rpc.block_number().await {
+        Ok(block) => block,
         Err(error) => {
-            warn!(%error, "validatorMining currentInfo unavailable");
+            warn!(%error, "validatorMining current block unavailable");
             return lookup_unavailable(stream).await;
         }
-    };
-    let Ok(current_epoch) = u64::try_from(info.epoch) else {
-        return lookup_unavailable(stream).await;
     };
     let wallet = s(command, "walletAddress");
     let request_data = &command["requestData"];
@@ -149,7 +148,9 @@ async fn mining_validator(stream: &mut Conn, command: &Value, ctx: &NodeCtx) {
             Err(crate::validator_mining::Refuse::UnknownDomain)
             | Err(crate::validator_mining::Refuse::Invalid(_)) => return not_found(stream).await,
         };
-    ctx.validator_pools.record(&accepted, Instant::now());
+    if !ctx.validator_pools.record(&accepted, Instant::now()) {
+        return lookup_unavailable(stream).await;
+    }
     let data = match accepted {
         crate::validator_mining::Accept::User { data, .. }
         | crate::validator_mining::Accept::Miner { data, .. } => data,
@@ -587,17 +588,19 @@ mod validator_tests {
         }
     }
 
-    async fn rpc_url(responses: Vec<String>) -> String {
+    async fn rpc_url(responses: Vec<(String, String)>) -> String {
         use tokio::io::AsyncWriteExt;
         use tokio::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            for body in responses {
+            let responses: std::collections::HashMap<String, String> =
+                responses.into_iter().collect();
+            loop {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut bytes = Vec::new();
                 let mut tmp = [0u8; 2048];
-                loop {
+                let body = loop {
                     let n = stream.read(&mut tmp).await.unwrap();
                     bytes.extend_from_slice(&tmp[..n]);
                     if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
@@ -611,10 +614,15 @@ mod validator_tests {
                             })
                             .unwrap_or(0);
                         if bytes.len() >= end + 4 + len {
-                            break;
+                            break bytes[end + 4..end + 4 + len].to_vec();
                         }
                     }
-                }
+                };
+                let req: Value = serde_json::from_slice(&body).unwrap();
+                let method = req["method"].as_str().unwrap_or("");
+                let body = responses.get(method).cloned().unwrap_or_else(|| {
+                    r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unexpected method"}}"#.into()
+                });
                 let out = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body);
                 stream.write_all(out.as_bytes()).await.unwrap();
             }
@@ -650,13 +658,19 @@ mod validator_tests {
     }
 
     #[tokio::test]
-    async fn mining_validator_rpc_error_is_unavailable_and_epoch_zero_is_valid() {
+    async fn mining_validator_rpc_error_is_unavailable_and_block_number_controls_freshness() {
         let error_url = rpc_url(vec![
-            format!(
-                r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:x}"}}"#,
-                crate::chain::CONET_CHAIN_ID
+            (
+                "eth_chainId".into(),
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:x}"}}"#,
+                    crate::chain::CONET_CHAIN_ID
+                ),
             ),
-            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"offline"}}"#.into(),
+            (
+                "eth_blockNumber".into(),
+                r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"offline"}}"#.into(),
+            ),
         ])
         .await;
         let error_ctx = ctx_with_rpc(Some(crate::chain::Rpc::new(&error_url).unwrap()), None);
@@ -677,25 +691,45 @@ mod validator_tests {
             "/tests/fixtures/epoch_readonly.json"
         )))
         .unwrap();
-        let zero_info = fixture["currentInfo"][1]["returndata"].as_str().unwrap();
+        let current_info_epoch = fixture["currentInfo"][0]["expect"]["epoch"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        let head_block = 10u64;
+        assert_ne!(current_info_epoch, head_block);
+        let current_info = fixture["currentInfo"][0]["returndata"].as_str().unwrap();
         let success_url = rpc_url(vec![
-            format!(
-                r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:x}"}}"#,
-                crate::chain::CONET_CHAIN_ID
+            (
+                "eth_chainId".into(),
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:x}"}}"#,
+                    crate::chain::CONET_CHAIN_ID
+                ),
             ),
-            format!(r#"{{"jsonrpc":"2.0","id":1,"result":"{zero_info}"}}"#),
+            (
+                "eth_blockNumber".into(),
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:x}"}}"#,
+                    head_block
+                ),
+            ),
+            (
+                "eth_call".into(),
+                format!(r#"{{"jsonrpc":"2.0","id":1,"result":"{current_info}"}}"#),
+            ),
         ])
         .await;
         let node_key =
             si_crypto::eth::EthKey::from_hex(&format!("0x{}", "00".repeat(31) + "01")).unwrap();
         let requester =
             si_crypto::eth::EthKey::from_hex(&format!("0x{}", "00".repeat(31) + "02")).unwrap();
-        let message = crate::epoch::validator_message("0", &requester.address()).unwrap();
+        let message = crate::epoch::validator_message("5", &requester.address()).unwrap();
         let hash = node_key.sign_message(&message).unwrap();
         let response_hash = requester.sign_message(&hash).unwrap();
         let data = serde_json::json!({
-            "epoch":"0", "nodeWallet":node_key.address(), "nodeDomain":"A1B2C3D4",
-            "hash":hash, "minerResponseHash":response_hash, "isUser":false
+            "epoch":"5", "nodeWallet":node_key.address(), "nodeDomain":"A1B2C3D4",
+            "hash":hash, "minerResponseHash":response_hash, "isUser":true
         });
         let success_ctx = ctx_with_rpc(
             Some(crate::chain::Rpc::new(&success_url).unwrap()),
@@ -713,6 +747,6 @@ mod validator_tests {
         assert!(response.starts_with("HTTP/1.1 200"));
         assert!(success_ctx
             .validator_pools
-            .miner_active(&requester.address()));
+            .user_active(&requester.address(), Instant::now()));
     }
 }

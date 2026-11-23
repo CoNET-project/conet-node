@@ -8,6 +8,10 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
+const USER_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+const MAX_USER_WALLETS: usize = 100_000;
+const MAX_MINER_WALLETS: usize = 100_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DomainWallet {
     Known(String),
@@ -100,7 +104,11 @@ pub fn validate(
     if current_epoch.saturating_sub(epoch_number) > 5 {
         return Err(Refuse::Invalid("stale_epoch"));
     }
-    let is_user = request_data["isUser"].as_bool().unwrap_or(false);
+    let is_user = match request_data.get("isUser") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => return Err(Refuse::Invalid("isUser")),
+    };
     if !is_user && epoch_number < current_epoch {
         return Err(Refuse::Invalid("old_miner_epoch"));
     }
@@ -125,27 +133,48 @@ pub struct Pools {
 }
 
 impl Pools {
-    pub fn record(&self, accepted: &Accept, now: Instant) {
+    pub fn record(&self, accepted: &Accept, now: Instant) -> bool {
         match accepted {
             Accept::User { wallet, .. } => {
-                self.users
-                    .lock()
-                    .expect("validator user pool")
-                    .insert(wallet.clone(), now);
+                let mut users = self.users.lock().expect("validator user pool");
+                users.retain(|_, seen| now.saturating_duration_since(*seen) < USER_TTL);
+                if !users.contains_key(wallet) && users.len() >= MAX_USER_WALLETS {
+                    return false;
+                }
+                users.insert(wallet.clone(), now);
+                true
             }
             Accept::Miner { wallet, .. } => {
-                self.miners
-                    .lock()
-                    .expect("validator miner pool")
-                    .insert(wallet.clone());
+                let mut miners = self.miners.lock().expect("validator miner pool");
+                if !miners.contains(wallet) && miners.len() >= MAX_MINER_WALLETS {
+                    return false;
+                }
+                miners.insert(wallet.clone());
+                true
             }
         }
     }
 
     pub fn user_active(&self, wallet: &str, now: Instant) -> bool {
         let mut users = self.users.lock().expect("validator user pool");
-        users.retain(|_, seen| now.duration_since(*seen) < std::time::Duration::from_secs(300));
+        users.retain(|_, seen| now.saturating_duration_since(*seen) < USER_TTL);
         users.contains_key(&wallet.to_ascii_lowercase())
+    }
+
+    /// Remove expired user entries without waiting for another validator request. Called by the
+    /// node server's pool sweep task; the cap also bounds memory if traffic is sustained.
+    pub fn cleanup(&self, now: Instant) -> usize {
+        let mut users = self.users.lock().expect("validator user pool");
+        let before = users.len();
+        users.retain(|_, seen| now.saturating_duration_since(*seen) < USER_TTL);
+        before - users.len()
+    }
+
+    pub async fn sweep_loop(self: std::sync::Arc<Self>) {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            self.cleanup(Instant::now());
+        }
     }
 
     pub fn miner_active(&self, wallet: &str) -> bool {
@@ -214,6 +243,17 @@ mod tests {
             ),
             Err(Refuse::UnknownDomain)
         );
+        let mut bad_is_user = valid_data.clone();
+        bad_is_user["isUser"] = Value::String("false".into());
+        assert_eq!(
+            validate(
+                &bad_is_user,
+                &requester.address(),
+                DomainWallet::Known(node.address()),
+                10
+            ),
+            Err(Refuse::Invalid("isUser"))
+        );
         assert!(matches!(
             validate(
                 &valid_data,
@@ -250,12 +290,11 @@ mod tests {
         .unwrap();
         let pools = Pools::default();
         let now = Instant::now();
-        pools.record(&accepted_user, now);
+        assert!(pools.record(&accepted_user, now));
         assert!(pools.user_active(&requester.address(), now));
-        assert!(!pools.user_active(
-            &requester.address(),
-            now + std::time::Duration::from_secs(301)
-        ));
+        let after_ttl = now + USER_TTL + std::time::Duration::from_secs(1);
+        assert_eq!(pools.cleanup(after_ttl), 1, "expired user is freed");
+        assert!(!pools.user_active(&requester.address(), after_ttl));
 
         let miner = data("10", false, &node, &requester);
         let accepted_miner = validate(
@@ -265,7 +304,7 @@ mod tests {
             10,
         )
         .unwrap();
-        pools.record(&accepted_miner, now);
+        assert!(pools.record(&accepted_miner, now));
         assert!(pools.miner_active(&requester.address()));
 
         let explicit_zero = data("0", false, &node, &requester);
@@ -277,6 +316,28 @@ mod tests {
                 0
             ),
             Ok(Accept::Miner { .. })
+        ));
+    }
+
+    #[test]
+    fn miner_pool_rejects_new_entries_at_capacity() {
+        let pools = Pools::default();
+        let now = Instant::now();
+        for index in 0..MAX_MINER_WALLETS {
+            assert!(pools.record(
+                &Accept::Miner {
+                    wallet: format!("wallet-{index}"),
+                    data: Value::Null,
+                },
+                now,
+            ));
+        }
+        assert!(!pools.record(
+            &Accept::Miner {
+                wallet: "wallet-over-capacity".into(),
+                data: Value::Null,
+            },
+            now,
         ));
     }
 }
