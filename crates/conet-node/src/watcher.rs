@@ -69,13 +69,14 @@ pub fn apply(routes: &RouteTable, snap: &TableSnapshot, port: u16, min_keep: f64
     let incomplete_empty = entries.is_empty() && !complete_active_set;
     let suspicious_untrusted_shrink =
         !complete_active_set && current > 10 && (entries.len() as f64) < current as f64 * min_keep;
-    if incomplete_empty || suspicious_untrusted_shrink {
+    if snap.rejected > 0 || incomplete_empty || suspicious_untrusted_shrink {
         routes.mark_wallet_authority_unavailable();
         warn!(
             current,
             new = entries.len(),
+            rejected = snap.rejected,
             complete_active_set,
-            "node table shrank too much; keeping the current table"
+            "node table snapshot is incomplete or shrank too much; keeping the current table"
         );
         return false;
     }
@@ -334,6 +335,37 @@ mod tests {
         assert!(!apply(&routes, &untrusted_shrink, 9000, 0.8));
         assert_eq!(routes.node_count(), 11);
         assert_eq!(routes.node_wallet("KEY00"), NodeWalletLookup::Unavailable);
+    }
+
+    #[test]
+    fn rejected_rows_refuse_v6_shrink_even_when_min_keep_would_allow_it() {
+        let routes = RouteTable::new("own", Duration::from_secs(60));
+        let initial = TableSnapshot {
+            version: "nr2-v1".into(),
+            block: 10,
+            nodes: (0..11)
+                .map(|i| node(&format!("KEY{i:02}"), Some("0x01")))
+                .collect(),
+            rejected: 0,
+            lists_all_active: true,
+        };
+        assert!(apply(&routes, &initial, 9000, 0.8));
+        let retained_addr = "127.0.0.1:9000".parse().unwrap();
+
+        // V6-style partial result: 10 decoded rows plus one rejected row. Ten is above the
+        // 80% min_keep threshold, so the rejected-row guard itself must fail closed.
+        let partial_v6 = TableSnapshot {
+            version: "v6-v2".into(),
+            block: 11,
+            nodes: (0..10).map(|i| node(&format!("KEY{i:02}"), None)).collect(),
+            rejected: 1,
+            lists_all_active: false,
+        };
+        assert!(!apply(&routes, &partial_v6, 9000, 0.8));
+        assert_eq!(routes.node_count(), 11);
+        assert!(!routes.wallet_authority_available());
+        assert_eq!(routes.node_wallet("KEY00"), NodeWalletLookup::Unavailable);
+        assert_eq!(routes.resolve("KEY10"), Resolved::Remote(retained_addr));
     }
 
     #[test]
