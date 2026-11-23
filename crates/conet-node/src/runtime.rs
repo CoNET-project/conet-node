@@ -205,6 +205,19 @@ pub fn treasury_address_from(cli: Option<&str>, env: Option<&str>) -> Result<Add
     }
 }
 
+pub fn treasury_address_from_os(
+    cli: Option<&str>,
+    env: Option<std::ffi::OsString>,
+) -> Result<Address, String> {
+    let env = env
+        .map(|raw| {
+            raw.into_string()
+                .map_err(|_| "TREASURY_V3_ADDRESS must be valid UTF-8".to_string())
+        })
+        .transpose()?;
+    treasury_address_from(cli, env.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +283,14 @@ mod tests {
         assert!(
             treasury_address_from(Some("0x0000000000000000000000000000000000000001"), None).is_ok()
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            assert!(
+                treasury_address_from_os(None, Some(std::ffi::OsString::from_vec(vec![0xff])))
+                    .is_err()
+            );
+        }
     }
 
     #[tokio::test]
@@ -343,5 +364,35 @@ mod tests {
         assert!(treasury_v3_eligible(&rpc, address, 8_453, wallet)
             .await
             .is_err());
+
+        for malformed_chain_id in [
+            r#"{"jsonrpc":"2.0","id":1,"result":"0x01"}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":"0x10000000000000000"}"#,
+        ] {
+            let url = rpc_http(vec![(200, malformed_chain_id.into())]).await;
+            let rpc = Rpc::new(&url).unwrap();
+            assert!(treasury_v3_eligible(&rpc, address, 8_453, wallet)
+                .await
+                .is_err());
+        }
+
+        for bad_is_miner in [
+            (
+                200,
+                r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"unavailable"}}"#
+                    .into(),
+            ),
+            (200, r#"{"jsonrpc":"2.0","id":1,"result":"0x"}"#.into()),
+        ] {
+            let url = rpc_http(vec![
+                (200, r#"{"jsonrpc":"2.0","id":1,"result":"0x2105"}"#.into()),
+                bad_is_miner,
+            ])
+            .await;
+            let rpc = Rpc::new(&url).unwrap();
+            assert!(treasury_v3_eligible(&rpc, address, 8_453, wallet)
+                .await
+                .is_err());
+        }
     }
 }

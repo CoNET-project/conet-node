@@ -55,6 +55,10 @@ pub struct NodeCtx {
     /// Multi-mailbox delivery timing (§23.4) and the per-node network failure record.
     pub delivery: crate::deliver::DeliveryOpts,
     pub fail_cache: Arc<crate::deliver::FailCache>,
+    /// CoNET chain RPC used for currentInfo by the signed mining_validator command. None = the
+    /// route source has no RPC-backed epoch authority; the command reports unavailable.
+    pub epoch_rpc: Option<crate::chain::Rpc>,
+    pub validator_pools: Arc<crate::validator_mining::Pools>,
 }
 
 impl NodeCtx {
@@ -91,6 +95,8 @@ impl NodeCtx {
             webrtc: std::sync::RwLock::new(None),
             delivery: crate::deliver::DeliveryOpts::default(),
             fail_cache: Arc::new(crate::deliver::FailCache::default()),
+            epoch_rpc: None,
+            validator_pools: Arc::new(crate::validator_mining::Pools::default()),
         }
     }
 

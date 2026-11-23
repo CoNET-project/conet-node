@@ -230,9 +230,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut source: Option<Arc<dyn NodeSource>> = None;
+    let mut epoch_rpc = None;
     let (routes, user_routes): (Arc<RouteTable>, Option<Arc<dyn UserRoutes>>) =
         if let Some(url) = setting("--rpc") {
             let rpc = Rpc::new(&url)?;
+            epoch_rpc = Some(rpc.clone());
             source = Some(match (arg("--node-registry"), arg("--node-lens")) {
                 (Some(reg), Some(lens)) => {
                     Arc::new(conet_node::nr2::Nr2Source::new(rpc.clone(), &reg, &lens))
@@ -260,6 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         routes.clone(),
         store.clone(),
     );
+    ctx.epoch_rpc = epoch_rpc;
     let api_base = setting("--api-base");
     if let (true, Some(base), Some(ur)) = (
         push_enabled(api_base.as_deref(), user_routes.is_some()),
@@ -327,10 +330,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if flag("--treasury-v3-watch") {
         let address_override = arg("--treasury-v3-address");
-        let address_env = std::env::var("TREASURY_V3_ADDRESS").ok();
-        let address = conet_node::runtime::treasury_address_from(
+        let address = conet_node::runtime::treasury_address_from_os(
             address_override.as_deref(),
-            address_env.as_deref(),
+            std::env::var_os("TREASURY_V3_ADDRESS"),
         )?;
         let base_rpc = setting("--treasury-v3-base-rpc")
             .ok_or("--treasury-v3-watch requires --treasury-v3-base-rpc <http-url>")?;

@@ -99,8 +99,62 @@ pub async fn dispatch(
         "wallet_online_query" => online_query(&mut stream, &command, &ctx).await,
         "wallet_native_wake_query" => native_wake_query(&mut stream, &command, &ctx).await,
         "push_device_register" => push_device_register(&mut stream, &command, &ctx).await,
+        "mining_validator" if signed => mining_validator(&mut stream, &command, &ctx).await,
         _ => not_found(&mut stream).await,
     }
+}
+
+async fn mining_validator(stream: &mut Conn, command: &Value, ctx: &NodeCtx) {
+    let Some(rpc) = ctx.epoch_rpc.as_ref() else {
+        return lookup_unavailable(stream).await;
+    };
+    match rpc.chain_id().await {
+        Ok(crate::chain::CONET_CHAIN_ID) => {}
+        Ok(_) | Err(_) => return lookup_unavailable(stream).await,
+    }
+    let info = match crate::epoch::read_current_info(rpc).await {
+        Ok(info) => info,
+        Err(error) => {
+            warn!(%error, "validatorMining currentInfo unavailable");
+            return lookup_unavailable(stream).await;
+        }
+    };
+    let Ok(current_epoch) = u64::try_from(info.epoch) else {
+        return lookup_unavailable(stream).await;
+    };
+    let wallet = s(command, "walletAddress");
+    let request_data = &command["requestData"];
+    if !request_data.is_object() {
+        return not_found(stream).await;
+    }
+    let domain = request_data["nodeDomain"].as_str().unwrap_or("").trim();
+    let domain_wallet = match ctx.routes.node_wallet(domain) {
+        crate::route::NodeWalletLookup::Known(wallet) => {
+            crate::validator_mining::DomainWallet::Known(wallet)
+        }
+        crate::route::NodeWalletLookup::NoRecord => {
+            return lookup_unavailable(stream).await;
+        }
+        crate::route::NodeWalletLookup::UnknownDomain => {
+            return not_found(stream).await;
+        }
+    };
+    let accepted =
+        match crate::validator_mining::validate(request_data, wallet, domain_wallet, current_epoch)
+        {
+            Ok(accepted) => accepted,
+            Err(crate::validator_mining::Refuse::Unavailable(_)) => {
+                return lookup_unavailable(stream).await;
+            }
+            Err(crate::validator_mining::Refuse::UnknownDomain)
+            | Err(crate::validator_mining::Refuse::Invalid(_)) => return not_found(stream).await,
+        };
+    ctx.validator_pools.record(&accepted, Instant::now());
+    let data = match accepted {
+        crate::validator_mining::Accept::User { data, .. }
+        | crate::validator_mining::Accept::Miner { data, .. } => data,
+    };
+    let _ = stream.write_all(&http::ok_200(&data.to_string())).await;
 }
 
 async fn delivery_ack(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
@@ -439,4 +493,226 @@ async fn legacy_chat_listen(mut stream: Conn, peer: SocketAddr, c: Value, ctx: A
         }
     }
     ctx.mailbox.remove(id);
+}
+
+#[cfg(test)]
+mod validator_tests {
+    use super::*;
+    use si_core::{NodeNotices, RouteDecryptor, WalletSigner};
+    use std::sync::Arc;
+    use tokio::io::AsyncReadExt;
+
+    struct UnusedDeps;
+    impl RouteDecryptor for UnusedDeps {
+        fn decrypt(&self, _: &str) -> si_crypto::Result<Vec<u8>> {
+            unreachable!()
+        }
+    }
+    impl WalletSigner for UnusedDeps {
+        fn address(&self) -> String {
+            "0x0000000000000000000000000000000000000001".into()
+        }
+        fn sign_message(&self, _: &str) -> si_crypto::Result<String> {
+            unreachable!()
+        }
+    }
+    impl NodeNotices for UnusedDeps {
+        fn sign_epoch(&self, _: u64) -> si_crypto::Result<String> {
+            unreachable!()
+        }
+        fn sign_offline_chat(&self, _: &str, _: &str, _: u64) -> si_crypto::Result<String> {
+            unreachable!()
+        }
+        fn sign_native_wakeable(&self, _: &str, _: u64) -> si_crypto::Result<String> {
+            unreachable!()
+        }
+        fn sign_voice_call_push(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: i64,
+            _: i64,
+        ) -> si_crypto::Result<String> {
+            unreachable!()
+        }
+        fn sign_webrtc_endpoint(
+            &self,
+            _: &str,
+            _: &str,
+            _: u16,
+            _: &str,
+            _: i64,
+        ) -> si_crypto::Result<String> {
+            unreachable!()
+        }
+        fn sign_acme_dns01(&self, _: &str, _: &str, _: &str, _: i64) -> si_crypto::Result<String> {
+            unreachable!()
+        }
+    }
+
+    fn ctx() -> Arc<NodeCtx> {
+        let deps = Arc::new(UnusedDeps);
+        Arc::new(NodeCtx::new(
+            "NODEKEY".into(),
+            deps.clone(),
+            deps.clone(),
+            deps,
+            Arc::new(crate::route::RouteTable::new(
+                "NODEKEY",
+                Duration::from_secs(60),
+            )),
+            Arc::new(crate::store::MemoryStore::default()),
+        ))
+    }
+
+    #[tokio::test]
+    async fn mining_validator_is_only_a_signed_command_and_requires_epoch_authority() {
+        for (signed, status) in [(false, "HTTP/1.1 404"), (true, "HTTP/1.1 503")] {
+            let (server, mut client) = tokio::io::duplex(2048);
+            dispatch(
+                Box::new(server),
+                "127.0.0.1:1".parse().unwrap(),
+                serde_json::json!({
+                    "command":"mining_validator",
+                    "walletAddress":"0x0000000000000000000000000000000000000002"
+                }),
+                signed,
+                ctx(),
+            )
+            .await;
+            let mut response = Vec::new();
+            client.read_to_end(&mut response).await.unwrap();
+            assert!(String::from_utf8(response).unwrap().starts_with(status));
+        }
+    }
+
+    async fn rpc_url(responses: Vec<String>) -> String {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for body in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let mut tmp = [0u8; 2048];
+                loop {
+                    let n = stream.read(&mut tmp).await.unwrap();
+                    bytes.extend_from_slice(&tmp[..n]);
+                    if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let header = String::from_utf8_lossy(&bytes[..end + 4]);
+                        let len = header
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if bytes.len() >= end + 4 + len {
+                            break;
+                        }
+                    }
+                }
+                let out = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body);
+                stream.write_all(out.as_bytes()).await.unwrap();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn ctx_with_rpc(rpc: Option<crate::chain::Rpc>, node_wallet: Option<String>) -> Arc<NodeCtx> {
+        let deps = Arc::new(UnusedDeps);
+        let routes = Arc::new(crate::route::RouteTable::new(
+            "NODEKEY",
+            Duration::from_secs(60),
+        ));
+        routes.replace_node_records(
+            [(
+                "A1B2C3D4".into(),
+                "127.0.0.1:9".parse().unwrap(),
+                true,
+                node_wallet,
+            )],
+            false,
+        );
+        let mut ctx = NodeCtx::new(
+            "NODEKEY".into(),
+            deps.clone(),
+            deps.clone(),
+            deps,
+            routes,
+            Arc::new(crate::store::MemoryStore::default()),
+        );
+        ctx.epoch_rpc = rpc;
+        Arc::new(ctx)
+    }
+
+    #[tokio::test]
+    async fn mining_validator_rpc_error_is_unavailable_and_epoch_zero_is_valid() {
+        let error_url = rpc_url(vec![
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:x}"}}"#,
+                crate::chain::CONET_CHAIN_ID
+            ),
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"offline"}}"#.into(),
+        ])
+        .await;
+        let error_ctx = ctx_with_rpc(Some(crate::chain::Rpc::new(&error_url).unwrap()), None);
+        let (server, mut client) = tokio::io::duplex(2048);
+        dispatch(
+            Box::new(server), "127.0.0.1:1".parse().unwrap(),
+            serde_json::json!({"command":"mining_validator", "walletAddress":"0x0000000000000000000000000000000000000002", "requestData":{}}),
+            true, error_ctx,
+        ).await;
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        assert!(String::from_utf8(response)
+            .unwrap()
+            .starts_with("HTTP/1.1 503"));
+
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/epoch_readonly.json"
+        )))
+        .unwrap();
+        let zero_info = fixture["currentInfo"][1]["returndata"].as_str().unwrap();
+        let success_url = rpc_url(vec![
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"result":"0x{:x}"}}"#,
+                crate::chain::CONET_CHAIN_ID
+            ),
+            format!(r#"{{"jsonrpc":"2.0","id":1,"result":"{zero_info}"}}"#),
+        ])
+        .await;
+        let node_key =
+            si_crypto::eth::EthKey::from_hex(&format!("0x{}", "00".repeat(31) + "01")).unwrap();
+        let requester =
+            si_crypto::eth::EthKey::from_hex(&format!("0x{}", "00".repeat(31) + "02")).unwrap();
+        let message = crate::epoch::validator_message("0", &requester.address()).unwrap();
+        let hash = node_key.sign_message(&message).unwrap();
+        let response_hash = requester.sign_message(&hash).unwrap();
+        let data = serde_json::json!({
+            "epoch":"0", "nodeWallet":node_key.address(), "nodeDomain":"A1B2C3D4",
+            "hash":hash, "minerResponseHash":response_hash, "isUser":false
+        });
+        let success_ctx = ctx_with_rpc(
+            Some(crate::chain::Rpc::new(&success_url).unwrap()),
+            Some(node_key.address()),
+        );
+        let (server, mut client) = tokio::io::duplex(4096);
+        dispatch(
+            Box::new(server), "127.0.0.1:1".parse().unwrap(),
+            serde_json::json!({"command":"mining_validator", "walletAddress":requester.address(), "requestData":data}),
+            true, success_ctx.clone(),
+        ).await;
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"));
+        assert!(success_ctx
+            .validator_pools
+            .miner_active(&requester.address()));
+    }
 }
