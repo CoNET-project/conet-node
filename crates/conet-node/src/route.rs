@@ -86,11 +86,15 @@ pub enum NodeWalletLookup {
     Known(String),
     NoRecord,
     UnknownDomain,
+    /// The route table is retained for forwarding, but its wallet snapshot is not currently
+    /// authoritative (for example before the first complete snapshot or after a refresh error).
+    Unavailable,
 }
 
 pub struct RouteTable {
     own_key: String,
     nodes: RwLock<HashMap<String, NodeEntry>>,
+    wallet_authority_available: RwLock<bool>,
     users: RwLock<HashMap<String, (UserRoute, Instant)>>,
     /// May this node hold mailboxes (false once NodeRegistryV2 says it may not).
     own_mailbox: RwLock<bool>,
@@ -136,6 +140,7 @@ impl RouteTable {
         Self {
             own_key: own_key.to_uppercase(),
             nodes: RwLock::default(),
+            wallet_authority_available: RwLock::new(false),
             users: RwLock::default(),
             own_mailbox: RwLock::new(true),
             user_ttl,
@@ -209,15 +214,32 @@ impl RouteTable {
             Some(e) => e.mailbox,
             None => !own_must_be_listed,
         };
+        // Use a consistent lock order with `node_wallet`: authority state, then node table.
+        // Wallet readers cannot observe a newly available marker with an older node map.
+        let mut authority = self.wallet_authority_available.write().expect("route lock");
         *self.own_mailbox.write().expect("route lock") = own;
         *self.node_ips.write().expect("route lock") = map.values().map(|e| e.addr.ip()).collect();
         *self.nodes.write().expect("route lock") = map;
+        *authority = true;
+    }
+
+    /// Mark the wallet source unavailable without disturbing routes used for forwarding.
+    pub fn mark_wallet_authority_unavailable(&self) {
+        *self.wallet_authority_available.write().expect("route lock") = false;
+    }
+
+    pub fn wallet_authority_available(&self) -> bool {
+        *self.wallet_authority_available.read().expect("route lock")
     }
 
     /// Resolve the current wallet for a node domain/key ID from the same atomically replaced
     /// node table. `NoRecord` means the domain is present in a source without a wallet field
     /// (Guardian V6/static); `UnknownDomain` means absent from the current table.
     pub fn node_wallet(&self, domain: &str) -> NodeWalletLookup {
+        let authority = self.wallet_authority_available.read().expect("route lock");
+        if !*authority {
+            return NodeWalletLookup::Unavailable;
+        }
         match self
             .nodes
             .read()
@@ -392,6 +414,7 @@ mod tests {
     fn node_wallet_lookup_is_versioned_with_route_table_and_fail_closed() {
         let t = RouteTable::new("own", Duration::from_secs(60));
         let addr = "127.0.0.1:9".parse().unwrap();
+        assert_eq!(t.node_wallet("a1b2"), NodeWalletLookup::Unavailable);
         t.replace_node_records(
             [
                 (
@@ -416,6 +439,33 @@ mod tests {
         t.replace_node_records([("A1B2".to_string(), addr, true, None)], false);
         assert_eq!(t.node_wallet("a1b2"), NodeWalletLookup::NoRecord);
         assert_eq!(t.node_wallet("v6key"), NodeWalletLookup::UnknownDomain);
+    }
+
+    #[test]
+    fn wallet_authority_failure_preserves_forwarding_routes_until_full_replace() {
+        let t = RouteTable::new("own", Duration::from_secs(60));
+        let addr = "127.0.0.1:9".parse().unwrap();
+        t.replace_node_records(
+            [("A1B2".to_string(), addr, true, Some("0x01".into()))],
+            false,
+        );
+        assert_eq!(
+            t.node_wallet("a1b2"),
+            NodeWalletLookup::Known("0x01".into())
+        );
+
+        t.mark_wallet_authority_unavailable();
+        assert_eq!(t.node_wallet("a1b2"), NodeWalletLookup::Unavailable);
+        assert_eq!(t.resolve("a1b2"), Resolved::Remote(addr));
+
+        t.replace_node_records(
+            [("A1B2".to_string(), addr, true, Some("0x02".into()))],
+            false,
+        );
+        assert_eq!(
+            t.node_wallet("a1b2"),
+            NodeWalletLookup::Known("0x02".into())
+        );
     }
 
     #[test]

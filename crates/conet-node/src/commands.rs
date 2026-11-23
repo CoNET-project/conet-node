@@ -192,6 +192,9 @@ async fn mining_validator(stream: &mut Conn, command: &Value, ctx: &NodeCtx) {
         crate::route::NodeWalletLookup::NoRecord => {
             return lookup_unavailable(stream).await;
         }
+        crate::route::NodeWalletLookup::Unavailable => {
+            return lookup_unavailable(stream).await;
+        }
         crate::route::NodeWalletLookup::UnknownDomain => {
             return not_found(stream).await;
         }
@@ -202,6 +205,9 @@ async fn mining_validator(stream: &mut Conn, command: &Value, ctx: &NodeCtx) {
             crate::validator_mining::DomainWallet::Known(wallet)
         }
         crate::route::NodeWalletLookup::NoRecord => {
+            return lookup_unavailable(stream).await;
+        }
+        crate::route::NodeWalletLookup::Unavailable => {
             return lookup_unavailable(stream).await;
         }
         crate::route::NodeWalletLookup::UnknownDomain => {

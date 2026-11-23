@@ -6,7 +6,10 @@
 //! - [`Nr2Reader`]: single reads (own node id, egress policy pointer).
 //!
 //! Nothing here sends a transaction. Calls never set `from`.
-use crate::chain::{checked_u64, BoxFut, ChainError, ChainNode, NodeSource, Rpc, TableSnapshot};
+use crate::chain::{
+    checked_u64, BoxFut, ChainError, ChainNode, NodeSource, Rpc, TableSnapshot,
+    DEFAULT_NODE_FORWARD_PORT,
+};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -71,11 +74,13 @@ pub enum RowSkip {
 
 /// One `NodeView` row → a forwarding entry. Pure, so the rules are unit-tested.
 pub fn node_row(v: &NodeRegistryLens::NodeView) -> Result<ChainNode, RowSkip> {
-    if v.nodeType != nr::TYPE_TCP {
-        return Err(RowSkip::NotTcp);
-    }
     if v.status != nr::ST_ACTIVE || !v.active || v.suspended {
         return Err(RowSkip::Inactive);
+    }
+    match v.nodeType {
+        nr::TYPE_TCP => {}
+        nr::TYPE_BROWSER | nr::TYPE_MOBILE => return Err(RowSkip::NotTcp),
+        _ => return Err(RowSkip::Bad("node_type")),
     }
     let ip = nr::check_canonical_ip(&v.ip).map_err(RowSkip::Bad)?;
     let b64 = std::str::from_utf8(&v.pgpBase64).map_err(|_| RowSkip::Bad("pgp_utf8"))?;
@@ -108,26 +113,88 @@ pub fn node_row(v: &NodeRegistryLens::NodeView) -> Result<ChainNode, RowSkip> {
 pub fn sort_rows(
     rows: &[NodeRegistryLens::NodeView],
 ) -> Result<(Vec<ChainNode>, usize, usize), ChainError> {
-    let (mut nodes, mut rejected, mut skipped) = (vec![], 0, 0);
+    let (mut nodes, mut skipped) = (vec![], 0);
     let mut seen = std::collections::HashSet::new();
+    let mut seen_key_ids = std::collections::HashSet::new();
     for r in rows {
         match node_row(r) {
             Ok(n) => {
-                // One endpoint, one node (the contract enforces it; stay safe on a bad read).
-                if seen.insert((n.ip.clone(), n.port)) {
-                    nodes.push(n);
-                } else {
-                    rejected += 1;
+                // A key ID is the route domain and may name only one active wallet. Reject the
+                // whole snapshot rather than letting RouteTable's map silently choose a row.
+                if !seen_key_ids.insert(n.key_id.clone()) {
+                    return Err(ChainError(
+                        "duplicate NodeRegistryV2 domain/key ID in active rows".into(),
+                    ));
                 }
+                // One endpoint, one node (the contract enforces it; stay safe on a bad read).
+                // Dropping an active row would make a partial table look complete to the watcher.
+                if !seen.insert((n.ip.clone(), n.port.unwrap_or(DEFAULT_NODE_FORWARD_PORT))) {
+                    return Err(ChainError(
+                        "duplicate NodeRegistryV2 endpoint in active rows".into(),
+                    ));
+                }
+                nodes.push(n);
             }
             Err(RowSkip::InvalidNodeId) => {
                 return Err(ChainError("NodeRegistryV2 row node id exceeds u64".into()));
             }
-            Err(RowSkip::Bad(_)) => rejected += 1,
-            Err(_) => skipped += 1,
+            Err(RowSkip::Bad(reason)) => {
+                return Err(ChainError(format!(
+                    "invalid active NodeRegistryV2 row: {reason}"
+                )));
+            }
+            Err(RowSkip::NotTcp | RowSkip::Inactive) => skipped += 1,
         }
     }
-    Ok((nodes, rejected, skipped))
+    Ok((nodes, 0, skipped))
+}
+
+#[derive(Default)]
+struct PageProgress {
+    total: Option<u64>,
+    read: u64,
+}
+
+impl PageProgress {
+    /// Validate one page without accepting a partial or internally inconsistent table.
+    /// Returns true only when exactly `total` rows have been read.
+    fn observe(&mut self, total: u64, page_len: usize, page_size: u64) -> Result<bool, ChainError> {
+        match self.total {
+            Some(expected) if expected != total => {
+                return Err(ChainError(
+                    "NodeRegistryV2 total changed during the read".into(),
+                ));
+            }
+            None => self.total = Some(total),
+            _ => {}
+        }
+        let page_len = u64::try_from(page_len)
+            .map_err(|_| ChainError("NodeRegistryV2 page length exceeds u64".into()))?;
+        if page_len > page_size {
+            return Err(ChainError(
+                "NodeRegistryV2 page exceeds requested size".into(),
+            ));
+        }
+        if self.read > total {
+            return Err(ChainError(
+                "NodeRegistryV2 rows already exceed total".into(),
+            ));
+        }
+        if page_len == 0 && self.read < total {
+            return Err(ChainError(
+                "NodeRegistryV2 returned an empty page before total".into(),
+            ));
+        }
+        let next = self
+            .read
+            .checked_add(page_len)
+            .ok_or_else(|| ChainError("NodeRegistryV2 page count overflow".into()))?;
+        if next > total {
+            return Err(ChainError("NodeRegistryV2 rows exceed total".into()));
+        }
+        self.read = next;
+        Ok(next == total)
+    }
 }
 
 #[derive(Clone)]
@@ -275,7 +342,7 @@ impl NodeSource for Nr2Source {
     fn read(&self, block: u64) -> BoxFut<'_, Result<TableSnapshot, ChainError>> {
         Box::pin(async move {
             let mut rows = vec![];
-            let mut start = 0u64;
+            let mut progress = PageProgress::default();
             let mut first_version: Option<U256> = None;
             for _ in 0..10_000 {
                 let r = self
@@ -283,7 +350,7 @@ impl NodeSource for Nr2Source {
                     .call(
                         &self.lens,
                         NodeRegistryLens::getNodesCall {
-                            start: U256::from(start),
+                            start: U256::from(progress.read),
                             len: U256::from(self.page),
                         },
                         Some(block),
@@ -294,9 +361,9 @@ impl NodeSource for Nr2Source {
                     return Err(ChainError("tableVersion moved during the read".into()));
                 }
                 let total = checked_u64(r.total, "NodeRegistryV2 total")?;
-                start += r.out.len() as u64;
+                let complete = progress.observe(total, r.out.len(), self.page)?;
                 rows.extend(r.out);
-                if start >= total || rows.is_empty() {
+                if complete {
                     let (nodes, rejected, _skipped) = sort_rows(&rows)?;
                     let s = self.scan.lock().expect("scan");
                     return Ok(TableSnapshot {
@@ -366,6 +433,48 @@ mod tests {
     }
 
     #[test]
+    fn pagination_requires_stable_total_and_exact_nonempty_progress() {
+        let mut progress = PageProgress::default();
+        assert!(!progress.observe(4, 2, 2).unwrap());
+        assert!(progress.observe(4, 2, 2).unwrap());
+
+        let mut empty_before_total = PageProgress::default();
+        assert!(!empty_before_total.observe(3, 1, 2).unwrap());
+        assert!(empty_before_total.observe(3, 0, 2).is_err());
+
+        let mut changed_total = PageProgress::default();
+        assert!(!changed_total.observe(3, 1, 2).unwrap());
+        assert!(changed_total.observe(4, 1, 2).is_err());
+
+        let mut exceeds_total = PageProgress::default();
+        assert!(exceeds_total.observe(2, 3, 3).is_err());
+
+        let mut exceeds_page = PageProgress::default();
+        assert!(exceeds_page.observe(4, 3, 2).is_err());
+
+        let mut empty_table = PageProgress::default();
+        assert!(empty_table.observe(0, 0, 2).unwrap());
+    }
+
+    #[test]
+    fn duplicate_active_domain_rejects_snapshot_for_same_or_conflicting_wallet() {
+        let g = golden();
+        let armored = g["keys"]["nodeA"]["armoredPublic"].as_str().unwrap();
+        let kid = g["keys"]["nodeA"]["encKeyId"].as_str().unwrap();
+
+        for conflicting_wallet in [false, true] {
+            let first = view(armored, kid);
+            let mut second = view(armored, kid);
+            second.ip = "192.0.2.11".into();
+            if conflicting_wallet {
+                second.nodeWallet = Address::repeat_byte(0x22);
+            }
+            assert!(sort_rows(&[first.clone(), second.clone()]).is_err());
+            assert!(sort_rows(&[second, first]).is_err());
+        }
+    }
+
+    #[test]
     fn abi_struct_matches_the_eip712_vectors() {
         assert_eq!(
             NodeRegistryV2::RegisterRequest::eip712_encode_type(),
@@ -395,6 +504,15 @@ mod tests {
         let mut v = view(armored, kid);
         v.nodeType = nr::TYPE_BROWSER;
         assert_eq!(node_row(&v).unwrap_err(), RowSkip::NotTcp);
+        let mut v = view(armored, kid);
+        v.nodeType = nr::TYPE_MOBILE;
+        assert_eq!(node_row(&v).unwrap_err(), RowSkip::NotTcp);
+        for unknown_node_type in [0, 4] {
+            let mut v = view(armored, kid);
+            v.nodeType = unknown_node_type;
+            assert_eq!(node_row(&v), Err(RowSkip::Bad("node_type")));
+            assert!(sort_rows(&[v]).is_err());
+        }
         for f in [
             |v: &mut NodeRegistryLens::NodeView| v.active = false,
             |v: &mut NodeRegistryLens::NodeView| v.suspended = true,
@@ -419,14 +537,33 @@ mod tests {
         v.tcpPort = 0;
         assert_eq!(node_row(&v).unwrap().port, None);
 
-        // Duplicate endpoints: the second one is dropped and counted.
-        let rows = vec![view(armored, kid), view(armored, kid), {
+        // A duplicate active endpoint with a distinct domain is an incomplete, ambiguous table.
+        let other_armored = g["keys"]["nodeB"]["armoredPublic"].as_str().unwrap();
+        let other = g["keys"]["nodeB"]["encKeyId"].as_str().unwrap();
+        let endpoint_duplicate = vec![view(armored, kid), view(other_armored, other)];
+        assert!(sort_rows(&endpoint_duplicate).is_err());
+
+        // Port zero is forwarded on the default port, so it conflicts with an explicit 80.
+        let mut default_port = view(armored, kid);
+        default_port.tcpPort = 0;
+        let mut explicit_default = view(other_armored, other);
+        explicit_default.ip = default_port.ip.clone();
+        explicit_default.tcpPort = DEFAULT_NODE_FORWARD_PORT;
+        assert!(sort_rows(&[default_port, explicit_default]).is_err());
+
+        // Expected non-TCP rows are skipped without turning a healthy snapshot into a failure.
+        let rows = vec![view(armored, kid), {
             let mut v = view(armored, kid);
             v.nodeType = nr::TYPE_MOBILE;
             v
         }];
         let (nodes, rejected, skipped) = sort_rows(&rows).unwrap();
-        assert_eq!((nodes.len(), rejected, skipped), (1, 1, 1));
+        assert_eq!((nodes.len(), rejected, skipped), (1, 0, 1));
+
+        // An active row that cannot be attributed to a verified domain is not silently dropped.
+        let mut malformed_active = view(armored, kid);
+        malformed_active.ip = "192.000.2.10".into();
+        assert!(sort_rows(&[malformed_active]).is_err());
 
         let mut overflow = view(armored, kid);
         overflow.nodeId = U256::MAX;

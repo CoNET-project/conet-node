@@ -46,6 +46,8 @@ pub const GUARDIAN_NODES_INFO_V6: &str = "0xBC6b53065b5647261396d002bDBA0d3396E0
 /// AddressPGP (live, not upgradeable).
 pub const ADDRESS_PGP: &str = "0x684b0ac760cEE9c9b85de36d69746420648Cf9e2";
 pub const CONET_CHAIN_ID: u64 = 224_422;
+/// Default TCP forwarding port when a node registry row specifies port zero.
+pub const DEFAULT_NODE_FORWARD_PORT: u16 = 80;
 
 /// Minimal JSON-RPC client.
 #[derive(Clone)]
