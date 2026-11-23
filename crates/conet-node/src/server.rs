@@ -59,6 +59,12 @@ pub struct NodeCtx {
     /// route source has no RPC-backed epoch authority; the command reports unavailable.
     pub epoch_rpc: Option<crate::chain::Rpc>,
     pub validator_pools: Arc<crate::validator_mining::Pools>,
+    pub mining_liveness: Arc<crate::mining_liveness::MiningLiveness>,
+    /// Explicitly opt into CoNET mining SSE publishing; disabled by default.
+    pub mining_liveness_enabled: bool,
+    /// Explicit address advertised in SI mining heartbeats. The remote connection peer's IP is
+    /// not an authoritative substitute for this node's configured public address.
+    pub mining_node_ip: Option<std::net::Ipv4Addr>,
 }
 
 impl NodeCtx {
@@ -97,6 +103,9 @@ impl NodeCtx {
             fail_cache: Arc::new(crate::deliver::FailCache::default()),
             epoch_rpc: None,
             validator_pools: Arc::new(crate::validator_mining::Pools::default()),
+            mining_liveness: Arc::new(crate::mining_liveness::MiningLiveness::default()),
+            mining_liveness_enabled: false,
+            mining_node_ip: None,
         }
     }
 
@@ -184,6 +193,7 @@ pub(crate) fn now_secs() -> i64 {
 pub async fn serve(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::Result<()> {
     tokio::spawn(ctx.voice.clone().sweep_loop());
     tokio::spawn(ctx.validator_pools.clone().sweep_loop());
+    tokio::spawn(crate::mining_liveness::run_publisher(ctx.clone()));
     let slots = Arc::new(Semaphore::new(ctx.max_connections));
     loop {
         let (stream, peer) = listener.accept().await?;
@@ -528,6 +538,9 @@ mod rpc_state_tests {
         }
     }
     impl NodeNotices for TestDeps {
+        fn sign_validator_heartbeat(&self, _: u64, _: &str) -> si_crypto::Result<String> {
+            panic!("not called by route resolution tests")
+        }
         fn sign_epoch(&self, _: u64) -> si_crypto::Result<String> {
             panic!("not called by route resolution tests")
         }

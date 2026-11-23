@@ -92,6 +92,36 @@ pub fn hop_sig_payload(w: &str, t: i64, n: u64, h: &str, k: &str) -> String {
     .join("|")
 }
 
+/// TS `stratlivenessV2`: `JSON.stringify({epoch: block.toString(), wallet})`.
+/// Reject malformed wallet text so callers cannot turn this typed helper into arbitrary signing.
+pub fn validator_heartbeat_text(epoch: u64, wallet: &str) -> Option<String> {
+    let wallet = wallet
+        .strip_prefix("0x")
+        .or_else(|| wallet.strip_prefix("0X"))?;
+    if wallet.len() != 40 || !wallet.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!(
+        r#"{{"epoch":"{epoch}","wallet":"0x{}"}}"#,
+        wallet.to_ascii_lowercase()
+    ))
+}
+
+#[cfg(test)]
+mod validator_heartbeat_tests {
+    use super::validator_heartbeat_text;
+
+    #[test]
+    fn formats_only_a_normalized_validator_heartbeat() {
+        assert_eq!(
+            validator_heartbeat_text(42, "0xAABBCCDDEEFF0011223344556677889900AABBCC"),
+            Some(r#"{"epoch":"42","wallet":"0xaabbccddeeff0011223344556677889900aabbcc"}"#.into())
+        );
+        assert_eq!(validator_heartbeat_text(1, "0x123"), None);
+        assert_eq!(validator_heartbeat_text(1, "x; arbitrary"), None);
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum HopHeader {
     Absent,

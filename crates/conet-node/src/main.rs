@@ -57,6 +57,16 @@ fn public_ips_from(value: Option<&str>, egress_on: bool) -> Result<Vec<std::net:
         .collect()
 }
 
+/// Explicit public address advertised by the mining heartbeat. Never substitute a client's IP.
+fn mining_node_ip_from(value: Option<&str>) -> Result<Option<std::net::Ipv4Addr>, String> {
+    value
+        .map(|v| {
+            v.parse::<std::net::Ipv4Addr>()
+                .map_err(|_| "--node-ip-address must be one IPv4 address".to_string())
+        })
+        .transpose()
+}
+
 /// `--max-body`: a byte count. Absent keeps the default (256 KiB). Given but empty or not a
 /// number refuses to start, instead of silently keeping the default.
 fn max_body_from(value: Option<&str>) -> Result<Option<usize>, String> {
@@ -74,12 +84,13 @@ fn max_body_from(value: Option<&str>) -> Result<Option<usize>, String> {
 /// followed by another flag, empty, or blank), would otherwise fall back to a default, to a
 /// different route, key, storage or certificate source, or to a built-in address. The node
 /// refuses to start instead. Only the flag name is printed, never a value.
-const FAIL_CLOSED_FLAGS: [&str; 23] = [
+const FAIL_CLOSED_FLAGS: [&str; 24] = [
     "--signer-socket",
     "--rpc",
     "--node-registry",
     "--node-lens",
     "--mailbox-db",
+    "--node-ip-address",
     "--listen",
     "--health-listen",
     "--tls-cert",
@@ -263,6 +274,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store.clone(),
     );
     ctx.epoch_rpc = epoch_rpc;
+    ctx.mining_node_ip = mining_node_ip_from(arg("--node-ip-address").as_deref())?;
+    ctx.mining_liveness_enabled = flag("--mining-liveness");
     let api_base = setting("--api-base");
     if let (true, Some(base), Some(ur)) = (
         push_enabled(api_base.as_deref(), user_routes.is_some()),
@@ -480,7 +493,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn flag(name: &str) -> bool {
-    std::env::args().any(|a| a == name)
+    flag_in(&std::env::args().collect::<Vec<_>>(), name)
+}
+
+fn flag_in(args: &[String], name: &str) -> bool {
+    args.iter().any(|a| a == name)
 }
 
 /// Build the exit from the policy file and the operator's limits; None = stays off (reason
@@ -558,10 +575,10 @@ fn egress_exit(
 
 #[cfg(test)]
 mod arg_tests {
-    use super::arg_in;
+    use super::{arg_in, flag_in, mining_node_ip_from};
 
     /// Every flag `main` reads through `arg()`.
-    const FLAGS: [&str; 27] = [
+    const FLAGS: [&str; 28] = [
         "--acme-cache",
         "--acme-contact",
         "--acme-directory",
@@ -576,6 +593,7 @@ mod arg_tests {
         "--mailbox-db",
         "--max-body",
         "--node-lens",
+        "--node-ip-address",
         "--node-registry",
         "--public-ip",
         "--routes",
@@ -593,6 +611,27 @@ mod arg_tests {
 
     fn argv(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn mining_node_ip_is_explicit_and_strict() {
+        assert_eq!(mining_node_ip_from(None), Ok(None));
+        assert_eq!(
+            mining_node_ip_from(Some("203.0.113.7")),
+            Ok(Some("203.0.113.7".parse().unwrap()))
+        );
+        assert!(mining_node_ip_from(Some("203.0.113.7:80")).is_err());
+        assert!(mining_node_ip_from(Some("2001:db8::1")).is_err());
+        assert!(mining_node_ip_from(Some(" ")).is_err());
+    }
+
+    #[test]
+    fn mining_liveness_requires_an_explicit_flag() {
+        assert!(!flag_in(&argv(&["bin"]), "--mining-liveness"));
+        assert!(flag_in(
+            &argv(&["bin", "--mining-liveness"]),
+            "--mining-liveness"
+        ));
     }
 
     #[test]

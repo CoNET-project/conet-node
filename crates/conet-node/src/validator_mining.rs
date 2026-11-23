@@ -185,6 +185,18 @@ impl Pools {
             .expect("validator miner pool")
             .contains(&wallet.to_ascii_lowercase())
     }
+
+    pub fn snapshot(&self, now: Instant) -> (Vec<String>, Vec<String>) {
+        let mut users = self.users.lock().expect("validator user pool");
+        users.retain(|_, seen| now.saturating_duration_since(*seen) < USER_TTL);
+        let mut user_wallets: Vec<_> = users.keys().cloned().collect();
+        drop(users);
+        let miners = self.miners.lock().expect("validator miner pool");
+        let mut miner_wallets: Vec<_> = miners.iter().cloned().collect();
+        user_wallets.sort_unstable();
+        miner_wallets.sort_unstable();
+        (miner_wallets, user_wallets)
+    }
 }
 
 #[cfg(test)]

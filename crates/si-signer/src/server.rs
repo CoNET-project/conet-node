@@ -64,6 +64,25 @@ fn is_hex(s: &str, n: usize) -> bool {
     s.len() == n && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+fn sign_validator_heartbeat(wallet: &eth::EthKey, epoch: u64, target: &str) -> Response {
+    if !eth::is_address(target) {
+        return Response::Refused {
+            reason: "validator_heartbeat_fields".into(),
+        };
+    }
+    let Some(text) = sp::validator_heartbeat_text(epoch, target) else {
+        return Response::Refused {
+            reason: "validator_heartbeat_fields".into(),
+        };
+    };
+    wallet
+        .sign_message(&text)
+        .map(|value| Response::Ok { value })
+        .unwrap_or_else(|_| Response::Refused {
+            reason: "sign".into(),
+        })
+}
+
 impl Signer {
     pub fn start(cfg: SignerConfig) -> Result<Self, StartError> {
         let secrets = crate::keystore::open(&cfg.kek, &cfg.keystore_file)
@@ -180,6 +199,9 @@ impl Signer {
                 .sign_message(&epoch.to_string())
                 .map(ok)
                 .unwrap_or_else(|_| refused("sign")),
+            Request::SignValidatorHeartbeat { epoch, wallet } => {
+                sign_validator_heartbeat(&self.wallet, epoch, &wallet)
+            }
             Request::SignOfflineChat {
                 pgp_key_id,
                 eoa,
@@ -434,6 +456,26 @@ impl Signer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod validator_heartbeat_signer_tests {
+    use super::*;
+
+    #[test]
+    fn signs_only_the_fixed_validator_heartbeat_message() {
+        let key = eth::EthKey::from_hex(&format!("0x{}", "00".repeat(31) + "01")).unwrap();
+        let target = "0xAABBCCDDEEFF0011223344556677889900AABBCC";
+        let Response::Ok { value } = sign_validator_heartbeat(&key, 42, target) else {
+            panic!("valid heartbeat refused");
+        };
+        let text = sp::validator_heartbeat_text(42, target).unwrap();
+        assert_eq!(eth::recover_message(&text, &value).unwrap(), key.address());
+        assert!(matches!(
+            sign_validator_heartbeat(&key, 42, "not-an-address"),
+            Response::Refused { reason } if reason == "validator_heartbeat_fields"
+        ));
     }
 }
 

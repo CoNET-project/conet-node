@@ -103,6 +103,9 @@ impl WalletSigner for eth::EthKey {
 pub trait NodeNotices: Send + Sync {
     /// EIP-191 over the decimal epoch (block number), sent in the mailbox handshake.
     fn sign_epoch(&self, epoch: u64) -> si_crypto::Result<String>;
+    /// TS liveness heartbeat `{epoch: block.toString(), wallet}`. The signer constructs this
+    /// fixed message from validated fields; callers cannot provide arbitrary signing text.
+    fn sign_validator_heartbeat(&self, epoch: u64, wallet: &str) -> si_crypto::Result<String>;
     fn sign_offline_chat(
         &self,
         pgp_key_id: &str,
@@ -141,6 +144,11 @@ pub trait NodeNotices: Send + Sync {
 }
 
 impl NodeNotices for eth::EthKey {
+    fn sign_validator_heartbeat(&self, epoch: u64, wallet: &str) -> si_crypto::Result<String> {
+        let text = proto::validator_heartbeat_text(epoch, wallet)
+            .ok_or_else(|| si_crypto::Error::Eth("validator heartbeat wallet".into()))?;
+        eth::EthKey::sign_message(self, &text)
+    }
     fn sign_voice_call_push(
         &self,
         call_id: &str,

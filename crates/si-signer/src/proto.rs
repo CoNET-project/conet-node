@@ -26,6 +26,11 @@ pub enum Request {
     SignEpoch {
         epoch: u64,
     },
+    /// CoNET-SI mining SSE heartbeat. The signer builds the fixed `{epoch,wallet}` JSON text.
+    SignValidatorHeartbeat {
+        epoch: u64,
+        wallet: String,
+    },
     /// Beamio API notices; the signer builds the fixed text.
     SignOfflineChat {
         #[serde(rename = "pgpKeyId")]

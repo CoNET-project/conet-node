@@ -121,6 +121,12 @@ impl WalletSigner for SignerClient {
 }
 
 impl NodeNotices for SignerClient {
+    fn sign_validator_heartbeat(&self, epoch: u64, wallet: &str) -> Result<String> {
+        self.call(&Request::SignValidatorHeartbeat {
+            epoch,
+            wallet: wallet.into(),
+        })
+    }
     fn sign_voice_call_push(
         &self,
         call_id: &str,

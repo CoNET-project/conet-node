@@ -14,6 +14,7 @@ pub mod exit;
 pub mod http;
 pub mod limits;
 pub mod mailbox;
+pub mod mining_liveness;
 pub mod nr2;
 pub mod online_gate;
 pub mod probe_logic;

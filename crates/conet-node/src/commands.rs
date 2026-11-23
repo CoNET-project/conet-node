@@ -86,6 +86,22 @@ async fn validator_pool_full(stream: &mut Conn) {
         .await;
 }
 
+async fn mining_liveness_unavailable(stream: &mut Conn) {
+    let _ = stream
+        .write_all(&http::service_unavailable(
+            r#"{"ok":false,"error":"mining_liveness_unavailable"}"#,
+        ))
+        .await;
+}
+
+async fn mining_liveness_disabled(stream: &mut Conn) {
+    let _ = stream
+        .write_all(&http::service_unavailable(
+            r#"{"ok":false,"error":"mining_liveness_disabled"}"#,
+        ))
+        .await;
+}
+
 pub async fn dispatch(
     mut stream: Conn,
     peer: SocketAddr,
@@ -95,6 +111,15 @@ pub async fn dispatch(
 ) {
     match s(&command, "command") {
         "mailbox_listen" => mailbox_listen(stream, peer, command, ctx).await,
+        "mining" if matches!(s(&command, "listenKind"), "" | "mining") => {
+            if !signed {
+                not_found(&mut stream).await;
+            } else if !ctx.mining_liveness_enabled {
+                mining_liveness_disabled(&mut stream).await;
+            } else {
+                mining_liveness_listen(stream, peer, command, ctx).await;
+            }
+        }
         "mining" if ctx.legacy_chat_listen && s(&command, "listenKind") == "chat" => {
             legacy_chat_listen(stream, peer, command, ctx).await
         }
@@ -346,6 +371,76 @@ fn stream_key(c: &Value) -> Option<[u8; 32]> {
 
 const SSE_HEADERS: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nX-Accel-Buffering: no\r\nAccess-Control-Allow-Origin: *\r\n";
 
+async fn mining_liveness_listen(
+    mut stream: Conn,
+    peer: SocketAddr,
+    command: Value,
+    ctx: Arc<NodeCtx>,
+) {
+    let wallet = s(&command, "walletAddress").to_ascii_lowercase();
+    if !eth::is_address(&wallet) {
+        return not_found(&mut stream).await;
+    }
+    if ctx.mining_node_ip.is_none() {
+        return mining_liveness_unavailable(&mut stream).await;
+    }
+    let Some(rpc) = ctx.epoch_rpc.as_ref() else {
+        return mining_liveness_unavailable(&mut stream).await;
+    };
+    match rpc.chain_id().await {
+        Ok(crate::chain::CONET_CHAIN_ID) => {}
+        Ok(_) | Err(_) => {
+            return mining_liveness_unavailable(&mut stream).await;
+        }
+    }
+    let epoch = match rpc.block_number().await {
+        Ok(block) => block - block % 2,
+        Err(_) => {
+            return mining_liveness_unavailable(&mut stream).await;
+        }
+    };
+    let notices = ctx.notices.clone();
+    let hash = match tokio::task::spawn_blocking(move || notices.sign_epoch(epoch)).await {
+        Ok(Ok(hash)) => hash,
+        _ => {
+            return mining_liveness_unavailable(&mut stream).await;
+        }
+    };
+    let initial = json!({
+        "ipaddress": peer.ip().to_string(),
+        "epoch": epoch,
+        "status": 200,
+        "nodeWallet": ctx.wallet.address().to_ascii_lowercase(),
+        "hash": hash,
+    });
+    let headers = format!(
+        "{SSE_HEADERS}Date: {}\r\n\r\ndata: {initial}\r\n\r\n",
+        httpdate::fmt_http_date(SystemTime::now())
+    );
+    let Some((id, mut frames)) = ctx.mining_liveness.register(wallet.clone()) else {
+        return mining_liveness_unavailable(&mut stream).await;
+    };
+    if stream.write_all(headers.as_bytes()).await.is_err() {
+        ctx.mining_liveness.remove(&wallet, id);
+        return;
+    }
+    let (mut read, mut write) = tokio::io::split(stream);
+    let mut scratch = [0u8; 512];
+    loop {
+        tokio::select! {
+            frame = frames.recv() => match frame {
+                Some(frame) if write.write_all(&frame).await.is_ok() => {}
+                _ => break,
+            },
+            read_result = read.read(&mut scratch) => if matches!(read_result, Ok(0) | Err(_)) { break },
+            _ = tokio::time::sleep(Duration::from_secs(25)) => {
+                if write.write_all(b": keepalive\r\n\r\n").await.is_err() { break; }
+            }
+        }
+    }
+    ctx.mining_liveness.remove(&wallet, id);
+}
+
 async fn mailbox_listen(mut stream: Conn, peer: SocketAddr, c: Value, ctx: Arc<NodeCtx>) {
     let Some(key) = stream_key(&c) else {
         return not_found(&mut stream).await;
@@ -526,6 +621,9 @@ mod validator_tests {
         }
     }
     impl NodeNotices for UnusedDeps {
+        fn sign_validator_heartbeat(&self, _: u64, _: &str) -> si_crypto::Result<String> {
+            unreachable!()
+        }
         fn sign_epoch(&self, _: u64) -> si_crypto::Result<String> {
             unreachable!()
         }
@@ -608,6 +706,51 @@ mod validator_tests {
         assert!(response.starts_with("HTTP/1.1 503"));
         assert!(response.contains(r#""error":"validator_pool_full""#));
         assert!(!response.contains("route_lookup_unavailable"));
+    }
+
+    #[tokio::test]
+    async fn mining_listener_without_node_ip_returns_unavailable() {
+        let (server, mut client) = tokio::io::duplex(2048);
+        let mut ctx = ctx();
+        Arc::get_mut(&mut ctx).unwrap().mining_liveness_enabled = true;
+        dispatch(
+            Box::new(server),
+            "127.0.0.1:1".parse().unwrap(),
+            serde_json::json!({
+                "command":"mining",
+                "walletAddress":"0x0000000000000000000000000000000000000002"
+            }),
+            true,
+            ctx,
+        )
+        .await;
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 503"));
+        assert!(response.contains(r#""error":"mining_liveness_unavailable""#));
+        assert!(!response.contains("\"nodeIpAddr\":\"\""));
+    }
+
+    #[tokio::test]
+    async fn mining_listener_is_disabled_by_default() {
+        let (server, mut client) = tokio::io::duplex(2048);
+        dispatch(
+            Box::new(server),
+            "127.0.0.1:1".parse().unwrap(),
+            serde_json::json!({
+                "command":"mining",
+                "walletAddress":"0x0000000000000000000000000000000000000002"
+            }),
+            true,
+            ctx(),
+        )
+        .await;
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 503"));
+        assert!(response.contains(r#""error":"mining_liveness_disabled""#));
     }
 
     async fn rpc_url(responses: Vec<(String, String)>) -> String {
