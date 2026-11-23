@@ -326,8 +326,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
     if flag("--treasury-v3-watch") {
-        let address = conet_node::runtime::treasury_address(
-            &arg("--treasury-v3-address").ok_or("--treasury-v3-address <address>")?,
+        let address_override = arg("--treasury-v3-address");
+        let address_env = std::env::var("TREASURY_V3_ADDRESS").ok();
+        let address = conet_node::runtime::treasury_address_from(
+            address_override.as_deref(),
+            address_env.as_deref(),
         )?;
         let base_rpc = setting("--treasury-v3-base-rpc")
             .ok_or("--treasury-v3-watch requires --treasury-v3-base-rpc <http-url>")?;
@@ -342,13 +345,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .parse::<u64>()
             .map_err(|_| "--treasury-v3-conet-deploy-block must be a u64")?;
         let state_dir = arg("--runtime-state-dir").ok_or("--runtime-state-dir <directory>")?;
-        for (chain, rpc, deploy) in [
-            ("base", base_rpc, base_deploy),
-            ("conet", conet_rpc, conet_deploy),
+        for (chain, rpc, deploy, chain_id) in [
+            ("base", base_rpc, base_deploy, 8_453),
+            (
+                "conet",
+                conet_rpc,
+                conet_deploy,
+                conet_node::chain::CONET_CHAIN_ID,
+            ),
         ] {
             tokio::spawn(conet_node::runtime::run_treasury_v3_scan(
                 Rpc::new(&rpc)?,
                 address,
+                chain_id,
+                ctx.wallet.address().parse::<alloy_primitives::Address>()?,
                 std::path::PathBuf::from(&state_dir),
                 chain,
                 deploy,

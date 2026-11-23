@@ -74,10 +74,18 @@ impl UserRoute {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct NodeEntry {
     addr: SocketAddr,
     mailbox: bool,
+    wallet: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeWalletLookup {
+    Known(String),
+    NoRecord,
+    UnknownDomain,
 }
 
 pub struct RouteTable {
@@ -168,9 +176,34 @@ impl RouteTable {
         nodes: impl IntoIterator<Item = (String, SocketAddr, bool)>,
         own_must_be_listed: bool,
     ) {
+        self.replace_node_records(
+            nodes
+                .into_iter()
+                .map(|(k, addr, mailbox)| (k, addr, mailbox, None)),
+            own_must_be_listed,
+        );
+    }
+
+    /// Replace route and chain wallet records from the same complete snapshot. V6 rows have no
+    /// wallet field; NR2 rows carry the wallet on-chain. Keeping the optional wallet in the same
+    /// node entry makes domain lookup observe one table version atomically.
+    pub fn replace_node_records(
+        &self,
+        nodes: impl IntoIterator<Item = (String, SocketAddr, bool, Option<String>)>,
+        own_must_be_listed: bool,
+    ) {
         let map: HashMap<String, NodeEntry> = nodes
             .into_iter()
-            .map(|(k, addr, mailbox)| (k.to_uppercase(), NodeEntry { addr, mailbox }))
+            .map(|(k, addr, mailbox, wallet)| {
+                (
+                    k.to_uppercase(),
+                    NodeEntry {
+                        addr,
+                        mailbox,
+                        wallet: wallet.map(|w| w.to_ascii_lowercase()),
+                    },
+                )
+            })
             .collect();
         let own = match map.get(&self.own_key) {
             Some(e) => e.mailbox,
@@ -179,6 +212,25 @@ impl RouteTable {
         *self.own_mailbox.write().expect("route lock") = own;
         *self.node_ips.write().expect("route lock") = map.values().map(|e| e.addr.ip()).collect();
         *self.nodes.write().expect("route lock") = map;
+    }
+
+    /// Resolve the current wallet for a node domain/key ID from the same atomically replaced
+    /// node table. `NoRecord` means the domain is present in a source without a wallet field
+    /// (Guardian V6/static); `UnknownDomain` means absent from the current table.
+    pub fn node_wallet(&self, domain: &str) -> NodeWalletLookup {
+        match self
+            .nodes
+            .read()
+            .expect("route lock")
+            .get(&domain.to_uppercase())
+        {
+            Some(NodeEntry {
+                wallet: Some(wallet),
+                ..
+            }) => NodeWalletLookup::Known(wallet.clone()),
+            Some(NodeEntry { wallet: None, .. }) => NodeWalletLookup::NoRecord,
+            None => NodeWalletLookup::UnknownDomain,
+        }
     }
 
     pub fn set_own_aliases(&self, keys: &[String]) {
@@ -334,6 +386,36 @@ mod tests {
         assert_eq!(t.resolve("u1"), Resolved::NoRoute);
         assert!(t.is_node_ip("127.0.0.1".parse().unwrap()));
         assert!(!t.is_node_ip("127.0.0.2".parse().unwrap()));
+    }
+
+    #[test]
+    fn node_wallet_lookup_is_versioned_with_route_table_and_fail_closed() {
+        let t = RouteTable::new("own", Duration::from_secs(60));
+        let addr = "127.0.0.1:9".parse().unwrap();
+        t.replace_node_records(
+            [
+                (
+                    "A1B2".to_string(),
+                    addr,
+                    true,
+                    Some("0x0000000000000000000000000000000000000001".into()),
+                ),
+                ("V6KEY".to_string(), addr, true, None),
+            ],
+            false,
+        );
+        assert_eq!(
+            t.node_wallet("a1b2"),
+            NodeWalletLookup::Known("0x0000000000000000000000000000000000000001".into())
+        );
+        assert_eq!(t.node_wallet("v6key"), NodeWalletLookup::NoRecord);
+        assert_eq!(t.node_wallet("missing"), NodeWalletLookup::UnknownDomain);
+
+        // A full next snapshot atomically replaces the previous mapping; stale wallet rows do not
+        // remain usable after a node key/wallet update or removal.
+        t.replace_node_records([("A1B2".to_string(), addr, true, None)], false);
+        assert_eq!(t.node_wallet("a1b2"), NodeWalletLookup::NoRecord);
+        assert_eq!(t.node_wallet("v6key"), NodeWalletLookup::UnknownDomain);
     }
 
     #[test]

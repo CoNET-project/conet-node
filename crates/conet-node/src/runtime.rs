@@ -7,6 +7,7 @@
 use crate::chain::{ChainError, Rpc};
 use crate::epoch::{self, CurrentRate};
 use crate::treasury_v3::{ReadOnlyCursorStore, ReadOnlyScanner};
+use crate::treasury_v3_miner;
 use alloy_primitives::Address;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -88,11 +89,24 @@ fn now_unix() -> u64 {
 pub async fn run_treasury_v3_scan(
     rpc: Rpc,
     address: Address,
+    expected_chain_id: u64,
+    miner_wallet: Address,
     state_dir: PathBuf,
     chain: &str,
     deploy_block: u64,
     interval: Duration,
 ) {
+    match treasury_v3_eligible(&rpc, address, expected_chain_id, miner_wallet).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::info!(chain, wallet = %format!("{miner_wallet:#x}"), "Treasury V3 scan: configured signer is not an eligible miner");
+            return;
+        }
+        Err(error) => {
+            tracing::error!(%error, chain, "Treasury V3 scan: miner eligibility unavailable; refusing to scan");
+            return;
+        }
+    }
     let store = match ReadOnlyCursorStore::for_chain(&state_dir, chain) {
         Ok(store) => store,
         Err(error) => {
@@ -156,9 +170,39 @@ pub async fn run_treasury_v3_scan(
     }
 }
 
+/// Validate the configured endpoint before using a chain-specific Treasury address. Wrong-chain
+/// RPC, chainId failure, and isMiner failure stay errors; an explicit `false` is the sole
+/// ineligible result.
+pub async fn treasury_v3_eligible(
+    rpc: &Rpc,
+    address: Address,
+    expected_chain_id: u64,
+    miner_wallet: Address,
+) -> Result<bool, ChainError> {
+    let actual = rpc.chain_id().await?;
+    if actual != expected_chain_id {
+        return Err(ChainError(format!(
+            "Treasury V3 expected chainId {expected_chain_id}, got {actual}"
+        )));
+    }
+    treasury_v3_miner::is_miner(rpc, &format!("{address:#x}"), miner_wallet).await
+}
+
 pub fn treasury_address(raw: &str) -> Result<Address, String> {
     Address::from_str(raw.trim())
         .map_err(|_| "--treasury-v3-address must be an Ethereum address".into())
+}
+
+pub const DEFAULT_TREASURY_V3_ADDRESS: &str = "0xa208982212978550594A7FEEB70a61665d129003";
+
+/// Mirror the TypeScript `TREASURY_V3_ADDRESS` source: explicit CLI override, then environment,
+/// then the reviewed source default. A present but blank override is an error rather than a
+/// fallback to another address.
+pub fn treasury_address_from(cli: Option<&str>, env: Option<&str>) -> Result<Address, String> {
+    match cli.or(env) {
+        Some(raw) => treasury_address(raw),
+        None => treasury_address(DEFAULT_TREASURY_V3_ADDRESS),
+    }
 }
 
 #[cfg(test)]
@@ -221,6 +265,11 @@ mod tests {
     fn treasury_address_requires_a_valid_address() {
         assert!(treasury_address("0xa208982212978550594A7FEEB70a61665d129003").is_ok());
         assert!(treasury_address("not-an-address").is_err());
+        assert!(treasury_address_from(None, None).is_ok());
+        assert!(treasury_address_from(None, Some(" ")).is_err());
+        assert!(
+            treasury_address_from(Some("0x0000000000000000000000000000000000000001"), None).is_ok()
+        );
     }
 
     #[tokio::test]
@@ -243,5 +292,56 @@ mod tests {
         let url = rpc_http(vec![(503, r#"{"error":"unavailable"}"#.into())]).await;
         let rpc = Rpc::new(&url).unwrap();
         assert!(epoch_tick(&rpc, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn treasury_startup_gate_distinguishes_chain_miner_and_rpc_failure() {
+        let true_word = format!("0x{}01", "00".repeat(31));
+        let url = rpc_http(vec![
+            (200, r#"{"jsonrpc":"2.0","id":1,"result":"0x2105"}"#.into()),
+            (
+                200,
+                format!(r#"{{"jsonrpc":"2.0","id":1,"result":"{true_word}"}}"#),
+            ),
+        ])
+        .await;
+        let rpc = Rpc::new(&url).unwrap();
+        let address = Address::repeat_byte(0x11);
+        let wallet = Address::repeat_byte(0x22);
+        assert!(treasury_v3_eligible(&rpc, address, 8_453, wallet)
+            .await
+            .unwrap());
+
+        let url = rpc_http(vec![(
+            200,
+            r#"{"jsonrpc":"2.0","id":1,"result":"0x36d0e"}"#.into(),
+        )])
+        .await;
+        let rpc = Rpc::new(&url).unwrap();
+        assert!(treasury_v3_eligible(&rpc, address, 8_453, wallet)
+            .await
+            .is_err());
+
+        let url = rpc_http(vec![
+            (200, r#"{"jsonrpc":"2.0","id":1,"result":"0x2105"}"#.into()),
+            (
+                200,
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"result":"0x{}"}}"#,
+                    "00".repeat(32)
+                ),
+            ),
+        ])
+        .await;
+        let rpc = Rpc::new(&url).unwrap();
+        assert!(!treasury_v3_eligible(&rpc, address, 8_453, wallet)
+            .await
+            .unwrap());
+
+        let url = rpc_http(vec![(503, r#"{"error":"unavailable"}"#.into())]).await;
+        let rpc = Rpc::new(&url).unwrap();
+        assert!(treasury_v3_eligible(&rpc, address, 8_453, wallet)
+            .await
+            .is_err());
     }
 }

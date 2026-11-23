@@ -138,6 +138,13 @@ impl Rpc {
         )
     }
 
+    /// The configured RPC endpoint's chain identity. Callers that use chain-specific contract
+    /// addresses must compare this value with their expected chain before making those calls.
+    pub async fn chain_id(&self) -> Result<u64, ChainError> {
+        let v = self.call("eth_chainId", json!([])).await?;
+        checked_u64(parse_rpc_quantity(&v, "eth_chainId")?, "eth_chainId")
+    }
+
     /// `eth_call` without `from`. `block` = None means latest.
     pub async fn eth_call(
         &self,
