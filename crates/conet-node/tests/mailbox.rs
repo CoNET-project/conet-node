@@ -392,11 +392,14 @@ async fn legacy_chat_listen_marks_online_and_health_reports_it() {
     let r: Value = serde_json::from_str(&post(n.a, &command(&n.g, "other", q, 41)).await).unwrap();
     assert_eq!(r["online"], true, "legacy listen counts as online");
 
-    // plain `mining` (no chat label) is not served
+    // plain `mining` (no chat label) is disabled unless liveness is opted in
     let cmd = json!({ "command": "mining", "walletAddress": client });
-    assert!(post(n.a, &command(&n.g, "client", cmd, 42))
-        .await
-        .contains("404 Not Found"));
+    let response = post(n.a, &command(&n.g, "client", cmd, 42)).await;
+    assert!(
+        response.contains("503 Service Unavailable")
+            && response.contains("mining_liveness_disabled"),
+        "{response}"
+    );
 
     let mut h = TcpStream::connect(n.health).await.unwrap();
     h.write_all(b"GET /healthz HTTP/1.1\r\nHost: l\r\n\r\n")
