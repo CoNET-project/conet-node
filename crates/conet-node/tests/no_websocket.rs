@@ -4,8 +4,9 @@
 //!   `Upgrade: websocket` + `Sec-WebSocket-Key`: never `101`, never `Sec-WebSocket-Accept`;
 //! - the upgrade attempts are refused before any upstream connection (a local fake upstream
 //!   counts its connections);
-//! - a forwarded `POST /post` carrying those headers reaches the next hop as a fresh request the
-//!   node builds itself: no `Upgrade`, `Connection: upgrade` or `Sec-WebSocket-*` header.
+//! - a normal forwarded `POST /post` with only WebSocket metadata (no `Upgrade` or
+//!   `Connection: upgrade`) reaches the next hop as a fresh request the node builds itself, with
+//!   no `Upgrade` or `Sec-WebSocket-*` headers.
 //!
 //! The TLS listener runs the same `server::handle` on the decrypted stream, so the plain-port
 //! checks cover its request handling.
@@ -118,8 +119,25 @@ async fn start(hop: SocketAddr) -> (SocketAddr, SocketAddr, Value) {
 }
 
 async fn send(addr: SocketAddr, head: &str, body: &str) -> String {
+    send_with_headers(addr, head, body, &WS).await
+}
+
+async fn send_with_websocket_metadata(addr: SocketAddr, head: &str, body: &str) -> String {
+    const METADATA: [&str; 2] = [
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version: 13",
+    ];
+    send_with_headers(addr, head, body, &METADATA).await
+}
+
+async fn send_with_headers(
+    addr: SocketAddr,
+    head: &str,
+    body: &str,
+    headers: &[&str],
+) -> String {
     let mut s = TcpStream::connect(addr).await.unwrap();
-    let extra: String = WS.iter().map(|h| format!("{h}\r\n")).collect();
+    let extra: String = headers.iter().map(|h| format!("{h}\r\n")).collect();
     let req = format!(
         "{head}\r\nHost: test\r\n{extra}Content-Length: {}\r\n\r\n{body}",
         body.len()
@@ -186,7 +204,7 @@ async fn forwarded_request_never_carries_upgrade_headers() {
     )
     .unwrap();
     let body = json!({ "data": armor }).to_string();
-    let resp = send(a, "POST /post HTTP/1.1", &body).await;
+    let resp = send_with_websocket_metadata(a, "POST /post HTTP/1.1", &body).await;
     assert_not_upgraded("forwarded POST", &resp);
     assert_eq!(hop.conns.load(Ordering::SeqCst), 1, "forwarded once");
     let seen = hop.seen.lock().unwrap().clone();
