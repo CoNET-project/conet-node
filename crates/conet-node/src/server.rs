@@ -217,29 +217,28 @@ pub(crate) async fn handle(mut stream: Conn, peer: SocketAddr, ctx: Arc<NodeCtx>
         return;
     }
     match (req.method.as_str(), req.path.as_str()) {
-        (_, path) if path.to_ascii_lowercase().starts_with("/solana-rpc") => {
-            match &ctx.solana_rpc {
-                Some(proxy) => match proxy.forward(&req).await {
-                    Ok(reply) => {
-                        let _ = stream
-                            .write_all(&crate::solana_rpc::encode_reply(reply))
-                            .await;
-                    }
-                    Err(crate::solana_rpc::ProxyError::BadRequest) => {
-                        let _ = stream.write_all(&http::bad_request()).await;
-                    }
-                    Err(
-                        crate::solana_rpc::ProxyError::Upstream
-                        | crate::solana_rpc::ProxyError::TooLarge,
-                    ) => {
-                        let _ = stream.write_all(&crate::solana_rpc::bad_gateway()).await;
-                    }
-                },
-                None => {
+        (_, path) if crate::solana_rpc::is_solana_rpc_path(path) => match &ctx.solana_rpc {
+            Some(proxy) => match proxy.forward(&req).await {
+                Ok(reply) => {
+                    let _ = stream
+                        .write_all(&crate::solana_rpc::encode_reply(reply))
+                        .await;
+                }
+                Err(crate::solana_rpc::ProxyError::BadRequest) => {
+                    let _ = stream.write_all(&http::bad_request()).await;
+                }
+                Err(
+                    crate::solana_rpc::ProxyError::Upstream
+                    | crate::solana_rpc::ProxyError::Redirect
+                    | crate::solana_rpc::ProxyError::TooLarge,
+                ) => {
                     let _ = stream.write_all(&crate::solana_rpc::bad_gateway()).await;
                 }
+            },
+            None => {
+                let _ = stream.write_all(&crate::solana_rpc::bad_gateway()).await;
             }
-        }
+        },
         ("OPTIONS", _) => {
             let _ = stream.write_all(&http::options_204()).await;
         }

@@ -17,9 +17,11 @@ const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 pub enum ProxyError {
     BadRequest,
     Upstream,
+    Redirect,
     TooLarge,
 }
 
+#[derive(Debug)]
 pub struct ProxyReply {
     pub status: StatusCode,
     pub headers: Vec<(String, String)>,
@@ -33,9 +35,13 @@ pub struct SolanaRpcProxy {
 
 impl SolanaRpcProxy {
     pub fn new() -> Result<Self, reqwest::Error> {
+        Self::with_timeout(Duration::from_secs(30))
+    }
+
+    fn with_timeout(timeout: Duration) -> Result<Self, reqwest::Error> {
         Ok(Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(30))
+                .timeout(timeout)
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
         })
@@ -68,7 +74,7 @@ impl SolanaRpcProxy {
             .split('#')
             .next()
             .ok_or(ProxyError::BadRequest)?;
-        if !path.starts_with("/solana-rpc") || path.starts_with("//") || path.contains('\\') {
+        if !is_solana_rpc_path(path) || path.starts_with("//") || path.contains('\\') {
             return Err(ProxyError::BadRequest);
         }
         let mut url = Url::parse(base).map_err(|_| ProxyError::BadRequest)?;
@@ -100,6 +106,11 @@ impl SolanaRpcProxy {
         }
         let response = builder.send().await.map_err(|_| ProxyError::Upstream)?;
         let status = response.status();
+        // A redirect response can otherwise send the caller to an unconfigured host. Refuse it
+        // explicitly and do not expose Location to the client.
+        if status.is_redirection() {
+            return Err(ProxyError::Redirect);
+        }
         let headers = response
             .headers()
             .iter()
@@ -131,6 +142,14 @@ impl SolanaRpcProxy {
             body,
         })
     }
+}
+
+pub fn is_solana_rpc_path(path: &str) -> bool {
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    path.eq_ignore_ascii_case("/solana-rpc")
+        || path.get("/solana-rpc".len()..).is_some_and(|tail| {
+            path[.."/solana-rpc".len()].eq_ignore_ascii_case("/solana-rpc") && tail.starts_with('/')
+        })
 }
 
 fn request_has_upgrade(request: &Request) -> bool {
@@ -237,7 +256,12 @@ mod tests {
     #[tokio::test]
     async fn bad_or_non_rpc_paths_never_reach_upstream() {
         let proxy = SolanaRpcProxy::new().unwrap();
-        for path in ["//evil.invalid/solana-rpc", "/not-rpc", "/solana-rpc\\evil"] {
+        for path in [
+            "//evil.invalid/solana-rpc",
+            "/not-rpc",
+            "/solana-rpc\\evil",
+            "/solana-rpc-suffix",
+        ] {
             let req = request("POST", path, b"{}");
             assert!(matches!(
                 proxy.forward_at(&req, "http://127.0.0.1:1").await,
@@ -264,5 +288,73 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(25), listener.accept()).await,
             Err(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn redirect_is_rejected_after_one_fixed_upstream_request() {
+        for status in [301, 302] {
+            let redirect_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let redirect_addr = redirect_listener.local_addr().unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let upstream = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await.unwrap();
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status} Redirect\r\nLocation: http://{redirect_addr}/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            });
+            let proxy = SolanaRpcProxy::new().unwrap();
+            let req = request("POST", "/solana-rpc", b"{}");
+            let error = proxy
+                .forward_at(&req, &format!("http://{addr}"))
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ProxyError::Redirect));
+            upstream.await.unwrap();
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_millis(25), redirect_listener.accept()).await,
+                Err(_)
+            ));
+            assert!(String::from_utf8(bad_gateway())
+                .unwrap()
+                .starts_with("HTTP/1.1 502"));
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_and_timeout_fail_as_explicit_502() {
+        let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = closed.local_addr().unwrap();
+        drop(closed);
+        let req = request("POST", "/solana-rpc", b"{}");
+        let proxy = SolanaRpcProxy::new().unwrap();
+        assert!(matches!(
+            proxy.forward_at(&req, &format!("http://{addr}")).await,
+            Err(ProxyError::Upstream)
+        ));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stalled = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+        let fast = SolanaRpcProxy::with_timeout(Duration::from_millis(10)).unwrap();
+        assert!(matches!(
+            fast.forward_at(&req, &format!("http://{addr}")).await,
+            Err(ProxyError::Upstream)
+        ));
+        stalled.await.unwrap();
+        assert!(String::from_utf8(bad_gateway())
+            .unwrap()
+            .starts_with("HTTP/1.1 502"));
     }
 }
