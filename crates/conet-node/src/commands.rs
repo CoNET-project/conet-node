@@ -78,6 +78,14 @@ async fn lookup_unavailable(stream: &mut Conn) {
         .await;
 }
 
+async fn validator_pool_full(stream: &mut Conn) {
+    let _ = stream
+        .write_all(&http::service_unavailable(
+            r#"{"ok":false,"error":"validator_pool_full"}"#,
+        ))
+        .await;
+}
+
 pub async fn dispatch(
     mut stream: Conn,
     peer: SocketAddr,
@@ -149,7 +157,7 @@ async fn mining_validator(stream: &mut Conn, command: &Value, ctx: &NodeCtx) {
             | Err(crate::validator_mining::Refuse::Invalid(_)) => return not_found(stream).await,
         };
     if !ctx.validator_pools.record(&accepted, Instant::now()) {
-        return lookup_unavailable(stream).await;
+        return validator_pool_full(stream).await;
     }
     let data = match accepted {
         crate::validator_mining::Accept::User { data, .. }
@@ -586,6 +594,20 @@ mod validator_tests {
             client.read_to_end(&mut response).await.unwrap();
             assert!(String::from_utf8(response).unwrap().starts_with(status));
         }
+    }
+
+    #[tokio::test]
+    async fn validator_pool_full_has_a_distinct_unavailable_reason() {
+        let (server, mut client) = tokio::io::duplex(1024);
+        let mut conn: Conn = Box::new(server);
+        validator_pool_full(&mut conn).await;
+        drop(conn);
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 503"));
+        assert!(response.contains(r#""error":"validator_pool_full""#));
+        assert!(!response.contains("route_lookup_unavailable"));
     }
 
     async fn rpc_url(responses: Vec<(String, String)>) -> String {

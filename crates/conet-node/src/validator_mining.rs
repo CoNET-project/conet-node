@@ -137,9 +137,11 @@ impl Pools {
         match accepted {
             Accept::User { wallet, .. } => {
                 let mut users = self.users.lock().expect("validator user pool");
-                users.retain(|_, seen| now.saturating_duration_since(*seen) < USER_TTL);
                 if !users.contains_key(wallet) && users.len() >= MAX_USER_WALLETS {
-                    return false;
+                    users.retain(|_, seen| now.saturating_duration_since(*seen) < USER_TTL);
+                    if users.len() >= MAX_USER_WALLETS {
+                        return false;
+                    }
                 }
                 users.insert(wallet.clone(), now);
                 true
@@ -339,5 +341,30 @@ mod tests {
             },
             now,
         ));
+    }
+
+    #[test]
+    fn user_pool_rejects_at_capacity_then_recovers_after_expiry() {
+        let pools = Pools::default();
+        let now = Instant::now();
+        for index in 0..MAX_USER_WALLETS {
+            assert!(pools.record(
+                &Accept::User {
+                    wallet: format!("wallet-{index}"),
+                    data: Value::Null,
+                },
+                now,
+            ));
+        }
+        let overflow = Accept::User {
+            wallet: "wallet-over-capacity".into(),
+            data: Value::Null,
+        };
+        assert!(!pools.record(&overflow, now));
+
+        let after_ttl = now + USER_TTL + std::time::Duration::from_secs(1);
+        assert!(pools.record(&overflow, after_ttl));
+        assert_eq!(pools.users.lock().unwrap().len(), 1);
+        assert!(pools.user_active("wallet-over-capacity", after_ttl));
     }
 }
