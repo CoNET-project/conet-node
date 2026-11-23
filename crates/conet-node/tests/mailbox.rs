@@ -392,13 +392,14 @@ async fn legacy_chat_listen_marks_online_and_health_reports_it() {
     let r: Value = serde_json::from_str(&post(n.a, &command(&n.g, "other", q, 41)).await).unwrap();
     assert_eq!(r["online"], true, "legacy listen counts as online");
 
-    // plain `mining` (no chat label) is disabled unless liveness is opted in
+    // plain `mining` (no chat label) is disabled unless liveness is opted in.
+    // `post()` strips the HTTP status line, so assert the complete error body.
     let cmd = json!({ "command": "mining", "walletAddress": client });
-    let response = post(n.a, &command(&n.g, "client", cmd, 42)).await;
-    assert!(
-        response.contains("503 Service Unavailable")
-            && response.contains("mining_liveness_disabled"),
-        "{response}"
+    let response: Value =
+        serde_json::from_str(&post(n.a, &command(&n.g, "client", cmd, 42)).await).unwrap();
+    assert_eq!(
+        response,
+        json!({ "ok": false, "error": "mining_liveness_disabled" })
     );
 
     let mut h = TcpStream::connect(n.health).await.unwrap();
