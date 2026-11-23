@@ -74,7 +74,7 @@ fn max_body_from(value: Option<&str>) -> Result<Option<usize>, String> {
 /// followed by another flag, empty, or blank), would otherwise fall back to a default, to a
 /// different route, key, storage or certificate source, or to a built-in address. The node
 /// refuses to start instead. Only the flag name is printed, never a value.
-const FAIL_CLOSED_FLAGS: [&str; 17] = [
+const FAIL_CLOSED_FLAGS: [&str; 23] = [
     "--signer-socket",
     "--rpc",
     "--node-registry",
@@ -92,6 +92,12 @@ const FAIL_CLOSED_FLAGS: [&str; 17] = [
     "--webrtc-public",
     "--public-ip",
     "--max-body",
+    "--treasury-v3-address",
+    "--treasury-v3-base-rpc",
+    "--treasury-v3-conet-rpc",
+    "--treasury-v3-base-deploy-block",
+    "--treasury-v3-conet-deploy-block",
+    "--runtime-state-dir",
 ];
 
 /// True when a value is present and usable: not missing, not another flag, not blank.
@@ -308,6 +314,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             opts.force_full = Duration::from_secs(3600);
         }
         tokio::spawn(watcher::run(src, routes, ctx.chain.clone(), opts));
+    }
+    // Optional chain observers are deliberately opt-in. They use HTTP JSON-RPC only and never
+    // request signatures or submit transactions. In particular, this keeps a normal node start
+    // from unexpectedly scanning Treasury history or calling the Epoch contracts.
+    if flag("--epoch-watch") {
+        let url = setting("--rpc").ok_or("--epoch-watch requires --rpc <http-url>")?;
+        tokio::spawn(conet_node::runtime::run_epoch_watch(
+            Rpc::new(&url)?,
+            Duration::from_secs(12),
+        ));
+    }
+    if flag("--treasury-v3-watch") {
+        let address = conet_node::runtime::treasury_address(
+            &arg("--treasury-v3-address").ok_or("--treasury-v3-address <address>")?,
+        )?;
+        let base_rpc = setting("--treasury-v3-base-rpc")
+            .ok_or("--treasury-v3-watch requires --treasury-v3-base-rpc <http-url>")?;
+        let conet_rpc = setting("--treasury-v3-conet-rpc")
+            .ok_or("--treasury-v3-watch requires --treasury-v3-conet-rpc <http-url>")?;
+        let base_deploy = arg("--treasury-v3-base-deploy-block")
+            .ok_or("--treasury-v3-base-deploy-block <block>")?
+            .parse::<u64>()
+            .map_err(|_| "--treasury-v3-base-deploy-block must be a u64")?;
+        let conet_deploy = arg("--treasury-v3-conet-deploy-block")
+            .ok_or("--treasury-v3-conet-deploy-block <block>")?
+            .parse::<u64>()
+            .map_err(|_| "--treasury-v3-conet-deploy-block must be a u64")?;
+        let state_dir = arg("--runtime-state-dir").ok_or("--runtime-state-dir <directory>")?;
+        for (chain, rpc, deploy) in [
+            ("base", base_rpc, base_deploy),
+            ("conet", conet_rpc, conet_deploy),
+        ] {
+            tokio::spawn(conet_node::runtime::run_treasury_v3_scan(
+                Rpc::new(&rpc)?,
+                address,
+                std::path::PathBuf::from(&state_dir),
+                chain,
+                deploy,
+                Duration::from_secs(12),
+            ));
+        }
     }
     // Stake term watch (read-only, log lines only): with a NodeRegistryV2.
     if let (Some(url), Some(reg)) = (setting("--rpc"), arg("--node-registry")) {

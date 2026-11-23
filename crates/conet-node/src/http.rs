@@ -154,6 +154,20 @@ pub fn service_unavailable(body: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Refuse protocol upgrades before a handler can create an upstream connection.
+pub fn upgrade_refused() -> Vec<u8> {
+    let body = r#"{"ok":false,"error":"protocol_upgrade_unsupported"}"#;
+    format!(
+        "HTTP/1.1 400 Bad Request\r\nServer: nginx/1.18.0\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(), body
+    )
+    .into_bytes()
+}
+
+pub fn bad_request() -> Vec<u8> {
+    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
+}
+
 /// SI `distorySocket`: an nginx-looking 404 page.
 pub fn not_found() -> Vec<u8> {
     let header = "404 Not Found";

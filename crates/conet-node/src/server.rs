@@ -40,6 +40,9 @@ pub struct NodeCtx {
     /// SilentPass exit (`SaaS_Sock5*`); None = not an exit.
     pub exit: Option<Arc<crate::exit::Exit>>,
     pub push: Arc<dyn Push>,
+    /// Fixed-host HTTP-only Solana JSON-RPC proxy. None means the HTTP client could not initialize;
+    /// the route then returns an explicit 502 rather than pretending to have an empty result.
+    pub solana_rpc: Option<crate::solana_rpc::SolanaRpcProxy>,
     pub chain: Arc<ChainState>,
     pub limits: Limits,
     pub connect_timeout: Duration,
@@ -78,6 +81,7 @@ impl NodeCtx {
             offers: Arc::new(crate::store::MemoryOffers::default()),
             exit: None,
             push,
+            solana_rpc: crate::solana_rpc::SolanaRpcProxy::new().ok(),
             chain: Arc::new(ChainState::default()),
             limits: Limits::default(),
             connect_timeout: Duration::from_secs(8),
@@ -208,7 +212,34 @@ pub(crate) async fn handle(mut stream: Conn, peer: SocketAddr, ctx: Arc<NodeCtx>
             return;
         }
     };
+    if request_has_upgrade(&req) {
+        let _ = stream.write_all(&http::upgrade_refused()).await;
+        return;
+    }
     match (req.method.as_str(), req.path.as_str()) {
+        (_, path) if path.to_ascii_lowercase().starts_with("/solana-rpc") => {
+            match &ctx.solana_rpc {
+                Some(proxy) => match proxy.forward(&req).await {
+                    Ok(reply) => {
+                        let _ = stream
+                            .write_all(&crate::solana_rpc::encode_reply(reply))
+                            .await;
+                    }
+                    Err(crate::solana_rpc::ProxyError::BadRequest) => {
+                        let _ = stream.write_all(&http::bad_request()).await;
+                    }
+                    Err(
+                        crate::solana_rpc::ProxyError::Upstream
+                        | crate::solana_rpc::ProxyError::TooLarge,
+                    ) => {
+                        let _ = stream.write_all(&crate::solana_rpc::bad_gateway()).await;
+                    }
+                },
+                None => {
+                    let _ = stream.write_all(&crate::solana_rpc::bad_gateway()).await;
+                }
+            }
+        }
         ("OPTIONS", _) => {
             let _ = stream.write_all(&http::options_204()).await;
         }
@@ -225,6 +256,20 @@ pub(crate) async fn handle(mut stream: Conn, peer: SocketAddr, ctx: Arc<NodeCtx>
             let _ = stream.write_all(&http::not_found()).await;
         }
     }
+}
+
+fn request_has_upgrade(request: &http::Request) -> bool {
+    request.method.eq_ignore_ascii_case("upgrade")
+        || request.header_lines.iter().any(|line| {
+            let Some((name, value)) = line.split_once(':') else {
+                return false;
+            };
+            name.trim().eq_ignore_ascii_case("upgrade")
+                || (name.trim().eq_ignore_ascii_case("connection")
+                    && value
+                        .split(',')
+                        .any(|v| v.trim().eq_ignore_ascii_case("upgrade")))
+        })
 }
 
 async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<NodeCtx>) {
@@ -525,6 +570,32 @@ mod rpc_state_tests {
         );
         ctx.user_routes = Some(Arc::new(Routes(routes)));
         ctx
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_is_refused_before_rpc_proxy_dispatch() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut ctx = context(Reply::Missing);
+        // If routing reached the proxy, it would return 502. A 400 proves the shared request gate
+        // refused the Upgrade before any proxy dispatch or upstream connection attempt.
+        ctx.solana_rpc = None;
+        let (server_io, mut client_io) = tokio::io::duplex(4096);
+        let task = tokio::spawn(handle(
+            Box::new(server_io),
+            "127.0.0.1:12345".parse().unwrap(),
+            Arc::new(ctx),
+        ));
+        client_io
+            .write_all(b"GET /solana-rpc HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client_io.read_to_end(&mut response).await.unwrap();
+        task.await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
+        assert!(response.contains("protocol_upgrade_unsupported"));
     }
 
     #[tokio::test]
