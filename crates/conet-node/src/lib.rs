@@ -27,7 +27,6 @@ pub mod route;
 pub mod runtime;
 pub mod server;
 pub mod service_order;
-pub mod solana_rpc;
 pub mod stake_term;
 pub mod stake_view;
 pub mod store;

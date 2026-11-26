@@ -40,9 +40,6 @@ pub struct NodeCtx {
     /// SilentPass exit (`SaaS_Sock5*`); None = not an exit.
     pub exit: Option<Arc<crate::exit::Exit>>,
     pub push: Arc<dyn Push>,
-    /// Fixed-host HTTP-only Solana JSON-RPC proxy. None means the HTTP client could not initialize;
-    /// the route then returns an explicit 502 rather than pretending to have an empty result.
-    pub solana_rpc: Option<crate::solana_rpc::SolanaRpcProxy>,
     pub chain: Arc<ChainState>,
     pub limits: Limits,
     pub connect_timeout: Duration,
@@ -96,7 +93,6 @@ impl NodeCtx {
             offers: Arc::new(crate::store::MemoryOffers::default()),
             exit: None,
             push,
-            solana_rpc: crate::solana_rpc::SolanaRpcProxy::new().ok(),
             chain: Arc::new(ChainState::default()),
             limits: Limits::default(),
             connect_timeout: Duration::from_secs(8),
@@ -241,28 +237,6 @@ pub(crate) async fn handle(mut stream: Conn, peer: SocketAddr, ctx: Arc<NodeCtx>
         return;
     }
     match (req.method.as_str(), req.path.as_str()) {
-        (_, path) if crate::solana_rpc::is_solana_rpc_path(path) => match &ctx.solana_rpc {
-            Some(proxy) => match proxy.forward(&req).await {
-                Ok(reply) => {
-                    let _ = stream
-                        .write_all(&crate::solana_rpc::encode_reply(reply))
-                        .await;
-                }
-                Err(crate::solana_rpc::ProxyError::BadRequest) => {
-                    let _ = stream.write_all(&http::bad_request()).await;
-                }
-                Err(
-                    crate::solana_rpc::ProxyError::Upstream
-                    | crate::solana_rpc::ProxyError::Redirect
-                    | crate::solana_rpc::ProxyError::TooLarge,
-                ) => {
-                    let _ = stream.write_all(&crate::solana_rpc::bad_gateway()).await;
-                }
-            },
-            None => {
-                let _ = stream.write_all(&crate::solana_rpc::bad_gateway()).await;
-            }
-        },
         ("OPTIONS", _) => {
             let _ = stream.write_all(&http::options_204()).await;
         }
@@ -598,28 +572,86 @@ mod rpc_state_tests {
         ctx
     }
 
-    #[tokio::test]
-    async fn websocket_upgrade_is_refused_before_rpc_proxy_dispatch() {
+    async fn handle_raw_request(method: &str, path: &str, extra_headers: &[&str]) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let mut ctx = context(Reply::Missing);
-        // If routing reached the proxy, it would return 502. A 400 proves the shared request gate
-        // refused the Upgrade before any proxy dispatch or upstream connection attempt.
-        ctx.solana_rpc = None;
-        let (server_io, mut client_io) = tokio::io::duplex(4096);
+        let ctx = context(Reply::Missing);
+        let (server_io, mut client_io) = tokio::io::duplex(8192);
         let task = tokio::spawn(handle(
             Box::new(server_io),
             "127.0.0.1:12345".parse().unwrap(),
             Arc::new(ctx),
         ));
-        client_io
-            .write_all(b"GET /solana-rpc HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\n\r\n")
-            .await
-            .unwrap();
+        let body = if method.eq_ignore_ascii_case("POST") {
+            br#"{"jsonrpc":"2.0","id":7,"method":"getBalance","params":["mock-wallet"]}"#.as_slice()
+        } else {
+            b"".as_slice()
+        };
+        let mut request = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n");
+        if method.eq_ignore_ascii_case("POST") {
+            request.push_str(&format!(
+                "Content-Type: application/json\r\nContent-Length: {}\r\n",
+                body.len()
+            ));
+        }
+        for header in extra_headers {
+            request.push_str(header);
+            request.push_str("\r\n");
+        }
+        if !extra_headers.iter().any(|h| {
+            h.split_once(':')
+                .is_some_and(|(n, _)| n.eq_ignore_ascii_case("connection"))
+        }) {
+            request.push_str("Connection: close\r\n");
+        }
+        request.push_str("\r\n");
+        client_io.write_all(request.as_bytes()).await.unwrap();
+        client_io.write_all(body).await.unwrap();
         let mut response = Vec::new();
         client_io.read_to_end(&mut response).await.unwrap();
         task.await.unwrap();
-        let response = String::from_utf8(response).unwrap();
+        String::from_utf8(response).unwrap()
+    }
+
+    #[tokio::test]
+    async fn removed_solana_rpc_paths_use_only_generic_fallbacks() {
+        for (method, path, expected) in [
+            ("GET", "/solana-rpc", "404 Not Found"),
+            ("POST", "/solana-rpc", "404 Not Found"),
+            ("GET", "/solana-rpc/", "404 Not Found"),
+            ("POST", "/solana-rpc/nested?case=rpc&n=0", "404 Not Found"),
+            ("GET", "/SOLANA-RPC?query=1", "404 Not Found"),
+            ("POST", "/SoLaNa-RpC/child?x=y", "404 Not Found"),
+            // OPTIONS remains the server's generic CORS response, not a proxy route.
+            ("OPTIONS", "/solana-rpc", "204 No Content"),
+            ("OPTIONS", "/solana-rpc/nested?x=y", "204 No Content"),
+            ("OPTIONS", "/SOLANA-RPC?query=1", "204 No Content"),
+        ] {
+            let response = handle_raw_request(method, path, &[]).await;
+            assert!(
+                response.starts_with(&format!("HTTP/1.1 {expected}")),
+                "{method} {path}: {response:?}"
+            );
+        }
+        // Unrelated generic routes retain their existing behavior.
+        assert!(handle_raw_request("OPTIONS", "/ordinary", &[])
+            .await
+            .starts_with("HTTP/1.1 204"));
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_is_still_refused_before_generic_fallback() {
+        let response = handle_raw_request(
+            "GET",
+            "/solana-rpc",
+            &[
+                "Connection: keep-alive, Upgrade",
+                "Upgrade: websocket",
+                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+                "Sec-WebSocket-Version: 13",
+            ],
+        )
+        .await;
         assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
         assert!(response.contains("protocol_upgrade_unsupported"));
     }
