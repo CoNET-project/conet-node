@@ -1,0 +1,28 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA256
+
+Origin: CoNET Project
+Label: CoNET-SI Rust
+Suite: stable
+Codename: stable
+Date: Fri, 27 Nov 2026 08:53:30 GMT
+Architectures: amd64
+Components: main
+Description: CoNET-SI Rust packages
+SHA256:
+ fec6d2518c34aac31f1f17e5f97944ef71e9ad4aa3a711709104a1bd85726ad8 1306 PROVENANCE.json
+ 4e4850c5c9aeabb0d3fa0b09f8224d8e78bc005351faedb5e5a14a580c3b9c69 488 main/binary-amd64/Packages
+-----BEGIN PGP SIGNATURE-----
+
+iQHPBAEBCAA5FiEERHuAQ2OAk3z10sxVa4eK55kkl9kFAmsJSFsbFIAAAAAABAAO
+bWFudTIsMi41KzEuMTIsMCwzAAoJEGuHiueZJJfZmVML/R58aVEqsYAp4nQAjfK7
+7h1P32Jzrsg2dZZRLOs1QS1hUxwVttGsr4M6IPtohV/r81j8QjWMDQqcZ2MIQ5zQ
+RXzsWVtRXsLt5hyUwtGdH9ZzIqMPxfGtHptthPdoj97L78EdLS5Utmnmh/nYr9Mi
+cHlrKX1QIQStnBSl30vI+Eodry6ekil2si7jMgU8WcemK/T+j6x6VuYiHilbJaJY
+UeKKORT3TBxq2mSM3+l4LVp1nb4UND+TPwybIBXpYpey52KqKVkYQqQ6TriCB+5r
+uDe5SuqHYF35P30i8oLd4BFrv5RpVnz0xTWcV/Xu/AQXbg6gQV3vIHYMFh1FGGHd
+cetT7S7VtVcA+CvSUn+sVXJ9o72aOvtmEnY1pxTPiTnfREAhKD/GmbmqtVCN0gYb
+2XF9KenilInP+jmRGc8TQh/NwI2jMVfcerZUqVRbTmxVvKLBK6RpXMdFriI2vMdc
+t8MseS5/nKC3ZrvDuOGSMSVvPlYUImYdBTE+odka6p1LnA==
+=DeIp
+-----END PGP SIGNATURE-----

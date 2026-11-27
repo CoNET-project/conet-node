@@ -1,0 +1,14 @@
+Package: conet-node
+Version: 0.0.1+git20261126.ca64f794-1
+Architecture: amd64
+Section: net
+Priority: optional
+Maintainer: CoNET Project <info@conet.network>
+Installed-Size: 19904
+Depends: libc6 (>= 2.43-2ubuntu2.3), libgcc-s1 (>= 16-20260322-1ubuntu1)
+Homepage: https://conet.network/
+Description: CoNET-SI Rust node
+Filename: pool/main/c/conet-node/conet-node_0.0.1+git20261126.ca64f794-1_amd64.deb
+Size: 6170500
+SHA256: 6f0ea5aeb468404a74fbb8574bdcdb05e02156436ed43519c82cec89a5ba77cf
+
