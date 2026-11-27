@@ -81,7 +81,7 @@ gpg --dearmor < "$KEYTMP/conet-archive-keyring.asc" \
   | sudo tee /usr/share/keyrings/conet-archive-keyring.gpg > /dev/null
 ```
 
-Remove the temporary directory, which now holds only the downloaded key, and restore your GnuPG environment (run this in the same shell as step 1):
+Remove the temporary directory, which now holds only the downloaded key, and unset the two variables (set `GNUPGHOME` again if you use your own). Run this in the same shell as step 1:
 
 ```bash
 rm -rf -- "${KEYTMP:?}"
@@ -142,17 +142,17 @@ dpkg-query -W -f='${Package} ${Version} ${Status}\n' conet-node
 
 ### What is verified
 
-Everything below was run on 2026-11-27 as an unprivileged user in an isolated APT directory, on Ubuntu 26.04.1 LTS (amd64) with apt 3.2.1 and gpg 2.4.8. Nothing was installed on that system and its own APT configuration was not changed. Three things are kept apart here.
+Items 1 and 2 below were run on 2026-11-27 as an unprivileged user in an isolated APT directory, on Ubuntu 26.04.1 LTS (amd64) with apt 3.2.1 and gpg 2.4.8. Nothing was installed on that system; its dpkg status and APT source list were unchanged. Item 3 is a different, earlier run inside a guest. Three things are kept apart here.
 
 **1. Actually downloaded and checked (not installed).**
 
-- The index: `InRelease` is signed by the key above and verifies with `gpg`, and `apt update` accepts it under the `Signed-By` entry from step 2. The package entry in the index matches the table above. [`PROVENANCE.json`](https://conet-project.github.io/conet-node/dists/stable/PROVENANCE.json) records the source commit and tree, the `Cargo.lock` hash and the SHA-256 of the binary.
+- The index: `InRelease` is signed by the key above and verifies with `gpg`, and `apt update` accepts it under an equivalent `Signed-By` entry (a keyring in a private directory instead of `/usr/share/keyrings`). The package entry in the index matches the table above. [`PROVENANCE.json`](https://conet-project.github.io/conet-node/dists/stable/PROVENANCE.json) records the source commit and tree, the `Cargo.lock` hash and the SHA-256 of the binary.
 - The key download and the fingerprint check of step 1, and the `apt policy` output of step 3 (verbatim).
 - The package itself, fetched with `apt-get download`: its size and SHA-256 equal the index entry, it contains one file, `/usr/lib/conet-node/conet-node`, and its control data has no maintainer scripts.
 
 **2. Only simulated (`apt -s`, against a synthetic dpkg status).**
 
-- `apt install conet-node`, `apt install --only-upgrade conet-node` and `apt upgrade`: apt printed the plan (an `Inst` and a `Conf` line for `conet-node` from `CoNET-SI Rust:stable`; for the two upgrade commands the `Inst` line shows the old version in brackets) and nothing was changed.
+- `apt install conet-node`, `apt install --only-upgrade conet-node` (also with the current version already installed, where apt reports it is already the newest version) and `apt upgrade`: apt printed the plan (an `Inst` and a `Conf` line for `conet-node` from `CoNET-SI Rust:stable`; for the two upgrade commands the `Inst` line shows the old version in brackets) and nothing was changed.
 - The `dpkg-query` output of step 4 was produced against a synthetic dpkg status that stands in for an installed package; it is the format of the answer, not a result from a real install.
 
 **3. A real install or upgrade of the system.**
