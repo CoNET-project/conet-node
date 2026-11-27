@@ -260,6 +260,17 @@ impl RouteTable {
             keys.iter().map(|k| k.to_uppercase()).collect();
     }
 
+    /// Route key ID (the node's public domain label) of the node at `addr`, if the table has one.
+    /// A scan; used only by the evidence log.
+    pub fn node_key_of_addr(&self, addr: SocketAddr) -> Option<String> {
+        self.nodes
+            .read()
+            .expect("route lock")
+            .iter()
+            .find(|(_, e)| e.addr == addr)
+            .map(|(k, _)| k.to_ascii_uppercase())
+    }
+
     pub fn is_node_ip(&self, ip: IpAddr) -> bool {
         self.node_ips.read().expect("route lock").contains(&ip)
     }

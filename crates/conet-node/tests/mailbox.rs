@@ -106,7 +106,7 @@ struct Net {
     store_b: Arc<MemoryStore>,
     user_key: String,
     health: SocketAddr,
-    b: SocketAddr,
+    b_key: String,
     ev_a: std::path::PathBuf,
     ev_b: std::path::PathBuf,
     _dir: tempfile::TempDir,
@@ -178,7 +178,7 @@ async fn start() -> Net {
         store_b,
         user_key,
         health,
-        b: ab,
+        b_key: idb.clone(),
         ev_a,
         ev_b,
         _dir: dir,
@@ -491,7 +491,8 @@ async fn evidence_rows_follow_one_message_through_entry_and_mailbox() {
             json!(armor_hash(si_proto::as_pgp_message_armor(raw).unwrap()))
         );
         let _ = trimmed;
-        assert_eq!(fwd["next_node"], json!(n.b.to_string()));
+        // The next hop is named by its public route key ID, never by address.
+        assert_eq!(fwd["next_node"], json!(n.b_key.to_uppercase()));
         assert_eq!(fwd["len_bucket"].as_u64().unwrap() % 256, 0);
     }
     // Mailbox B: the hash it stored is the one the client acknowledges, one live listen each time.
@@ -551,6 +552,7 @@ async fn evidence_rows_follow_one_message_through_entry_and_mailbox() {
         n.user_key.to_lowercase(),
         "pgp message".to_string(),
         B64.encode([1u8; 32]).to_lowercase(),
+        "127.0.0.1".to_string(),
     ] {
         assert!(!text.contains(&secret), "{secret}");
     }

@@ -23,10 +23,12 @@ Removing or purging the package keeps `/var/lib/conet-signer` and `/var/lib/cone
 
 ## Identity: keep the node identity a CoNET-SI (TS) node already has
 
-The node keeps its wallet and route key. They come from the node's own `nodeSetup.json`
-(`~/.CoNET-SI/nodeSetup.json` of the account that runs the TS service), read once, and sealed into
-the signer's keystore under a KEK held by systemd-creds. The file is read only: never moved, edited
-or copied, and the Rust side never reads it again.
+The node keeps its wallet and route key. They come from the node's own `nodeSetup.json`, the file a
+CoNET-SI (TS) node keeps in the `.CoNET-SI` directory of the account that runs the TS service. It is
+read once and sealed into the signer's keystore under a KEK held by systemd-creds. The file is only
+read: it is never moved or edited, and the Rust side never reads it again. (`systemd-run` with
+`LoadCredential=` holds an in-memory copy of it for as long as the transient unit exists; the copy
+vanishes when the unit ends, and `LimitCORE=0` keeps a crash from writing it to disk.)
 
 1. One-time KEK (root): `systemd-creds encrypt --name=conet-node-kek - /etc/credstore.encrypted/conet-node-kek`
    fed from 32 random bytes on stdin (bound to the TPM when present, otherwise to the host key).
@@ -36,9 +38,10 @@ or copied, and the Rust side never reads it again.
 
    ```sh
    systemd-run --wait --pipe --collect \
-     -p User=conet-signer -p ProtectSystem=strict -p StateDirectory=conet-signer -p PrivateNetwork=yes \
+     -p User=conet-signer -p ProtectSystem=strict -p StateDirectory=conet-signer \
+     -p StateDirectoryMode=0700 -p PrivateNetwork=yes -p LimitCORE=0 \
      -p LoadCredentialEncrypted=conet-node-kek:/etc/credstore.encrypted/conet-node-kek \
-     -p LoadCredential=nodesetup:/home/<ts-service-user>/.CoNET-SI/nodeSetup.json \
+     -p LoadCredential=nodesetup:<path of the TS node's nodeSetup.json> \
      -E WALLET=0x<node wallet> -E KEYID=<16 hex> \
      /bin/sh -c 'exec /usr/lib/conet-node/conet-signer import-ts-setup \
         --setup "$CREDENTIALS_DIRECTORY/nodesetup" --keystore /var/lib/conet-signer/keystore.json \
@@ -52,14 +55,16 @@ or copied, and the Rust side never reads it again.
 
 `signer.env` sets `CONET_NODE_REGISTRY=0x000…000`. This is a placeholder for the chat pilot (the
 signer needs an address for its EIP-712 domain; NodeRegistryV2 is not deployed, the pilot requests
-no statement, and `BindNode` stays refused). It must be replaced with the real address when
+no statement, and `BindNode` stays refused; with the all-zero value the signer also refuses every EIP-712 statement request, `domain_placeholder`). It must be replaced with the real address when
 NodeRegistryV2 is deployed. The signer was tested to start and serve chat with the all-zero value
 (`the_all_zero_verifying_contract_placeholder_starts_and_serves_chat`).
 
 ## Evidence log
 
 `conet-node.service` passes `--evidence-log /var/lib/conet-node/evidence/evidence.jsonl` (owner
-`conet-node`, mode 0640, capped at 64 MiB). One JSON line per event with a closed field set:
+`conet-node`, mode 0640, capped at 64 MiB). The binary has the log off unless the flag is given; this
+unit turns it on for the pilot only, and the flag will be removed from the unit before the official
+release. One JSON line per event with a closed field set:
 UTC time, the node's public route key ID, role (`entry` or `mailbox`), event, and keccak256 hashes of
 the armors handled. It holds no wallet, user key ID, client address, armor text or stream key.
 
@@ -71,6 +76,9 @@ Hashes are `0x` plus 64 lowercase hex, keccak256 over the UTF-8 text.
 - `h_in`: the armor as the mailbox stored and delivered it (the `data` of the SSE frame); this is the
   hash in `gossip_delivery_ack` and in the sender's delivery receipt. For mailbox work it is the inner
   armor, trimmed and cut after its END line; for a bare armor post it is the posted string byte for byte.
+
+`next_node` is the public route key ID (the domain label) of the next-hop node, taken from the node
+table; rows contain no client address, no wallet and no IP address.
 
 Rows: `post` (entry: `h_raw h_recv h_fwd next_node hops len_bucket forward`), `store` (mailbox:
 `h_in stored live_sessions push_enqueued`, plus `h_raw h_recv` of the post that carried it),
@@ -89,3 +97,15 @@ cache in `/var/lib/conet-node/acme`.
 Stop and disable `conet.service` first (port 80 and 443 must be free). The TS program and
 `nodeSetup.json` stay where they are as rollback material. Rollback: stop and disable
 `conet-node.service` and `conet-signer.service`, then enable and start `conet.service`.
+
+## Known gap (S7): `--insecure-*` flags are still in the binaries
+
+`conet-node` still accepts `--insecure-dev-keys` (test keys from the environment) and `conet-signer`
+still accepts `--insecure-kek-file`. Neither unit uses them; each prints a warning at start. They are
+to be removed from release builds (a Cargo feature) before this package goes beyond the pilot. After
+installing, check that both units are exactly the shipped ones:
+
+```sh
+systemctl cat conet-node.service conet-signer.service | grep -c -- '--insecure'   # must print 0
+systemctl cat conet-node.service conet-signer.service | grep -E '^# /'            # only /usr/lib/... paths, no drop-in
+```

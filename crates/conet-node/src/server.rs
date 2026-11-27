@@ -379,7 +379,7 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
                                 ev.post_forward(
                                     received.as_ref(),
                                     &armor,
-                                    Some(addr),
+                                    ctx.routes.node_key_of_addr(addr),
                                     hops_len,
                                     crate::evidence::Forward::SameArmor,
                                 );

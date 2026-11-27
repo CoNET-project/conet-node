@@ -20,6 +20,9 @@ pub struct Signer {
     /// Retiring route key (R11), if any.
     previous: Option<(opgp::SecretCert, String)>,
     domain: Domain,
+    /// The EIP-712 verifying contract is the all-zero placeholder (chat pilot, NodeRegistryV2 not
+    /// deployed): every EIP-712 statement is refused, so the placeholder signs nothing.
+    zero_domain: bool,
     pub allow_bind: bool,
     /// When set, only this peer uid may connect.
     pub allow_uid: Option<u32>,
@@ -104,6 +107,11 @@ impl Signer {
         };
         drop(secrets);
         let domain = Domain::new(&cfg.verifying_contract).map_err(|e| StartError(e.to_string()))?;
+        let zero_domain = cfg
+            .verifying_contract
+            .trim_start_matches("0x")
+            .bytes()
+            .all(|b| b == b'0');
         if cfg.anchor_node_id.is_some() && cfg.quota.is_none() {
             return Err(StartError(
                 "anchor receipts need a quota ledger (--quota-state)".into(),
@@ -153,6 +161,7 @@ impl Signer {
             key_id,
             previous,
             domain,
+            zero_domain,
             allow_bind: cfg.allow_bind,
             allow_uid: cfg.allow_uid,
             anchor_node_id: cfg.anchor_node_id,
@@ -347,6 +356,9 @@ impl Signer {
                 if !self.allow_bind {
                     return refused("bind_disabled");
                 }
+                if self.zero_domain {
+                    return refused("domain_placeholder");
+                }
                 let b = (|| -> si_crypto::Result<BindNode> {
                     Ok(BindNode {
                         operator: e7::address_word(&operator)?,
@@ -380,6 +392,9 @@ impl Signer {
                 let Some(own) = &self.anchor_node_id else {
                     return refused("anchor_disabled");
                 };
+                if self.zero_domain {
+                    return refused("domain_placeholder");
+                }
                 let (Ok(node), Ok(anchor)) = (e7::u256_dec(&node_id), e7::u256_dec(own)) else {
                     return refused("anchor_fields");
                 };

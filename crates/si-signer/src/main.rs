@@ -252,7 +252,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// the file and passes the descriptor); nothing is written, moved or locked.
 fn read_setup(path: &std::path::Path) -> Result<Zeroizing<Vec<u8>>, Box<dyn std::error::Error>> {
     use std::io::Read;
-    let mut buf = Zeroizing::new(Vec::new());
+    // Allocated once at the largest size read, so no grown-and-freed copy is left behind.
+    let mut buf = Zeroizing::new(Vec::with_capacity(ts_setup::MAX_SETUP_BYTES + 1));
     std::fs::File::open(path)?
         .take(ts_setup::MAX_SETUP_BYTES as u64 + 1)
         .read_to_end(&mut buf)?;

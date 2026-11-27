@@ -107,8 +107,9 @@ pub struct Row {
     /// trimmed and cut after its END line. A bare armor post: the posted string byte for byte.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub h_in: Option<String>,
-    /// Address of the next hop node (public node-table data), when there is exactly one. Never a
-    /// route or user key ID: the key ID an entry sees may be the recipient's user key.
+    /// Public route key ID (the domain label) of the next-hop node, looked up from the node table by
+    /// the address the armor was sent to, when there is exactly one hop. Never the key ID the post
+    /// carried (it may be the recipient's user key), never an IP address.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_node: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -292,7 +293,7 @@ impl EvidenceLog {
         &self,
         rcv: Option<&Received>,
         armor: &str,
-        next_node: Option<std::net::SocketAddr>,
+        next_node: Option<String>,
         hops: usize,
         forward: Forward,
     ) {
@@ -306,7 +307,7 @@ impl EvidenceLog {
             h_raw: rcv.map(|r| r.h_raw.clone()),
             h_recv: rcv.map(|r| r.h_recv.clone()),
             h_fwd: Some(h_fwd),
-            next_node: next_node.map(|a| a.to_string()),
+            next_node,
             hops: Some(hops as u32),
             len_bucket: Some(bucket(armor.len())),
             forward: Some(match forward {

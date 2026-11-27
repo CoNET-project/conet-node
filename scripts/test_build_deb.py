@@ -88,7 +88,8 @@ class Stage(unittest.TestCase):
         self.assertNotIn("--insecure", node + signer)
         self.assertNotIn("EnvironmentFile=-", node + signer)         # a missing env file must stop the start
         self.assertIn("--evidence-log /var/lib/conet-node/evidence/evidence.jsonl", node)
-        self.assertIn("ConditionPathExists=/var/lib/conet-signer/keystore.json", signer)
+        self.assertIn("\nAssertPathExists=/var/lib/conet-signer/keystore.json", signer)
+        self.assertNotIn("ConditionPathExists", signer)
         for word in ("systemctl", "enable", "restart", "start ", "stop ", "reload"):
             self.assertNotIn(word, "\n".join(l for l in post.splitlines() if not l.lstrip().startswith("#")), word)
         self.assertIn("[Install]", node)

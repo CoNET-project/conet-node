@@ -640,3 +640,46 @@ async fn the_all_zero_verifying_contract_placeholder_starts_and_serves_chat() {
         "BindNode stays refused without --allow-bind"
     );
 }
+
+/// With the all-zero placeholder domain, every EIP-712 statement is refused, even with
+/// `--allow-bind`: the placeholder signs nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_placeholder_domain_signs_no_eip712_statement_even_with_allow_bind() {
+    let e = Env::new();
+    let mut cfg = e.cfg(true, None);
+    cfg.verifying_contract = "0x0000000000000000000000000000000000000000".into();
+    let c = Arc::new(e.start(cfg, "zero-bind").await);
+    let own = e.g["keys"]["nodeA"]["encKeyId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = call(
+        &c,
+        Request::SignBind {
+            operator: "0x1111111111111111111111111111111111111111".into(),
+            node_id: "0".into(),
+            ip_hash: P1.into(),
+            key_id: format!("0x{}", own.to_lowercase()),
+            pgp_hash: P2.into(),
+            nonce: "0".into(),
+            deadline: "9999999999".into(),
+        },
+    )
+    .await;
+    assert!(r.unwrap_err().contains("domain_placeholder"));
+    // Hop signatures (EIP-191, no domain) keep working.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let c2 = c.clone();
+    assert!(tokio::task::spawn_blocking(move || si_core::sign_hop(
+        &*c2,
+        "armor",
+        "B71B2F36BC7A9B84",
+        now
+    ))
+    .await
+    .unwrap()
+    .is_ok());
+}

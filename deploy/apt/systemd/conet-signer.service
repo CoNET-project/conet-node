@@ -7,8 +7,10 @@
 Description=CoNET node signer
 Documentation=https://github.com/CoNET-project/conet-node
 After=local-fs.target
-# Never start without a keystore: the import (conet-signer import-ts-setup) must have run.
-ConditionPathExists=/var/lib/conet-signer/keystore.json
+# Never start without a keystore: the import (conet-signer import-ts-setup) must have run. An
+# Assert (not a Condition) makes a missing keystore a failure, so conet-node, which Requires this
+# unit, does not start either.
+AssertPathExists=/var/lib/conet-signer/keystore.json
 
 [Service]
 Type=simple
