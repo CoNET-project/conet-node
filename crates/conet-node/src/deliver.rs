@@ -280,7 +280,7 @@ async fn send_slot(
         Target::Invalid => Outcome::ChainInvalid,
         Target::Local => {
             let hop_bytes = Node::verified_hop_bytes(hops, crate::server::now_secs());
-            ctx.mailbox.deliver(
+            let report = ctx.mailbox.deliver_report(
                 key_id,
                 Stored {
                     armor: armor.to_string(),
@@ -289,6 +289,9 @@ async fn send_slot(
                     hops: hops.len(),
                 },
             );
+            if let Some(ev) = &ctx.evidence {
+                ev.store(None, armor, report);
+            }
             Outcome::Stored(http::ok_200(""))
         }
         Target::Remote(a) => send_remote(ctx, a, key_id, armor, hops, deadline).await,

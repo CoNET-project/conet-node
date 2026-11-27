@@ -84,7 +84,7 @@ fn max_body_from(value: Option<&str>) -> Result<Option<usize>, String> {
 /// followed by another flag, empty, or blank), would otherwise fall back to a default, to a
 /// different route, key, storage or certificate source, or to a built-in address. The node
 /// refuses to start instead. Only the flag name is printed, never a value.
-const FAIL_CLOSED_FLAGS: [&str; 24] = [
+const FAIL_CLOSED_FLAGS: [&str; 25] = [
     "--signer-socket",
     "--rpc",
     "--node-registry",
@@ -109,6 +109,7 @@ const FAIL_CLOSED_FLAGS: [&str; 24] = [
     "--treasury-v3-base-deploy-block",
     "--treasury-v3-conet-deploy-block",
     "--runtime-state-dir",
+    "--evidence-log",
 ];
 
 /// True when a value is present and usable: not missing, not another flag, not blank.
@@ -275,6 +276,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     ctx.epoch_rpc = epoch_rpc;
     ctx.mining_node_ip = mining_node_ip_from(arg("--node-ip-address").as_deref())?;
+    // Off unless asked: node-side delivery evidence for tests (see `evidence`).
+    if let Some(path) = arg("--evidence-log") {
+        let log =
+            conet_node::evidence::EvidenceLog::open(std::path::Path::new(&path), &ctx.key_id)?;
+        log.start(env!("CARGO_PKG_VERSION"));
+        ctx.evidence = Some(Arc::new(log));
+    }
     ctx.mining_liveness_enabled = flag("--mining-liveness");
     let api_base = setting("--api-base");
     if let (true, Some(base), Some(ur)) = (
@@ -578,7 +586,7 @@ mod arg_tests {
     use super::{arg_in, flag_in, mining_node_ip_from};
 
     /// Every flag `main` reads through `arg()`.
-    const FLAGS: [&str; 28] = [
+    const FLAGS: [&str; 29] = [
         "--acme-cache",
         "--acme-contact",
         "--acme-directory",
@@ -588,6 +596,7 @@ mod arg_tests {
         "--api-base",
         "--dev-route-key",
         "--egress-policy",
+        "--evidence-log",
         "--health-listen",
         "--listen",
         "--mailbox-db",

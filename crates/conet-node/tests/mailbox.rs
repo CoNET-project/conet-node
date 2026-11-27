@@ -1,6 +1,7 @@
 //! Stage A2 end-to-end: client → entry A → mailbox B, golden TEST keys, chain replaced by a double.
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use conet_node::chain::{BoxFut, ChainError, UserRoutes};
+use conet_node::evidence::EvidenceLog;
 use conet_node::mailbox::Mailbox;
 use conet_node::push::{Push, VoiceCall};
 use conet_node::route::RouteTable;
@@ -105,6 +106,10 @@ struct Net {
     store_b: Arc<MemoryStore>,
     user_key: String,
     health: SocketAddr,
+    b: SocketAddr,
+    ev_a: std::path::PathBuf,
+    ev_b: std::path::PathBuf,
+    _dir: tempfile::TempDir,
 }
 
 async fn start() -> Net {
@@ -142,7 +147,10 @@ async fn start() -> Net {
         routes(&ida),
         Arc::new(MemoryStore::default()),
     );
+    let dir = tempfile::tempdir().unwrap();
+    let (ev_a, ev_b) = (dir.path().join("a.jsonl"), dir.path().join("b.jsonl"));
     ca.user_routes = Some(chain.clone());
+    ca.evidence = Some(Arc::new(EvidenceLog::open(&ev_a, &ida).unwrap()));
     let store_b = Arc::new(MemoryStore::default());
     let push = Arc::new(RecordingPush::default());
     let mut cb = NodeCtx::new(
@@ -154,6 +162,7 @@ async fn start() -> Net {
         store_b.clone(),
     );
     cb.user_routes = Some(chain);
+    cb.evidence = Some(Arc::new(EvidenceLog::open(&ev_b, &idb).unwrap()));
     cb.push = push.clone();
     cb.mailbox = Arc::new(Mailbox::new(store_b.clone(), push.clone()));
     let cb = Arc::new(cb);
@@ -169,6 +178,10 @@ async fn start() -> Net {
         store_b,
         user_key,
         health,
+        b: ab,
+        ev_a,
+        ev_b,
+        _dir: dir,
     }
 }
 
@@ -418,4 +431,127 @@ async fn legacy_chat_listen_marks_online_and_health_reports_it() {
     let q = json!({ "command": "wallet_online_query", "walletAddress": other, "targetWallet": client, "timestamp": now() });
     let r: Value = serde_json::from_str(&post(n.a, &command(&n.g, "other", q, 43)).await).unwrap();
     assert_eq!(r["online"], false);
+}
+
+fn rows(p: &std::path::Path) -> Vec<Value> {
+    std::fs::read_to_string(p)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn evidence_rows_follow_one_message_through_entry_and_mailbox() {
+    let n = start().await;
+    let user = pubkey(&n.g, "user");
+    let mut l = Listen::connect(&n, 1).await;
+    // 1. A bare armor post (what live clients send for ordinary messages): stored byte for byte.
+    let m1 = enc(10, "first", &user);
+    let h1 = armor_hash(&m1);
+    assert_eq!(post(n.a, &m1).await, "");
+    assert_eq!(l.next().await.unwrap()["data"], m1);
+    // 2. Mailbox work (new clients): B stores the inner armor trimmed and cut after END.
+    let m2 = enc(11, "second", &user);
+    let work = enc(
+        12,
+        &json!({ "data": m2 }).to_string(),
+        &pubkey(&n.g, "nodeB"),
+    );
+    let h2 = armor_hash(m2.trim());
+    assert_ne!(h2, armor_hash(&m2), "the fixture armor ends with a newline");
+    assert_eq!(post(n.a, &work).await, "");
+    assert_eq!(l.next().await.unwrap()["data"], m2.trim());
+    // ACK of the first, presence query.
+    let ack = json!({ "command": "gossip_delivery_ack", "walletAddress": n.g["wallets"]["client"]["address"], "armorHash": h1, "timestamp": now() });
+    let r: Value =
+        serde_json::from_str(&post(n.a, &command(&n.g, "client", ack, 21)).await).unwrap();
+    assert_eq!(r["removed"], true);
+    let q = json!({ "command": "wallet_online_query", "walletAddress": n.g["wallets"]["other"]["address"], "targetWallet": n.g["wallets"]["client"]["address"], "timestamp": now() });
+    let _ = post(n.a, &command(&n.g, "other", q, 20)).await;
+
+    let (a, b) = (rows(&n.ev_a), rows(&n.ev_b));
+    // Entry A passed both armors on unchanged, to B's address.
+    for (raw, trimmed) in [(&m1, m1.as_str()), (&work, work.trim())] {
+        let fwd = a
+            .iter()
+            .find(|r| r["h_raw"] == json!(armor_hash(raw)))
+            .expect("entry row");
+        assert_eq!(
+            (
+                fwd["ev"].as_str(),
+                fwd["role"].as_str(),
+                fwd["forward"].as_str()
+            ),
+            (Some("post"), Some("entry"), Some("same_armor"))
+        );
+        assert_eq!(fwd["h_fwd"], fwd["h_raw"]);
+        assert_eq!(
+            fwd["h_recv"],
+            json!(armor_hash(si_proto::as_pgp_message_armor(raw).unwrap()))
+        );
+        let _ = trimmed;
+        assert_eq!(fwd["next_node"], json!(n.b.to_string()));
+        assert_eq!(fwd["len_bucket"].as_u64().unwrap() % 256, 0);
+    }
+    // Mailbox B: the hash it stored is the one the client acknowledges, one live listen each time.
+    let stores: Vec<&Value> = b.iter().filter(|r| r["ev"] == "store").collect();
+    assert_eq!(stores.len(), 2);
+    for (s, h) in stores.iter().zip([&h1, &h2]) {
+        assert_eq!(
+            (
+                s["role"].as_str(),
+                s["stored"].as_bool(),
+                s["live_sessions"].as_u64(),
+                s["push_enqueued"].as_bool()
+            ),
+            (Some("mailbox"), Some(true), Some(1), Some(true))
+        );
+        assert_eq!(s["h_in"], json!(h));
+    }
+    // For mailbox work, what B received (h_raw) is the work armor, not the inner one.
+    assert_eq!(stores[1]["h_raw"], json!(armor_hash(&work)));
+    assert_ne!(stores[1]["h_raw"], stores[1]["h_in"]);
+    let ack_row = b.iter().find(|r| r["ev"] == "ack").expect("ack row");
+    assert_eq!(
+        (ack_row["h_in"].clone(), ack_row["removed"].as_bool()),
+        (json!(h1), Some(true))
+    );
+    let attach = b
+        .iter()
+        .find(|r| r["ev"] == "listen_attach")
+        .expect("listen row");
+    assert_eq!(attach["sessions"], 1);
+    assert_eq!(attach["instance"].as_str().unwrap().len(), 8);
+    assert_eq!(
+        b.iter().find(|r| r["ev"] == "online_query").unwrap()["online"],
+        true
+    );
+    for r in a.iter().chain(b.iter()) {
+        assert!(
+            r["key_id"].as_str().unwrap().len() == 16 && r["utc"].as_str().unwrap().ends_with('Z')
+        );
+    }
+    // Redaction: no wallet, no user key ID, no armor text, no stream key anywhere in either file.
+    let text = format!(
+        "{}{}",
+        std::fs::read_to_string(&n.ev_a).unwrap(),
+        std::fs::read_to_string(&n.ev_b).unwrap()
+    )
+    .to_lowercase();
+    for secret in [
+        n.g["wallets"]["client"]["address"]
+            .as_str()
+            .unwrap()
+            .to_lowercase(),
+        n.g["wallets"]["other"]["address"]
+            .as_str()
+            .unwrap()
+            .to_lowercase(),
+        n.user_key.to_lowercase(),
+        "pgp message".to_string(),
+        B64.encode([1u8; 32]).to_lowercase(),
+    ] {
+        assert!(!text.contains(&secret), "{secret}");
+    }
 }

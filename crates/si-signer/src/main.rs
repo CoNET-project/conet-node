@@ -6,6 +6,10 @@
 //!        Secrets come from environment variables, never argv:
 //!        CONET_INIT_WALLET_KEY (0x hex), CONET_INIT_PGP_PASS (may be empty); the armored
 //!        key from `--pgp-key <file>`.
+//! import-ts-setup: seal the node identity a CoNET-SI (TS) node already has, read from its
+//!        `nodeSetup.json` (`--setup <path>`, may be `/dev/fd/3`), checked against the PUBLIC wallet and
+//!        route encryption sub-key ID the caller expects (`--expect-wallet`, `--expect-key-id`, both
+//!        required). Keys never touch argv, environment or output; only public values are printed.
 //! serve: open the keystore and answer the network process on a Unix socket.
 //!        `--quota-state <file>` (required with `--anchor-node-id`) keeps the daily quota ledger;
 //!        `--quota-config <json>` overrides the defaults (see quota.example.json).
@@ -13,7 +17,7 @@
 //!        topUp entry for AUTO-TOPUP (see topup.example.json); both or neither.
 //! The KEK comes from systemd-creds (`$CREDENTIALS_DIRECTORY/conet-node-kek`); `--insecure-kek-file`
 //! exists for tests and local networks only.
-use si_signer::{kek, keystore, server};
+use si_signer::{kek, keystore, server, ts_setup};
 use std::path::PathBuf;
 use std::sync::Arc;
 use zeroize::Zeroizing;
@@ -30,14 +34,17 @@ fn arg_in(args: &[String], name: &str) -> Option<String> {
     (!v.starts_with("--")).then(|| v.clone())
 }
 /// The value flags this binary reads through `arg()`. `--allow-bind` is a switch (`flag()`).
-const VALUE_FLAGS: [&str; 11] = [
+const VALUE_FLAGS: [&str; 14] = [
     "--allow-uid",
     "--anchor-node-id",
+    "--expect-key-id",
+    "--expect-wallet",
     "--insecure-kek-file",
     "--keystore",
     "--pgp-key",
     "--quota-config",
     "--quota-state",
+    "--setup",
     "--socket",
     "--topup-config",
     "--topup-state",
@@ -120,6 +127,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let sealed = Zeroizing::new(keystore::seal(&kek, &secrets).map_err(|e| e.to_string())?);
             write_private(&out, sealed.as_bytes())?;
             println!("keystore written");
+        }
+        Some("import-ts-setup") => {
+            let out = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
+            if out.exists() {
+                return Err("keystore exists; refusing to overwrite".into());
+            }
+            let setup = arg("--setup").ok_or("--setup <path to nodeSetup.json>")?;
+            let want_wallet = arg("--expect-wallet").ok_or("--expect-wallet <0x address>")?;
+            let want_key_id = arg("--expect-key-id").ok_or("--expect-key-id <16 hex>")?;
+            let bytes = read_setup(std::path::Path::new(&setup))?;
+            let imported = ts_setup::import(&bytes, &want_wallet, &want_key_id)?;
+            let sealed =
+                Zeroizing::new(keystore::seal(&kek, &imported.secrets).map_err(|e| e.to_string())?);
+            write_private(&out, sealed.as_bytes())?;
+            // Public values only, for the receipt: they match the expected values or we never get here.
+            println!(
+                "keystore written\nwallet: {}\nkeyId: {}",
+                imported.wallet, imported.key_id
+            );
         }
         Some("keygen") => {
             let out = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
@@ -222,6 +248,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The setup file, read-only, at most `MAX_SETUP_BYTES`. A `/dev/fd/N` path works (the caller opens
+/// the file and passes the descriptor); nothing is written, moved or locked.
+fn read_setup(path: &std::path::Path) -> Result<Zeroizing<Vec<u8>>, Box<dyn std::error::Error>> {
+    use std::io::Read;
+    let mut buf = Zeroizing::new(Vec::new());
+    std::fs::File::open(path)?
+        .take(ts_setup::MAX_SETUP_BYTES as u64 + 1)
+        .read_to_end(&mut buf)?;
+    if buf.len() > ts_setup::MAX_SETUP_BYTES {
+        return Err("setup file too large".into());
+    }
+    Ok(buf)
+}
+
 fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -291,14 +331,17 @@ mod arg_tests {
     }
 
     /// Every value flag this binary reads through `arg()`. `--allow-bind` is a switch (`flag()`).
-    const FLAGS: [&str; 11] = [
+    const FLAGS: [&str; 14] = [
         "--allow-uid",
         "--anchor-node-id",
+        "--expect-key-id",
+        "--expect-wallet",
         "--insecure-kek-file",
         "--keystore",
         "--pgp-key",
         "--quota-config",
         "--quota-state",
+        "--setup",
         "--socket",
         "--topup-config",
         "--topup-state",

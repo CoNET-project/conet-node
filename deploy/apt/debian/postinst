@@ -1,0 +1,15 @@
+#!/bin/sh
+# Creates the two service accounts and the keystore directory. It never starts, stops, enables,
+# restarts or reloads anything, and never touches another package's unit.
+set -e
+case "$1" in
+configure)
+    if [ -x /usr/bin/systemd-sysusers ]; then
+        /usr/bin/systemd-sysusers /usr/lib/sysusers.d/conet-node.conf
+    fi
+    if [ -x /usr/bin/systemd-tmpfiles ]; then
+        /usr/bin/systemd-tmpfiles --create /usr/lib/tmpfiles.d/conet-node.conf
+    fi
+    ;;
+esac
+exit 0

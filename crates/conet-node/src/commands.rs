@@ -264,6 +264,9 @@ async fn delivery_ack(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
         return reply(stream, json!({ "ok": false, "error": "no_pgp" })).await;
     };
     let removed = ctx.mailbox.store.remove_by_hash(&key, hash);
+    if let Some(ev) = &ctx.evidence {
+        ev.ack(hash, removed);
+    }
     reply(stream, json!({ "ok": true, "removed": removed })).await
 }
 
@@ -302,6 +305,9 @@ async fn online_query(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
         .await;
     }
     let since = ctx.mailbox.online_since(&target);
+    if let Some(ev) = &ctx.evidence {
+        ev.online_query(since.is_some());
+    }
     reply(
         stream,
         json!({
@@ -549,6 +555,9 @@ async fn mailbox_listen(mut stream: Conn, peer: SocketAddr, c: Value, ctx: Arc<N
         connected_at: Instant::now(),
         legacy: false,
     });
+    if let Some(ev) = &ctx.evidence {
+        ev.listen_attach(&instance_id, ctx.mailbox.listener_count());
+    }
 
     let (mut rd, mut wr) = tokio::io::split(stream);
     let mut scratch = [0u8; 512];

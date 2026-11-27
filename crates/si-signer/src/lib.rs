@@ -14,8 +14,10 @@ pub mod keystore;
 pub mod probe_role;
 pub mod proto;
 pub mod quota;
+pub mod scrypt;
 pub mod server;
 pub mod topup_policy;
+pub mod ts_setup;
 pub mod tx1559;
 
 /// Derive a purpose key from the KEK (HMAC-SHA256(KEK, label)).

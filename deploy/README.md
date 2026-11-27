@@ -1,5 +1,7 @@
 # Deployment templates
 
+The signed APT package has its own layout and units: see [`deploy/apt/README.md`](apt/README.md). The templates below are the older `/opt/conet-node` layout (updater and boot guard).
+
 Three services, three users:
 
 | Service | User | Holds |

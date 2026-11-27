@@ -25,6 +25,14 @@ pub struct Listener {
     pub legacy: bool,
 }
 
+/// What one delivery did: stored newly, push queued, live listens written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeliverReport {
+    pub fresh: bool,
+    pub push_enqueued: bool,
+    pub live_sessions: u32,
+}
+
 pub struct Mailbox {
     pub store: Arc<dyn MailboxStore>,
     pub push: Arc<dyn Push>,
@@ -57,13 +65,20 @@ impl Mailbox {
     /// Store first, push unless NoPush, then write to every live listen of that key.
     /// Returns true when the armor was newly stored.
     pub fn deliver(&self, user_key: &str, item: Stored) -> bool {
+        self.deliver_report(user_key, item).fresh
+    }
+
+    /// Same as [`deliver`], with what happened (for the evidence log).
+    pub fn deliver_report(&self, user_key: &str, item: Stored) -> DeliverReport {
         let armor = item.armor.clone();
         let no_push = item.no_push;
         let fresh = self.store.save(user_key, item);
-        if fresh && !no_push {
+        let push_enqueued = fresh && !no_push;
+        if push_enqueued {
             self.push.offline_chat(user_key.to_uppercase());
         }
         let frame_json = serde_json::json!({ "data": armor }).to_string();
+        let mut live_sessions = 0u32;
         let mut ls = self.listeners.lock().expect("listeners");
         ls.retain(|l| {
             if l.legacy
@@ -75,10 +90,19 @@ impl Mailbox {
                 return true;
             }
             // A full or closed queue means a stuck listen: drop it (the message stays stored).
-            l.tx.try_send(sealed_frame(&frame_json, &l.stream_key))
-                .is_ok()
+            let sent =
+                l.tx.try_send(sealed_frame(&frame_json, &l.stream_key))
+                    .is_ok();
+            if sent {
+                live_sessions += 1;
+            }
+            sent
         });
-        fresh
+        DeliverReport {
+            fresh,
+            push_enqueued,
+            live_sessions,
+        }
     }
 
     pub fn register(&self, l: Listener) {

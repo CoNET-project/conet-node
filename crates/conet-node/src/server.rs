@@ -67,6 +67,8 @@ pub struct NodeCtx {
     /// Explicit address advertised in SI mining heartbeats. The remote connection peer's IP is
     /// not an authoritative substitute for this node's configured public address.
     pub mining_node_ip: Option<std::net::Ipv4Addr>,
+    /// `--evidence-log`: node-side delivery evidence rows. None = off (default).
+    pub evidence: Option<Arc<crate::evidence::EvidenceLog>>,
 }
 
 impl NodeCtx {
@@ -109,6 +111,7 @@ impl NodeCtx {
             mining_liveness: Arc::new(crate::mining_liveness::MiningLiveness::default()),
             mining_liveness_enabled: false,
             mining_node_ip: None,
+            evidence: None,
         }
     }
 
@@ -274,6 +277,11 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
         let _ = stream.write_all(&http::not_found()).await;
         return;
     };
+    // Evidence only: hashes of the armor as received (nothing is kept when the flag is off).
+    let received = ctx
+        .evidence
+        .as_ref()
+        .and_then(|_| crate::evidence::Received::of_body(&body));
     // PGP work is CPU-bound: keep it off the I/O threads.
     let c = ctx.clone();
     let lines = req.header_lines.clone();
@@ -304,29 +312,52 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
         } => {
             let resolved = ctx.resolve(&key_id).await;
             if let Some(response) = route_error_response(&resolved) {
+                if let Some(ev) = &ctx.evidence {
+                    let why = if resolved == Resolved::NoRoute {
+                        "route_unknown"
+                    } else {
+                        "lookup_unavailable"
+                    };
+                    ev.post_refused(received.as_ref(), false, why);
+                }
                 let _ = stream.write_all(&response).await;
                 return;
             }
             match resolved {
                 Resolved::Plan(plan) => {
+                    if let Some(ev) = &ctx.evidence {
+                        ev.post_forward(
+                            received.as_ref(),
+                            &armor,
+                            None,
+                            hops.len(),
+                            crate::evidence::Forward::Plan,
+                        );
+                    }
                     crate::deliver::deliver(stream, plan, key_id, armor, no_push, hops, ctx).await;
                 }
                 Resolved::Local => {
                     let hop_bytes = Node::verified_hop_bytes(&hops, now_secs());
-                    ctx.mailbox.deliver(
+                    let hops_len = hops.len();
+                    let evidence_armor = ctx.evidence.is_some().then(|| armor.clone());
+                    let report = ctx.mailbox.deliver_report(
                         &key_id,
                         Stored {
                             armor,
                             no_push,
                             hop_bytes,
-                            hops: hops.len(),
+                            hops: hops_len,
                         },
                     );
+                    if let (Some(ev), Some(a)) = (&ctx.evidence, evidence_armor) {
+                        ev.store(received.as_ref(), &a, report);
+                    }
                     let _ = stream.write_all(&http::ok_200("")).await;
                 }
                 Resolved::Remote(addr) => {
                     // The wallet may be the signer client (blocking socket call): keep it off I/O threads.
                     let c = ctx.clone();
+                    let hops_len = hops.len();
                     let (k, a, h) = (key_id.clone(), armor.clone(), hops);
                     let header = tokio::task::spawn_blocking(move || {
                         let node = Node {
@@ -344,6 +375,15 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
                     .unwrap_or(Err("join"));
                     match header {
                         Ok(header) => {
+                            if let Some(ev) = &ctx.evidence {
+                                ev.post_forward(
+                                    received.as_ref(),
+                                    &armor,
+                                    Some(addr),
+                                    hops_len,
+                                    crate::evidence::Forward::SameArmor,
+                                );
+                            }
                             forward(
                                 stream,
                                 addr,
@@ -355,6 +395,9 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
                             .await
                         }
                         Err(reason) => {
+                            if let Some(ev) = &ctx.evidence {
+                                ev.post_refused(received.as_ref(), true, reason);
+                            }
                             debug!(reason, "forward refused");
                             let _ = stream.shutdown().await;
                         }
@@ -370,6 +413,9 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
             crate::voice::chunk(stream, locator, mac, blob, ctx).await
         }
         Step::Close { reason, attack } => {
+            if let Some(ev) = &ctx.evidence {
+                ev.post_refused(received.as_ref(), attack, reason);
+            }
             debug!(reason, attack, "close");
             if attack {
                 let _ = stream.shutdown().await;

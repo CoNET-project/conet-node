@@ -1,0 +1,48 @@
+# conet-signer: holds the node wallet and route key. Only conet-node (uid 61051) may use its socket.
+# The KEK is created once per server (see deploy/apt/README.md) and handed over by systemd-creds.
+[Unit]
+Description=CoNET node signer
+Documentation=https://github.com/CoNET-project/conet-node
+After=local-fs.target
+# Never start without a keystore: the import (conet-signer import-ts-setup) must have run.
+ConditionPathExists=/var/lib/conet-signer/keystore.json
+
+[Service]
+Type=simple
+User=conet-signer
+Group=conet-signer
+LoadCredentialEncrypted=conet-node-kek:/etc/credstore.encrypted/conet-node-kek
+RuntimeDirectory=conet-signer
+RuntimeDirectoryMode=0750
+StateDirectory=conet-signer
+StateDirectoryMode=0700
+EnvironmentFile=/etc/conet-node/signer.env
+ExecStart=/usr/lib/conet-node/conet-signer serve \
+  --keystore /var/lib/conet-signer/keystore.json \
+  --socket /run/conet-signer/signer.sock \
+  --verifying-contract ${CONET_NODE_REGISTRY} \
+  --allow-uid 61051
+Restart=on-failure
+RestartSec=10
+LimitCORE=0
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+{
+ "default": {
+  "wallet": "0x443937e5e240b22A7f212Fe10D72031e09ba8ac4",
+  "keyId": "0889BCD20116696D",
+  "privateKeyHex": "0x1f7cb0447c68149d17fefb29b606ae4834c58bd68229734354d18e316b71571a"
+ },
+ "small": {
+  "wallet": "0xba2cECa32C56231A6F94E492bC7ebE5EE3E0B990",
+  "keyId": "78086E9A00CDDC89",
+  "privateKeyHex": "0x68daa9c3ded24a426bd1d17d5cf6d1ef286761e679b356d0e7b53d74eb93bb66"
+ },
+ "password": "ts-setup-fixture-password"
+}
