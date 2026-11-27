@@ -1,4 +1,22 @@
 Package: conet-node
+Version: 0.0.1+git20261127.e4d4aed1-1
+Architecture: amd64
+Section: net
+Priority: optional
+Maintainer: CoNET Project <info@conet.network>
+Installed-Size: 25425
+Depends: libc6 (>= 2.43-2ubuntu2.3), libgcc-s1 (>= 16-20260322-1ubuntu1), systemd (>= 255)
+Homepage: https://conet.network/
+Description: CoNET node (Rust)
+ Entry, forwarding and mailbox node for CoNET chat, with its key-holding signer process.
+ Ships the binaries, two systemd units (not enabled), sysusers and tmpfiles snippets and
+ example environment files. The maintainer script creates two accounts and one directory;
+ it never starts or restarts a service.
+Filename: pool/main/c/conet-node/conet-node_0.0.1+git20261127.e4d4aed1-1_amd64.deb
+Size: 7328304
+SHA256: aa1b35c2872359a1c08ff57b717d2d2f49d507d84ba807d3fe6eea2bd0d53fb9
+
+Package: conet-node
 Version: 0.0.1+git20261126.ca64f794-1
 Architecture: amd64
 Section: net
