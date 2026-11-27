@@ -50,6 +50,12 @@ or copied, and the Rust side never reads it again.
    nothing.
 3. `systemctl daemon-reload`, then `systemctl enable --now conet-signer conet-node`.
 
+`signer.env` sets `CONET_NODE_REGISTRY=0x000…000`. This is a placeholder for the chat pilot (the
+signer needs an address for its EIP-712 domain; NodeRegistryV2 is not deployed, the pilot requests
+no statement, and `BindNode` stays refused). It must be replaced with the real address when
+NodeRegistryV2 is deployed. The signer was tested to start and serve chat with the all-zero value
+(`the_all_zero_verifying_contract_placeholder_starts_and_serves_chat`).
+
 ## Evidence log
 
 `conet-node.service` passes `--evidence-log /var/lib/conet-node/evidence/evidence.jsonl` (owner

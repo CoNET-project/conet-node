@@ -1,5 +1,8 @@
 # conet-signer: holds the node wallet and route key. Only conet-node (uid 61051) may use its socket.
 # The KEK is created once per server (see deploy/apt/README.md) and handed over by systemd-creds.
+# --verifying-contract takes ${CONET_NODE_REGISTRY}. For the chat pilot that is the all-zero
+# placeholder in signer.env: it must be replaced with the real NodeRegistryV2 address when that
+# contract is deployed (statements signed for the placeholder are bound to no contract).
 [Unit]
 Description=CoNET node signer
 Documentation=https://github.com/CoNET-project/conet-node
