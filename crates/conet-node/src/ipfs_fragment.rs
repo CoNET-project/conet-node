@@ -15,6 +15,11 @@ use rand_core::{OsRng, RngCore};
 use si_crypto::eth::{keccak_hex, EthKey};
 use std::time::Duration;
 
+/// The largest object a read may return (the node holds the body in memory: a small node may have only a few hundred MiB available). A mailbox message is far smaller.
+pub const MAX_OBJECT_BYTES: usize = 4 * 1024 * 1024;
+/// The whole budget of one put (write plus read-back) or one get: under the sender's 25 second budget for one entry, with room to answer.
+pub const TOTAL_BUDGET: Duration = Duration::from_secs(20);
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum PutError {
     /// The request did not complete (connection, TLS, timeout).
@@ -29,6 +34,10 @@ pub enum PutError {
     ReadBackMissing(u16),
     /// The object read back differs from what was uploaded.
     ReadBackMismatch,
+    /// The object read back is larger than MAX_OBJECT_BYTES.
+    TooLarge,
+    /// The whole budget (TOTAL_BUDGET) was used up.
+    Budget,
 }
 
 impl PutError {
@@ -47,6 +56,8 @@ pub enum GetError {
     Status(u16),
     /// The bytes returned do not hash to the address that was asked for (a forged or damaged object).
     HashMismatch,
+    TooLarge,
+    Budget,
 }
 
 pub struct FragmentClient {
@@ -65,7 +76,7 @@ impl FragmentClient {
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
-            timeout: Duration::from_secs(20),
+            timeout: Duration::from_secs(10),
         })
     }
 
@@ -75,6 +86,12 @@ impl FragmentClient {
 
     /// Uploads `image` (the encoded ciphertext) and returns its content address only after the answer's hash AND a byte-equal read-back agree with the local values.
     pub async fn put_verified(&self, image: &str) -> Result<String, PutError> {
+        tokio::time::timeout(TOTAL_BUDGET, self.put_inner(image))
+            .await
+            .unwrap_or(Err(PutError::Budget))
+    }
+
+    async fn put_inner(&self, image: &str) -> Result<String, PutError> {
         let want = keccak_hex(image);
         let wallet = self.wallet.address().to_lowercase();
         let sign = self
@@ -112,11 +129,11 @@ impl FragmentClient {
         if rs != 200 {
             return Err(PutError::ReadBackMissing(rs));
         }
-        let bytes = back
-            .bytes()
-            .await
-            .map_err(|e| PutError::Transport(e.without_url().to_string()))?;
-        if bytes.as_ref() != image.as_bytes() {
+        let bytes = read_capped(back).await.map_err(|e| match e {
+            ReadCapped::TooLarge => PutError::TooLarge,
+            ReadCapped::Transport(m) => PutError::Transport(m),
+        })?;
+        if bytes.as_slice() != image.as_bytes() {
             return Err(PutError::ReadBackMismatch);
         }
         Ok(want)
@@ -124,6 +141,12 @@ impl FragmentClient {
 
     /// Reads an object and checks that it hashes to the address asked for.
     pub async fn get_verified(&self, hash: &str) -> Result<String, GetError> {
+        tokio::time::timeout(TOTAL_BUDGET, self.get_inner(hash))
+            .await
+            .unwrap_or(Err(GetError::Budget))
+    }
+
+    async fn get_inner(&self, hash: &str) -> Result<String, GetError> {
         // the address goes into a URL unescaped: only 0x and hex digits are accepted
         if !(hash.starts_with("0x") && hash[2..].bytes().all(|b| b.is_ascii_hexdigit())) {
             return Err(GetError::Status(400));
@@ -139,16 +162,43 @@ impl FragmentClient {
         if s != 200 {
             return Err(GetError::Status(s));
         }
-        let bytes = r
-            .bytes()
-            .await
-            .map_err(|e| GetError::Transport(e.without_url().to_string()))?;
-        let text = String::from_utf8(bytes.to_vec()).map_err(|_| GetError::HashMismatch)?;
+        let bytes = read_capped(r).await.map_err(|e| match e {
+            ReadCapped::TooLarge => GetError::TooLarge,
+            ReadCapped::Transport(m) => GetError::Transport(m),
+        })?;
+        let text = String::from_utf8(bytes).map_err(|_| GetError::HashMismatch)?;
         if !keccak_hex(&text).eq_ignore_ascii_case(hash) {
             return Err(GetError::HashMismatch);
         }
         Ok(text)
     }
+}
+
+enum ReadCapped {
+    TooLarge,
+    Transport(String),
+}
+
+/// Reads a response body chunk by chunk and stops with an error as soon as it would exceed MAX_OBJECT_BYTES (a declared length above the cap is refused at once).
+async fn read_capped(mut resp: reqwest::Response) -> Result<Vec<u8>, ReadCapped> {
+    if resp
+        .content_length()
+        .is_some_and(|l| l > MAX_OBJECT_BYTES as u64)
+    {
+        return Err(ReadCapped::TooLarge);
+    }
+    let mut out = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| ReadCapped::Transport(e.without_url().to_string()))?
+    {
+        if out.len() + chunk.len() > MAX_OBJECT_BYTES {
+            return Err(ReadCapped::TooLarge);
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -176,7 +226,7 @@ impl LocalSeal {
         self.seal_with_nonce(armor, nonce)
     }
 
-    pub fn seal_with_nonce(&self, armor: &str, nonce: [u8; 12]) -> String {
+    fn seal_with_nonce(&self, armor: &str, nonce: [u8; 12]) -> String {
         let ct = self
             .cipher
             .encrypt(Nonce::from_slice(&nonce), armor.as_bytes())

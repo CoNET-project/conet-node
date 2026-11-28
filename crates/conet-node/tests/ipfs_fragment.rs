@@ -19,12 +19,21 @@ enum Mode {
     ReadMissing,
     ReadMutated,
     Status(u16),
+    /// The POST answers 307 to another path.
+    PostRedirect,
+    /// The read answers 302 to another path that holds the object.
+    GetRedirect,
+    /// The read answers with 5 MiB.
+    BigBody,
+    /// Reads the request and never answers.
+    Stall,
 }
 
 #[derive(Default)]
 struct Seen {
     posts: usize,
     gets: usize,
+    redirect_target_hits: usize,
     last_post_body: String,
     signature_ok: Option<bool>,
 }
@@ -86,7 +95,26 @@ async fn start(mode: Mode) -> Fake {
                     out.extend(body);
                     out
                 };
-                let reply = if line.starts_with("POST /storageFragment") {
+                if mode == Mode::Stall {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    return;
+                }
+                let reply = if line.starts_with("GET /elsewhere") {
+                    seen.lock().unwrap().redirect_target_hits += 1;
+                    let v = store
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .next()
+                        .cloned()
+                        .unwrap_or_default();
+                    respond(200, v.into_bytes())
+                } else if line.starts_with("POST /storageFragment") && mode == Mode::PostRedirect {
+                    seen.lock().unwrap().posts += 1;
+                    let mut out = b"HTTP/1.1 307 Temporary Redirect\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec();
+                    out.shrink_to_fit();
+                    out
+                } else if line.starts_with("POST /storageFragment") {
                     seen.lock().unwrap().posts += 1;
                     let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
                     seen.lock().unwrap().last_post_body = body.clone();
@@ -102,7 +130,13 @@ async fn start(mode: Mode) -> Fake {
                     match mode {
                         Mode::Status(s) => respond(s, b"{}".to_vec()),
                         _ if !ok_sig => respond(403, vec![]),
-                        Mode::Honest | Mode::ReadMissing | Mode::ReadMutated => {
+                        Mode::Honest
+                        | Mode::ReadMissing
+                        | Mode::ReadMutated
+                        | Mode::GetRedirect
+                        | Mode::BigBody
+                        | Mode::PostRedirect
+                        | Mode::Stall => {
                             store.lock().unwrap().insert(
                                 hash.clone(),
                                 if mode == Mode::ReadMutated {
@@ -139,6 +173,8 @@ async fn start(mode: Mode) -> Fake {
                         .unwrap_or("")
                         .to_string();
                     match (mode, store.lock().unwrap().get(&hash).cloned()) {
+                        (Mode::BigBody, _) => respond(200, vec![b'A'; 5 * 1024 * 1024]),
+                        (Mode::GetRedirect, Some(_)) => b"HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
                         (Mode::ReadMissing, _) | (_, None) => respond(404, vec![]),
                         (_, Some(v)) => respond(200, v.into_bytes()),
                     }
@@ -371,4 +407,59 @@ fn the_local_layer_restores_the_armor_exactly_and_hides_the_key_id() {
             .collect::<String>();
         assert_eq!(seal.open(&seal.seal(&a)).unwrap(), a);
     }
+}
+
+/// Redirects are never followed: a 307 on the write is an error (the redirect target is not called), and a 302 on the read is a failed read-back.
+#[tokio::test(flavor = "multi_thread")]
+async fn redirects_are_not_followed() {
+    let f = start(Mode::PostRedirect).await;
+    assert_eq!(
+        client(&f).put_verified(&synthetic(200)).await,
+        Err(PutError::Status(307))
+    );
+    assert_eq!(
+        f.seen.lock().unwrap().redirect_target_hits,
+        0,
+        "the target of the redirect was not called"
+    );
+    let g = start(Mode::GetRedirect).await;
+    assert_eq!(
+        client(&g).put_verified(&synthetic(200)).await,
+        Err(PutError::ReadBackMissing(302))
+    );
+    assert_eq!(
+        g.seen.lock().unwrap().redirect_target_hits,
+        0,
+        "the target of the redirect was not called"
+    );
+}
+
+/// A read larger than the cap is refused without being held in memory, and a service that never answers ends in an error within the budget.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_oversized_body_and_a_silent_service_are_bounded() {
+    use conet_node::ipfs_fragment::MAX_OBJECT_BYTES;
+    assert!(MAX_OBJECT_BYTES < 5 * 1024 * 1024);
+    let f = start(Mode::BigBody).await;
+    assert_eq!(
+        client(&f).put_verified(&synthetic(200)).await,
+        Err(PutError::TooLarge)
+    );
+    let h = keccak_hex(&synthetic(200));
+    assert_eq!(client(&f).get_verified(&h).await, Err(GetError::TooLarge));
+    let s = start(Mode::Stall).await;
+    let t = std::time::Instant::now();
+    let r = client(&s).put_verified(&synthetic(200)).await;
+    let took = t.elapsed();
+    println!(
+        "MEASURE a service that never answers: {r:?} after {:.1} s",
+        took.as_secs_f64()
+    );
+    assert!(matches!(
+        r,
+        Err(PutError::Transport(_)) | Err(PutError::Budget)
+    ));
+    assert!(
+        took.as_secs() <= 21,
+        "bounded by the 20 second budget, took {took:?}"
+    );
 }
