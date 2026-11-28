@@ -268,3 +268,53 @@ fn the_store_digest_option_opens_the_file_read_only() {
         "right after the import the two sides are equal"
     );
 }
+
+/// The real binary: an import against an empty directory after an export exits non-zero, prints counts only, deletes nothing; `--confirm-mass-removal` is the explicit way through.
+#[test]
+fn the_binary_refuses_an_empty_directory_unless_confirmed() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    std::fs::write(
+        ts.join("0123456789ABCDEF.json"),
+        serde_json::to_string_pretty(&["SECRET-ARMOR-ONE", "SECRET-ARMOR-TWO"]).unwrap(),
+    )
+    .unwrap();
+    let wrong = d.path().join("empty");
+    std::fs::create_dir_all(&wrong).unwrap();
+    let db = d.path().join("m.redb");
+    let (dbs, tss, ws) = (
+        db.to_str().unwrap(),
+        ts.to_str().unwrap(),
+        wrong.to_str().unwrap(),
+    );
+    assert!(run(&["--import-ts-mailbox", tss, "--mailbox-db", dbs])
+        .status
+        .success());
+    assert!(run(&["--export-ts-mailbox", tss, "--mailbox-db", dbs])
+        .status
+        .success());
+    let o = run(&["--import-ts-mailbox", ws, "--mailbox-db", dbs]);
+    println!(
+        "MEASURE import against an empty directory: status={:?} {}",
+        o.status.code(),
+        text(&o).trim()
+    );
+    assert!(!o.status.success());
+    assert!(!text(&o).contains("SECRET-ARMOR") && !text(&o).contains("0123456789ABCDEF"));
+    let dg = run(&["--mailbox-digest", "--mailbox-db", dbs]);
+    assert!(
+        text(&dg).contains("keys=1 messages=2"),
+        "nothing was deleted: {}",
+        text(&dg)
+    );
+    let c = run(&[
+        "--import-ts-mailbox",
+        ws,
+        "--mailbox-db",
+        dbs,
+        "--confirm-mass-removal",
+    ]);
+    assert!(c.status.success(), "{}", text(&c));
+    assert!(text(&c).contains("acked_in_ts_removed=2"), "{}", text(&c));
+}

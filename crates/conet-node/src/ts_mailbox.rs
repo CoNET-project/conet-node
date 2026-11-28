@@ -22,6 +22,8 @@ use std::path::{Path, PathBuf};
 pub enum MigrateError {
     Dir(std::io::Error),
     Store(redb::Error),
+    /// The run was refused by a guard (counts only in the text); nothing was changed.
+    Guard(String),
 }
 
 impl fmt::Display for MigrateError {
@@ -29,6 +31,7 @@ impl fmt::Display for MigrateError {
         match self {
             MigrateError::Dir(e) => write!(f, "TS data directory: {e}"),
             MigrateError::Store(e) => write!(f, "mailbox store: {e}"),
+            MigrateError::Guard(m) => write!(f, "refused: {m}"),
         }
     }
 }
@@ -139,6 +142,13 @@ fn ts_files(
     Ok(out)
 }
 
+/// Options of an import. `confirm_mass_removal` lets the reconciliation delete a large part of the exported set (see [`reconcile_after_rollback`]); it is for a legitimate case that the
+/// operator has checked, never a default.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ImportOptions {
+    pub confirm_mass_removal: bool,
+}
+
 pub fn import_ts_dir(store: &DiskStore, dir: &Path) -> Result<ImportReport, MigrateError> {
     import_ts_dir_with(store, dir, &mut |_| {})
 }
@@ -149,8 +159,17 @@ pub fn import_ts_dir_with(
     dir: &Path,
     after_each: &mut dyn FnMut(ImportOutcome),
 ) -> Result<ImportReport, MigrateError> {
+    import_ts_dir_opts(store, dir, ImportOptions::default(), after_each)
+}
+
+pub fn import_ts_dir_opts(
+    store: &DiskStore,
+    dir: &Path,
+    opts: ImportOptions,
+    after_each: &mut dyn FnMut(ImportOutcome),
+) -> Result<ImportReport, MigrateError> {
     let mut rep = ImportReport::default();
-    reconcile_after_rollback(store, dir, &mut rep)?;
+    reconcile_after_rollback(store, dir, opts, &mut rep)?;
     for (key, (inflight, json)) in ts_files(dir)? {
         let mut key_has_file = false;
         // TS merge order: the inflight file first, then the new file.
@@ -211,9 +230,13 @@ pub fn import_ts_dir_with(
 
 /// Before an import: a message that the last export wrote into a TS file and that is no longer there was acknowledged by the TS node while it ran; its row is removed (with its
 /// entry in the exported set, in one transaction) so it does not come back. A key whose TS files do not parse is left alone and counted as a failed file.
+/// **Two guards protect against a wrong directory** (an import pointed at an empty or wrong directory would judge every exported message "acknowledged" and delete it for good):
+/// (1) the exported set is not empty but the directory holds no mailbox file at all: the run is refused; (2) more than half of the exported set would be removed: the run is
+/// refused. Both nothing-changed refusals can be lifted only by the explicit `confirm_mass_removal`.
 fn reconcile_after_rollback(
     store: &DiskStore,
     dir: &Path,
+    opts: ImportOptions,
     rep: &mut ImportReport,
 ) -> Result<(), MigrateError> {
     let files = ts_files(dir)?;
@@ -221,21 +244,41 @@ fn reconcile_after_rollback(
     for (k, h) in store.exported_pairs().map_err(MigrateError::Store)? {
         by_key.entry(k).or_default().push(h);
     }
-    for (key, hashes) in by_key {
-        let (inflight, json) = files.get(&key).cloned().unwrap_or((None, None));
+    let exported_total: usize = by_key.values().map(Vec::len).sum();
+    // plan first, change nothing yet
+    let mut plan: Vec<(String, String)> = vec![];
+    for (key, hashes) in &by_key {
+        let (inflight, json) = files.get(key).cloned().unwrap_or((None, None));
         let Ok(items) = read_ts_merged(&inflight, &json) else {
             rep.failed_files += 1;
             continue;
         };
         let present: HashSet<String> = items.iter().map(|a| armor_hash(a)).collect();
         for h in hashes {
-            if !present.contains(&h)
-                && store
-                    .resolve_exported_gone(&key, &h)
-                    .map_err(MigrateError::Store)?
-            {
-                rep.removed_acked_in_ts += 1;
+            if !present.contains(h) {
+                plan.push((key.clone(), h.clone()));
             }
+        }
+    }
+    if !opts.confirm_mass_removal {
+        if exported_total > 0 && files.is_empty() {
+            return Err(MigrateError::Guard(format!(
+                "the exported set holds {exported_total} hashes but the directory holds no mailbox file (a wrong directory?); nothing was changed"
+            )));
+        }
+        if plan.len() * 2 > exported_total {
+            return Err(MigrateError::Guard(format!(
+                "{} of the {exported_total} exported hashes would be removed as acknowledged in TS (more than half); nothing was changed",
+                plan.len()
+            )));
+        }
+    }
+    for (key, h) in plan {
+        if store
+            .resolve_exported_gone(&key, &h)
+            .map_err(MigrateError::Store)?
+        {
+            rep.removed_acked_in_ts += 1;
         }
     }
     Ok(())

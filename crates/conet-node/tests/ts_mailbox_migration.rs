@@ -704,3 +704,107 @@ fn untouched_messages_stay_unchanged_across_a_rollback_and_the_next_cutover() {
     );
     assert_eq!(before.2, ts_dir_digest(&ts).unwrap());
 }
+
+/// DEFECT (found by the independent review): an import run against the WRONG directory (an empty one) must not delete anything. After an export the set of exported hashes is not empty;
+/// against a directory with no mailbox file at all, the reconciliation used to judge every message "acknowledged in TS" and delete it, and a later import of the right directory
+/// found nothing to import (they are in the ledger): the messages were gone from the Rust side for good. The run must refuse and delete nothing.
+#[test]
+fn an_import_against_an_empty_directory_refuses_and_deletes_nothing() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    write_ts(&ts, &format!("{K1}.json"), &["a", "b"]);
+    let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    import_ts_dir(&s, &ts).unwrap();
+    export_ts_dir(&s, &ts).unwrap();
+    let wrong = d.path().join("wrong-empty");
+    std::fs::create_dir_all(&wrong).unwrap();
+    let r = import_ts_dir(&s, &wrong);
+    println!(
+        "MEASURE import against an empty directory: {:?}",
+        r.as_ref()
+            .map(|x| x.removed_acked_in_ts)
+            .map_err(|e| e.to_string())
+    );
+    assert!(r.is_err(), "the run refuses");
+    assert!(r.as_ref().unwrap_err().to_string().contains("holds no mailbox file"), "the refusal names the empty directory (this guard is the first one and overlaps the more-than-half guard: an empty directory is the case where all hashes are absent)");
+    assert_eq!(armors(&s, K1), ["a", "b"], "nothing was deleted");
+    let again = import_ts_dir(&s, &ts).unwrap();
+    assert_eq!((again.imported, again.removed_acked_in_ts), (0, 0));
+    assert_eq!(
+        armors(&s, K1),
+        ["a", "b"],
+        "the right directory afterwards changes nothing"
+    );
+}
+
+/// The explicit confirmation lets a legitimate case through (every message was acknowledged in TS during the rollback and the TS files are gone).
+#[test]
+fn the_confirmation_switch_lets_a_legitimate_mass_removal_through() {
+    use conet_node::ts_mailbox::{import_ts_dir_opts, ImportOptions};
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    write_ts(&ts, &format!("{K1}.json"), &["a", "b"]);
+    let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    import_ts_dir(&s, &ts).unwrap();
+    export_ts_dir(&s, &ts).unwrap();
+    std::fs::remove_file(ts.join(format!("{K1}.json"))).unwrap(); // TS acknowledged both and removed the file
+    assert!(
+        import_ts_dir(&s, &ts).is_err(),
+        "refused without the switch"
+    );
+    assert_eq!(armors(&s, K1), ["a", "b"]);
+    let r = import_ts_dir_opts(
+        &s,
+        &ts,
+        ImportOptions {
+            confirm_mass_removal: true,
+        },
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(r.removed_acked_in_ts, 2);
+    assert!(armors(&s, K1).is_empty());
+}
+
+/// More than half of the exported set judged gone stops the run (even with some mailbox files present); exactly half or less goes through.
+#[test]
+fn removing_more_than_half_of_the_exported_set_needs_a_confirmation() {
+    use conet_node::ts_mailbox::{import_ts_dir_opts, ImportOptions};
+    let build = |keep: &[&str]| {
+        let d = tempfile::tempdir().unwrap();
+        let ts = d.path().join(".data");
+        std::fs::create_dir_all(&ts).unwrap();
+        write_ts(&ts, &format!("{K1}.json"), &["a", "b", "c", "d"]);
+        let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+        import_ts_dir(&s, &ts).unwrap();
+        export_ts_dir(&s, &ts).unwrap();
+        write_ts(&ts, &format!("{K1}.json"), keep);
+        (d, ts, s)
+    };
+    // three of four gone: refused
+    let (_d, ts, s) = build(&["d"]);
+    assert!(import_ts_dir(&s, &ts).is_err());
+    assert_eq!(
+        armors(&s, K1),
+        ["a", "b", "c", "d"],
+        "nothing deleted by the refused run"
+    );
+    let r = import_ts_dir_opts(
+        &s,
+        &ts,
+        ImportOptions {
+            confirm_mass_removal: true,
+        },
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(r.removed_acked_in_ts, 3);
+    assert_eq!(armors(&s, K1), ["d"]);
+    // two of four gone: goes through without the switch
+    let (_d2, ts2, s2) = build(&["c", "d"]);
+    let r = import_ts_dir(&s2, &ts2).unwrap();
+    assert_eq!(r.removed_acked_in_ts, 2);
+    assert_eq!(armors(&s2, K1), ["c", "d"]);
+}

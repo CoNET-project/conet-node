@@ -254,7 +254,14 @@ fn run_ts_mailbox(
     };
     let store = conet_node::store::DiskStore::open(std::path::Path::new(&db))?;
     if let Some(dir) = import_dir {
-        let r = conet_node::ts_mailbox::import_ts_dir(&store, std::path::Path::new(&dir))?;
+        let r = conet_node::ts_mailbox::import_ts_dir_opts(
+            &store,
+            std::path::Path::new(&dir),
+            conet_node::ts_mailbox::ImportOptions {
+                confirm_mass_removal: flag("--confirm-mass-removal"),
+            },
+            &mut |_| {},
+        )?;
         println!(
             "import-ts-mailbox: files={} keys={} read={} imported={} already_present={} already_imported={} failed_files={} skipped_non_string={} acked_in_ts_removed={}",
             r.files, r.keys, r.read, r.imported, r.already_present, r.already_imported, r.failed_files, r.skipped_non_string, r.removed_acked_in_ts
