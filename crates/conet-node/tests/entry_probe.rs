@@ -13,7 +13,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 fn golden() -> Value {
-    let p = concat!(env!("CARGO_MANIFEST_DIR"), "/../../conformance/vectors/golden.json");
+    let p = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../conformance/vectors/golden.json"
+    );
     serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
 }
 
@@ -37,13 +40,22 @@ async fn start() -> Node {
         g["keys"]["nodeA"]["passphrase"].as_str().unwrap(),
     )
     .unwrap();
-    let wallet = || Arc::new(EthKey::from_hex(g["wallets"]["nodeA"]["privateKey"].as_str().unwrap()).unwrap());
+    let wallet = || {
+        Arc::new(EthKey::from_hex(g["wallets"]["nodeA"]["privateKey"].as_str().unwrap()).unwrap())
+    };
     let lp = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let lt = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (plain, tls) = (lp.local_addr().unwrap(), lt.local_addr().unwrap());
     let routes = Arc::new(RouteTable::new(&id, Duration::from_secs(600)));
     routes.replace_nodes([(id.clone(), plain)]);
-    let ctx = Arc::new(NodeCtx::new(id.clone(), Arc::new(k), wallet(), wallet(), routes, Arc::new(MemoryStore::default())));
+    let ctx = Arc::new(NodeCtx::new(
+        id.clone(),
+        Arc::new(k),
+        wallet(),
+        wallet(),
+        routes,
+        Arc::new(MemoryStore::default()),
+    ));
     let domain = conet_node::tls::node_domain(&id);
     let ck = rcgen::generate_simple_self_signed(vec![domain.clone()]).unwrap();
     let (cert_pem, key_pem) = (ck.cert.pem(), ck.signing_key.serialize_pem());
@@ -56,25 +68,46 @@ async fn start() -> Node {
         },
     ));
     tokio::spawn(server::serve(lp, ctx));
-    Node { plain, tls, domain, cert_pem }
+    Node {
+        plain,
+        tls,
+        domain,
+        cert_pem,
+    }
 }
 
 /// Sends a bare GET (the SDK probe: Accept text/html, no body) and returns (status, header block, body).
 async fn get<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S, path: &str) -> (u16, String, String) {
-    s.write_all(format!("GET {path} HTTP/1.1\r\nHost: t\r\nAccept: text/html\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+    s.write_all(
+        format!("GET {path} HTTP/1.1\r\nHost: t\r\nAccept: text/html\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
     let mut out = Vec::new();
     let _ = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut out)).await;
     let t = String::from_utf8_lossy(&out).into_owned();
-    let status = t.split(' ').nth(1).and_then(|x| x.parse().ok()).unwrap_or(0);
-    let (head, body) = t.split_once("\r\n\r\n").map(|(h, b)| (h.to_string(), b.to_string())).unwrap_or((t.clone(), String::new()));
+    let status = t
+        .split(' ')
+        .nth(1)
+        .and_then(|x| x.parse().ok())
+        .unwrap_or(0);
+    let (head, body) = t
+        .split_once("\r\n\r\n")
+        .map(|(h, b)| (h.to_string(), b.to_string()))
+        .unwrap_or((t.clone(), String::new()));
     (status, head, body)
 }
 
 async fn tls_stream(n: &Node) -> tokio_rustls::client::TlsStream<TcpStream> {
     use rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
     let mut roots = rustls::RootCertStore::empty();
-    roots.add(CertificateDer::from_pem_slice(n.cert_pem.as_bytes()).unwrap()).unwrap();
-    let cfg = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
+    roots
+        .add(CertificateDer::from_pem_slice(n.cert_pem.as_bytes()).unwrap())
+        .unwrap();
+    let cfg = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
     let tcp = TcpStream::connect(n.tls).await.unwrap();
     tokio_rustls::TlsConnector::from(Arc::new(cfg))
         .connect(ServerName::try_from(n.domain.clone()).unwrap(), tcp)
@@ -88,7 +121,11 @@ async fn plain_get_root_is_200() {
     let n = start().await;
     let mut s = TcpStream::connect(n.plain).await.unwrap();
     let (status, head, body) = get(&mut s, "/").await;
-    println!("MEASURE plain GET /: status={status} body_len={} head={:?}", body.len(), head.lines().next());
+    println!(
+        "MEASURE plain GET /: status={status} body_len={} head={:?}",
+        body.len(),
+        head.lines().next()
+    );
     assert_eq!(status, 200, "GET / on the plain port");
 }
 
@@ -98,7 +135,11 @@ async fn tls_get_root_is_200() {
     let n = start().await;
     let mut s = tls_stream(&n).await;
     let (status, head, body) = get(&mut s, "/").await;
-    println!("MEASURE tls GET /: status={status} body_len={} head={:?}", body.len(), head.lines().next());
+    println!(
+        "MEASURE tls GET /: status={status} body_len={} head={:?}",
+        body.len(),
+        head.lines().next()
+    );
     assert_eq!(status, 200, "GET / on the TLS port");
 }
 
@@ -106,7 +147,14 @@ async fn tls_get_root_is_200() {
 #[tokio::test(flavor = "multi_thread")]
 async fn other_get_paths_stay_404() {
     let n = start().await;
-    for path in ["/post", "/webrtc", "/index.html", "/solana-rpc", "/nodeWallet", "/?x=1"] {
+    for path in [
+        "/post",
+        "/webrtc",
+        "/index.html",
+        "/solana-rpc",
+        "/nodeWallet",
+        "/?x=1",
+    ] {
         let mut s = TcpStream::connect(n.plain).await.unwrap();
         let (status, _, _) = get(&mut s, path).await;
         println!("MEASURE plain GET {path}: status={status}");
@@ -124,16 +172,33 @@ async fn the_sdk_probe_rule_marks_both_ports_healthy() {
     let n = start().await;
     let mut p = TcpStream::connect(n.plain).await.unwrap();
     let mut t = tls_stream(&n).await;
-    for (label, (status, head, body)) in [("plain", get(&mut p, "/").await), ("tls", get(&mut t, "/").await)] {
-        println!("MEASURE {label}: status={status} healthy={}", sdk_probe_healthy(status));
-        assert!(sdk_probe_healthy(status), "{label}: status {status} is not healthy for the SDK probe");
+    for (label, (status, head, body)) in [
+        ("plain", get(&mut p, "/").await),
+        ("tls", get(&mut t, "/").await),
+    ] {
+        println!(
+            "MEASURE {label}: status={status} healthy={}",
+            sdk_probe_healthy(status)
+        );
+        assert!(
+            sdk_probe_healthy(status),
+            "{label}: status {status} is not healthy for the SDK probe"
+        );
         assert!(head.starts_with("HTTP/1.1 "), "{label}: {head}");
         let cl: usize = head
             .lines()
-            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap()))
+            .find_map(|l| {
+                l.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(|v| v.trim().parse().unwrap())
+            })
             .expect("content-length");
         assert_eq!(cl, body.len(), "{label}: content-length");
         let lower = format!("{head}{body}").to_ascii_lowercase();
-        assert!(!lower.contains("0x") && !lower.contains(&n.domain.split('.').next().unwrap().to_ascii_lowercase()), "{label}: no identity in the probe answer");
+        assert!(
+            !lower.contains("0x")
+                && !lower.contains(&n.domain.split('.').next().unwrap().to_ascii_lowercase()),
+            "{label}: no identity in the probe answer"
+        );
     }
 }

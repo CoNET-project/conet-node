@@ -55,7 +55,10 @@ fn item(armor: &str) -> Stored {
 
 /// An armor-sized payload (about 3 KB) so the file fills in a few hundred messages.
 fn armor(i: usize) -> String {
-    format!("-----BEGIN PGP MESSAGE-----\n{i:08}{}\n-----END PGP MESSAGE-----", "A".repeat(3000))
+    format!(
+        "-----BEGIN PGP MESSAGE-----\n{i:08}{}\n-----END PGP MESSAGE-----",
+        "A".repeat(3000)
+    )
 }
 
 #[test]
@@ -87,7 +90,11 @@ fn a_real_write_failure_refuses_the_message_and_a_retry_after_recovery_stores_it
                 println!("MEASURE first failure at message {i}: outcome={:?} fresh={} live_sessions={} push_enqueued={} reply={body}", r.outcome, r.fresh, r.live_sessions, r.push_enqueued);
                 assert!(!r.fresh && !r.push_enqueued && r.live_sessions == 0);
                 let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-                assert_eq!(v, serde_json::json!({ "ok": false, "error": "store_failed" }), "the post reply is an explicit failure");
+                assert_eq!(
+                    v,
+                    serde_json::json!({ "ok": false, "error": "store_failed" }),
+                    "the post reply is an explicit failure"
+                );
                 break;
             }
             SaveResult::Duplicate => panic!("distinct armor reported as duplicate at {i}"),
@@ -98,7 +105,10 @@ fn a_real_write_failure_refuses_the_message_and_a_retry_after_recovery_stores_it
     // 3. node result: nothing half-stored, everything accepted before is still there, and the failed one is NOT there
     let pend = s.pending(uk);
     assert_eq!(pend.len(), stored, "rows equal the accepted messages");
-    assert!(pend.iter().all(|i| i.armor != fa), "the refused message is not stored");
+    assert!(
+        pend.iter().all(|i| i.armor != fa),
+        "the refused message is not stored"
+    );
     // a second try on the same handle while the failure persists: still an explicit refusal (never Stored)
     let again = mb.deliver_report(uk, item(&fa));
     assert_eq!(again.outcome, SaveResult::Failed);
@@ -114,11 +124,29 @@ fn a_real_write_failure_refuses_the_message_and_a_retry_after_recovery_stores_it
     let mb = Mailbox::new(s.clone(), Arc::new(NoPush));
     let r1 = mb.deliver_report(uk, item(&fa));
     let r2 = mb.deliver_report(uk, item(&fa));
-    println!("MEASURE after restart: rows_before={rows_before} retry={:?} second retry={:?}", r1.outcome, r2.outcome);
-    let want_first = if same_handle.outcome == SaveResult::Stored { SaveResult::Duplicate } else { SaveResult::Stored };
-    assert_eq!(r1.outcome, want_first, "the retry is stored once (or already stored by the same-handle retry)");
-    assert_eq!(r2.outcome, SaveResult::Duplicate, "a second retry is a duplicate, never a second copy");
+    println!(
+        "MEASURE after restart: rows_before={rows_before} retry={:?} second retry={:?}",
+        r1.outcome, r2.outcome
+    );
+    let want_first = if same_handle.outcome == SaveResult::Stored {
+        SaveResult::Duplicate
+    } else {
+        SaveResult::Stored
+    };
+    assert_eq!(
+        r1.outcome, want_first,
+        "the retry is stored once (or already stored by the same-handle retry)"
+    );
+    assert_eq!(
+        r2.outcome,
+        SaveResult::Duplicate,
+        "a second retry is a duplicate, never a second copy"
+    );
     let pend = s.pending(uk);
-    assert_eq!(pend.len(), stored + 1, "exactly one copy of the retried armor (message {fi}); no other change");
+    assert_eq!(
+        pend.len(),
+        stored + 1,
+        "exactly one copy of the retried armor (message {fi}); no other change"
+    );
     assert_eq!(pend.iter().filter(|i| i.armor == fa).count(), 1);
 }
