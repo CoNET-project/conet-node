@@ -1,0 +1,46 @@
+# conet-node-first-start: brings up the node identity exactly once and checks it on every boot.
+# Non-interactive: no terminal is read (StandardInput=null). Root stage: validates
+# /etc/conet-node/init.json, makes the KEK credential if the node has neither KEK nor keystore,
+# refuses when TS (CoNET-SI) traces need an operator decision, and starts the sealing stage through
+# systemd-run as conet-signer (no network, KEK handed over as an encrypted credential). When a
+# keystore already exists it only checks type, owner, mode and public label and ends.
+# Never makes a new identity over an existing keystore; never makes a new KEK next to one.
+# Registration on chain is not done here. See /usr/share/doc/conet-node/README.md.
+[Unit]
+Description=CoNET node first start (identity and KEK, once)
+Documentation=https://github.com/CoNET-project/conet-node
+After=local-fs.target
+Before=conet-signer.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardInput=null
+TimeoutStartSec=180
+ExecStart=/usr/lib/conet-node/conet-signer first-start \
+  --init-config /etc/conet-node/init.json \
+  --keystore /var/lib/conet-signer/keystore.json \
+  --kek-credential /etc/credstore.encrypted/conet-node-kek
+LimitCORE=0
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+# /etc/credstore.encrypted: the KEK credential. /var/lib/systemd: on a host that has never encrypted
+# a credential, `systemd-creds encrypt` creates the host key /var/lib/systemd/credential.secret
+# (root, 0400) on demand; under ProtectSystem=strict that directory would be read-only and the
+# first start would refuse. A directory entry is used (the file does not exist yet, and a missing
+# ReadWritePaths target would fail the unit's namespace setup).
+ReadWritePaths=/etc/credstore.encrypted /var/lib/systemd
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

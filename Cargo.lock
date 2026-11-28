@@ -4816,6 +4816,7 @@ dependencies = [
  "si-core",
  "si-crypto",
  "si-proto",
+ "si-signer",
  "tempfile",
  "tokio",
  "tracing",

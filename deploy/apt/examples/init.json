@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "http_port": 80,
+  "https_port": 443,
+  "public_ip": ["203.0.113.10"],
+  "rpc": "https://rpc1.conet.network",
+  "api_base": "https://beamio.ca",
+  "identity": { "mode": "auto" }
+}

@@ -66,6 +66,16 @@ pub fn seal(kek: &[u8; 32], secrets: &Secrets) -> Result<String, KeystoreError> 
     .map_err(err)
 }
 
+/// The public identity a keystore file declares in the clear (wallet address, route key ID). It is
+/// only a label: callers that rely on it must `open` the file and compare.
+pub fn public_identity(file: &str) -> Result<(String, String), KeystoreError> {
+    let s: Sealed = serde_json::from_str(file).map_err(err)?;
+    if s.v != 1 {
+        return Err(KeystoreError("unknown version".into()));
+    }
+    Ok((s.wallet, s.key_id))
+}
+
 pub fn open(kek: &[u8; 32], file: &str) -> Result<Secrets, KeystoreError> {
     let s: Sealed = serde_json::from_str(file).map_err(err)?;
     if s.v != 1 {

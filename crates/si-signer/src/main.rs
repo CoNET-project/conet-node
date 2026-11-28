@@ -10,6 +10,10 @@
 //!        `nodeSetup.json` (`--setup <path>`, may be `/dev/fd/3`), checked against the PUBLIC wallet and
 //!        route encryption sub-key ID the caller expects (`--expect-wallet`, `--expect-key-id`, both
 //!        required). Keys never touch argv, environment or output; only public values are printed.
+//! first-start: (root) the non-interactive first start under systemd: checks the node's init.json,
+//!        makes sure the KEK credential exists, and runs `first-start-seal` as the signer account.
+//!        See `first_start.rs`; the identity is created once and an existing one is never replaced.
+//! first-start-seal: (signer account) reuse, generate or import the node identity, atomically.
 //! serve: open the keystore and answer the network process on a Unix socket.
 //!        `--quota-state <file>` (required with `--anchor-node-id`) keeps the daily quota ledger;
 //!        `--quota-config <json>` overrides the defaults (see quota.example.json).
@@ -17,7 +21,7 @@
 //!        topUp entry for AUTO-TOPUP (see topup.example.json); both or neither.
 //! The KEK comes from systemd-creds (`$CREDENTIALS_DIRECTORY/conet-node-kek`); `--insecure-kek-file`
 //! exists for tests and local networks only.
-use si_signer::{kek, keystore, server, ts_setup};
+use si_signer::{atomic, first_start, init_config, kek, keystore, server, ts_setup};
 use std::path::PathBuf;
 use std::sync::Arc;
 use zeroize::Zeroizing;
@@ -34,22 +38,58 @@ fn arg_in(args: &[String], name: &str) -> Option<String> {
     (!v.starts_with("--")).then(|| v.clone())
 }
 /// The value flags this binary reads through `arg()`. `--allow-bind` is a switch (`flag()`).
-const VALUE_FLAGS: [&str; 14] = [
+const VALUE_FLAGS: [&str; 24] = [
     "--allow-uid",
     "--anchor-node-id",
+    "--create",
     "--expect-key-id",
     "--expect-wallet",
+    "--init-config",
     "--insecure-kek-file",
+    "--kek-credential",
     "--keystore",
+    "--passwd-file",
     "--pgp-key",
+    "--proc-dir",
     "--quota-config",
     "--quota-state",
     "--setup",
     "--socket",
+    "--systemd-creds",
+    "--systemd-run",
     "--topup-config",
     "--topup-state",
+    "--ts-home-base",
+    "--ts-root-home",
+    "--ts-unit-dirs",
     "--verifying-contract",
 ];
+
+/// Flags that exist only so tests can point `first-start` at a scratch host (a fake passwd file, a
+/// stand-in `systemd-run`, a fake `/proc`, ...). A release build refuses them: the program that
+/// runs as root must not be steerable away from the real system files. They are honored only in
+/// builds with the `test-fault` feature, which this package enables for its own tests through a
+/// dev-dependency and which no release build has. (`--insecure-kek-file` is the older, separately
+/// tracked S7 flag and is not changed here.)
+#[cfg_attr(feature = "test-fault", allow(dead_code))]
+const TEST_HOOK_FLAGS: [&str; 7] = [
+    "--passwd-file",
+    "--proc-dir",
+    "--systemd-creds",
+    "--systemd-run",
+    "--ts-home-base",
+    "--ts-root-home",
+    "--ts-unit-dirs",
+];
+
+/// The first test-hook flag present in `args`, by name.
+#[cfg_attr(feature = "test-fault", allow(dead_code))]
+fn test_hook_flag(args: &[String]) -> Option<&'static str> {
+    TEST_HOOK_FLAGS
+        .iter()
+        .copied()
+        .find(|f| args.iter().any(|a| a == f))
+}
 
 /// True when a value is present and usable: not missing, not another flag, not blank.
 fn has_value(v: Option<&String>) -> bool {
@@ -95,7 +135,18 @@ fn flag(name: &str) -> bool {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
+    if let Err(e) = run().await {
+        eprintln!("Error: {e}");
+        // First-start refusals carry a fixed, distinguishable status (see `first_start.rs`).
+        let code = e
+            .downcast_ref::<first_start::FirstStartError>()
+            .map_or(1, first_start::FirstStartError::exit_code);
+        std::process::exit(code);
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -105,13 +156,121 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(flag) = valueless_flag(&argv) {
         return Err(format!("{flag} is given without a value; refusing to start").into());
     }
-    let kek_path = arg("--insecure-kek-file").map(PathBuf::from);
-    if kek_path.is_some() {
-        eprintln!("WARNING: --insecure-kek-file is for tests only; production uses systemd-creds");
+    #[cfg(not(feature = "test-fault"))]
+    if let Some(flag) = test_hook_flag(&argv) {
+        return Err(format!("{flag} is a test-only flag; this build refuses it").into());
     }
-    let kek = kek::load(kek_path.as_deref()).map_err(|e| e.to_string())?;
+    // The KEK is read only by the commands that open or seal a keystore (not by `first-start`,
+    // which runs as root before the KEK credential may even exist).
+    let load_kek = || -> Result<Zeroizing<[u8; 32]>, Box<dyn std::error::Error>> {
+        let kek_path = arg("--insecure-kek-file").map(PathBuf::from);
+        if kek_path.is_some() {
+            eprintln!(
+                "WARNING: --insecure-kek-file is for tests only; production uses systemd-creds"
+            );
+        }
+        kek::load(kek_path.as_deref()).map_err(|e| {
+            let d = match e {
+                kek::KekError::NotProvided => "not_provided",
+                kek::KekError::Read(_) => "read",
+                kek::KekError::Format => "format",
+            };
+            first_start::FirstStartError(format!("KEK_UNDECRYPTABLE:{d}")).into()
+        })
+    };
     match std::env::args().nth(1).as_deref() {
+        Some("first-start") => {
+            let home_base = PathBuf::from(arg("--ts-home-base").unwrap_or_else(|| "/home".into()));
+            let root_home = PathBuf::from(arg("--ts-root-home").unwrap_or_else(|| "/root".into()));
+            let passwd =
+                PathBuf::from(arg("--passwd-file").unwrap_or_else(|| "/etc/passwd".into()));
+            let init_cfg = PathBuf::from(
+                arg("--init-config").unwrap_or_else(|| init_config::DEFAULT_PATH.into()),
+            );
+            let keystore_path = PathBuf::from(
+                arg("--keystore").unwrap_or_else(|| "/var/lib/conet-signer/keystore.json".into()),
+            );
+            let kek_cred = PathBuf::from(
+                arg("--kek-credential")
+                    .unwrap_or_else(|| "/etc/credstore.encrypted/conet-node-kek".into()),
+            );
+            let exe = std::env::current_exe()?;
+            let systemd_run = arg("--systemd-run").unwrap_or_else(|| "systemd-run".into());
+            let systemd_creds = arg("--systemd-creds").unwrap_or_else(|| "systemd-creds".into());
+            let unit_dirs: Vec<PathBuf> = arg("--ts-unit-dirs")
+                .unwrap_or_else(|| {
+                    "/etc/systemd/system:/usr/lib/systemd/system:/lib/systemd/system".into()
+                })
+                .split(':')
+                .map(PathBuf::from)
+                .collect();
+            let proc_dir = PathBuf::from(arg("--proc-dir").unwrap_or_else(|| "/proc".into()));
+            first_start::stage_a(&first_start::StageA {
+                init_config: &init_cfg,
+                keystore: &keystore_path,
+                kek_credential: &kek_cred,
+                exe: &exe,
+                systemd_run: &systemd_run,
+                systemd_creds: &systemd_creds,
+                ts_home_base: &home_base,
+                ts_root_home: &root_home,
+                ts_unit_dirs: &unit_dirs,
+                proc_dir: &proc_dir,
+                passwd: &passwd,
+            })?;
+        }
+        Some("first-start-seal") => {
+            let kek = load_kek()?;
+            let keystore_path = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
+            let expect = match (arg("--expect-wallet"), arg("--expect-key-id")) {
+                (Some(w), Some(k)) => Some((w, k)),
+                (None, None) => None,
+                _ => return Err("--expect-wallet and --expect-key-id go together".into()),
+            };
+            let create = match arg("--create").as_deref() {
+                Some("refuse") => first_start::Create::Refuse,
+                Some("generate") => first_start::Create::Generate,
+                Some("ts-import") => {
+                    let (w, k) = expect
+                        .clone()
+                        .ok_or("ts-import needs --expect-wallet and --expect-key-id")?;
+                    // The setup file arrives only as a systemd credential, never as a path argument.
+                    let dir = std::env::var_os("CREDENTIALS_DIRECTORY")
+                        .ok_or("no credentials directory")?;
+                    let p = std::path::Path::new(&dir).join(first_start::SETUP_CREDENTIAL);
+                    first_start::Create::TsImport {
+                        setup: read_setup(&p)?,
+                        expect_wallet: w,
+                        expect_key_id: k,
+                    }
+                }
+                _ => return Err("--create refuse|generate|ts-import".into()),
+            };
+            let o = first_start::seal_stage(first_start::SealRequest {
+                keystore: &keystore_path,
+                kek: &kek,
+                create,
+                expect_existing: expect,
+            })?;
+            if o.stale_temps_removed > 0 {
+                println!(
+                    "removed {} incomplete earlier attempt file(s)",
+                    o.stale_temps_removed
+                );
+            }
+            if o.lost_race {
+                println!("another first start published first; reusing its identity");
+            }
+            // Public values only.
+            println!(
+                "source: {}\nwallet: {}\nkeyId: {}",
+                o.source.label(),
+                o.wallet,
+                o.key_id
+            );
+        }
         Some("init") => {
+            let kek = load_kek()?;
             let out = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
             if out.exists() {
                 return Err("keystore exists; refusing to overwrite".into());
@@ -125,10 +284,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 previous_pgp_pass: String::new(),
             };
             let sealed = Zeroizing::new(keystore::seal(&kek, &secrets).map_err(|e| e.to_string())?);
-            write_private(&out, sealed.as_bytes())?;
+            publish_keystore(&out, sealed.as_bytes())?;
             println!("keystore written");
         }
         Some("import-ts-setup") => {
+            let kek = load_kek()?;
             let out = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
             if out.exists() {
                 return Err("keystore exists; refusing to overwrite".into());
@@ -140,7 +300,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let imported = ts_setup::import(&bytes, &want_wallet, &want_key_id)?;
             let sealed =
                 Zeroizing::new(keystore::seal(&kek, &imported.secrets).map_err(|e| e.to_string())?);
-            write_private(&out, sealed.as_bytes())?;
+            publish_keystore(&out, sealed.as_bytes())?;
             // Public values only, for the receipt: they match the expected values or we never get here.
             println!(
                 "keystore written\nwallet: {}\nkeyId: {}",
@@ -148,13 +308,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Some("keygen") => {
+            let kek = load_kek()?;
             let out = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
             if out.exists() {
                 return Err("keystore exists; refusing to overwrite".into());
             }
             let (secrets, public) = keystore::generate().map_err(|e| e.to_string())?;
             let sealed = Zeroizing::new(keystore::seal(&kek, &secrets).map_err(|e| e.to_string())?);
-            write_private(&out, sealed.as_bytes())?;
+            publish_keystore(&out, sealed.as_bytes())?;
             // Public values only: wallet address and route key, for node registration.
             let wallet = si_crypto::eth::EthKey::from_hex(&secrets.wallet_hex)
                 .map_err(|e| e.to_string())?
@@ -168,6 +329,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(cmd @ ("rotate-route" | "retire-route")) => {
             // R11: new route key with a transition (old key still decrypts), then retire the old one.
+            let kek = load_kek()?;
             let path = PathBuf::from(arg("--keystore").ok_or("--keystore <path>")?);
             let mut secrets = keystore::open(&kek, &std::fs::read_to_string(&path)?)
                 .map_err(|e| e.to_string())?;
@@ -178,10 +340,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
             let sealed = Zeroizing::new(keystore::seal(&kek, &secrets).map_err(|e| e.to_string())?);
-            let tmp = path.with_extension("tmp");
-            let _ = std::fs::remove_file(&tmp);
-            write_private(&tmp, sealed.as_bytes())?;
-            std::fs::rename(&tmp, &path)?;
+            // Atomic replace: the keystore is never seen half-written.
+            atomic::replace(&path, sealed.as_bytes())?;
             match public {
                 Some(p) => {
                     let id = si_crypto::opgp::PublicCert::from_armor(&p)
@@ -200,6 +360,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("topup ledger created");
         }
         Some("serve") => {
+            let kek = load_kek()?;
             // Required: the peer-uid check is the only gate on who may connect. It is never off.
             let allow_uid = allow_uid_from(arg("--allow-uid").as_deref())?;
             let socket = PathBuf::from(arg("--socket").ok_or("--socket <path>")?);
@@ -263,16 +424,13 @@ fn read_setup(path: &std::path::Path) -> Result<Zeroizing<Vec<u8>>, Box<dyn std:
     Ok(buf)
 }
 
-fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    f.write_all(data)?;
-    f.sync_all()
+/// Publish a new keystore: temporary file, fsync, atomic no-overwrite link (see `atomic`). An
+/// existing file at `path` (even a damaged one) is never touched.
+fn publish_keystore(path: &std::path::Path, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    match atomic::publish_new(path, data)? {
+        atomic::Published::Created => Ok(()),
+        atomic::Published::Exists => Err("keystore exists; refusing to overwrite".into()),
+    }
 }
 
 fn set_mode(path: &std::path::Path, mode: u32) -> std::io::Result<()> {
@@ -282,7 +440,10 @@ fn set_mode(path: &std::path::Path, mode: u32) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod arg_tests {
-    use super::{allow_uid_from, arg_in, quota_flags, valueless_flag, VALUE_FLAGS};
+    use super::{
+        allow_uid_from, arg_in, quota_flags, test_hook_flag, valueless_flag, TEST_HOOK_FLAGS,
+        VALUE_FLAGS,
+    };
 
     extern "C" {
         fn getuid() -> u32;
@@ -332,20 +493,30 @@ mod arg_tests {
     }
 
     /// Every value flag this binary reads through `arg()`. `--allow-bind` is a switch (`flag()`).
-    const FLAGS: [&str; 14] = [
+    const FLAGS: [&str; 24] = [
         "--allow-uid",
         "--anchor-node-id",
+        "--create",
         "--expect-key-id",
         "--expect-wallet",
+        "--init-config",
         "--insecure-kek-file",
+        "--kek-credential",
         "--keystore",
+        "--passwd-file",
         "--pgp-key",
+        "--proc-dir",
         "--quota-config",
         "--quota-state",
         "--setup",
         "--socket",
+        "--systemd-creds",
+        "--systemd-run",
         "--topup-config",
         "--topup-state",
+        "--ts-home-base",
+        "--ts-root-home",
+        "--ts-unit-dirs",
         "--verifying-contract",
     ];
 
@@ -508,5 +679,31 @@ mod arg_tests {
         ]));
         assert_eq!(got, Some("--quota-state"));
         assert!(!got.unwrap().contains(secret));
+    }
+
+    #[test]
+    fn every_test_hook_flag_is_a_known_value_flag_and_is_found_by_name() {
+        let argv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for f in TEST_HOOK_FLAGS {
+            assert!(VALUE_FLAGS.contains(&f), "{f} is not a value flag");
+            assert_eq!(
+                test_hook_flag(&argv(&["conet-signer", "first-start", f, "/x"])),
+                Some(f)
+            );
+        }
+        // The flags the unit really passes are not hooks.
+        assert_eq!(
+            test_hook_flag(&argv(&[
+                "conet-signer",
+                "first-start",
+                "--init-config",
+                "/etc/conet-node/init.json",
+                "--keystore",
+                "/var/lib/conet-signer/keystore.json",
+                "--kek-credential",
+                "/etc/credstore.encrypted/conet-node-kek",
+            ])),
+            None
+        );
     }
 }

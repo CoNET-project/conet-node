@@ -13,6 +13,7 @@ pub mod epoch;
 pub mod evidence;
 pub mod exit;
 pub mod http;
+pub mod init_args;
 pub mod limits;
 pub mod mailbox;
 pub mod mining_liveness;

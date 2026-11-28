@@ -3,7 +3,7 @@
 
 The package carries the two binaries, their systemd units, sysusers and tmpfiles snippets, one
 maintainer script (creates the accounts; never starts, stops, enables, restarts or reloads anything),
-the example environment files and the docs. Nothing is written under /etc.
+the example environment files and the docs. Under /etc the package only creates the empty directory /etc/credstore.encrypted (tmpfiles).
 
 Version: `<workspace version>+git<UTC commit date YYYYMMDD>.<8-char commit>-1`, for example
 `0.0.1+git20261127.1a2b3c4d-1`. It must sort above the version it replaces. Same-day rule: a second commit on one date may have a smaller hash and then needs `--timestamp-version`
@@ -138,10 +138,12 @@ FILES = [
     # (source relative to repo, destination in the package, mode)
     ("deploy/apt/systemd/conet-node.service", "usr/lib/systemd/system/conet-node.service", 0o644),
     ("deploy/apt/systemd/conet-signer.service", "usr/lib/systemd/system/conet-signer.service", 0o644),
+    ("deploy/apt/systemd/conet-node-first-start.service", "usr/lib/systemd/system/conet-node-first-start.service", 0o644),
     ("deploy/apt/sysusers.d/conet-node.conf", "usr/lib/sysusers.d/conet-node.conf", 0o644),
     ("deploy/apt/tmpfiles.d/conet-node.conf", "usr/lib/tmpfiles.d/conet-node.conf", 0o644),
     ("deploy/apt/examples/node.env", "usr/share/doc/conet-node/examples/node.env", 0o644),
     ("deploy/apt/examples/signer.env", "usr/share/doc/conet-node/examples/signer.env", 0o644),
+    ("deploy/apt/examples/init.json", "usr/share/doc/conet-node/examples/init.json", 0o644),
     ("deploy/apt/README.md", "usr/share/doc/conet-node/README.md", 0o644),
     ("LICENSE", "usr/share/doc/conet-node/copyright", 0o644),
 ]
@@ -173,8 +175,8 @@ def stage(out, bin_dir, version, epoch, git_dir=ROOT):
         f"Maintainer: {MAINTAINER}\nInstalled-Size: {size_kib}\nDepends: {DEPENDS}\nHomepage: {HOMEPAGE}\n"
         "Description: CoNET node (Rust)\n"
         " Entry, forwarding and mailbox node for CoNET chat, with its key-holding signer process.\n"
-        " Ships the binaries, two systemd units (not enabled), sysusers and tmpfiles snippets and\n"
-        " example environment files. The maintainer script creates two accounts and one directory;\n"
+        " Ships the binaries, three systemd units (not enabled), sysusers and tmpfiles snippets and\n"
+        " example environment files. The maintainer script creates two accounts and two directories;\n"
         " it never starts or restarts a service.\n"
     )
     (deb / "control").write_text(control)

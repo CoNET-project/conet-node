@@ -10,6 +10,11 @@ publish.workspace = true
 name = "conet-signer"
 path = "src/main.rs"
 
+[features]
+# Fault points for process-kill tests (src/atomic.rs). Enabled for this package's own tests via
+# the self dev-dependency below; never in a release build.
+test-fault = []
+
 [dependencies]
 si-proto.workspace = true
 si-crypto.workspace = true
@@ -29,5 +34,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+si-signer = { path = ".", features = ["test-fault"] }
 tempfile = "3"
 rand_chacha.workspace = true
