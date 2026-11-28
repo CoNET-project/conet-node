@@ -95,6 +95,10 @@ const SEQ: TableDefinition<&str, u64> = TableDefinition::new("seq");
 /// and an export at a rollback knows which TS messages Rust has already served.
 const TS_IMPORTED: TableDefinition<(&str, &str), u8> = TableDefinition::new("ts_imported");
 
+/// (user key, armor hash) of every message the last rollback export wrote into the TS files, per key (the set is replaced at each export). At the next import, a hash that is in
+/// this set but no longer in the TS files was acknowledged and removed by the TS node during the rollback: its row is removed here too, so it cannot come back.
+const TS_EXPORTED: TableDefinition<(&str, &str), u8> = TableDefinition::new("ts_exported");
+
 /// What importing one TS message did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportOutcome {
@@ -166,6 +170,7 @@ impl DiskStore {
         w.open_table(SEQ)?;
         w.open_table(OFFERS)?;
         w.open_table(TS_IMPORTED)?;
+        w.open_table(TS_EXPORTED)?;
         w.commit()?;
         Ok(Self {
             path: path.to_path_buf(),
@@ -378,6 +383,75 @@ impl DiskStore {
             }
         }
         Ok(out)
+    }
+
+    /// Records, for one key, the hashes the export just wrote into the TS files (replacing the earlier set of that key), in one write transaction.
+    pub fn record_exported(&self, key: &str, hashes: &[String]) -> Result<(), redb::Error> {
+        let key = key.to_uppercase();
+        self.with_db(|db| {
+            let w = db.begin_write()?;
+            {
+                let mut t = w.open_table(TS_EXPORTED)?;
+                let old: Vec<String> = t
+                    .range((key.as_str(), "")..)?
+                    .map_while(|e| e.ok())
+                    .map(|(k, _)| (k.value().0.to_string(), k.value().1.to_string()))
+                    .take_while(|(k, _)| *k == key)
+                    .map(|(_, h)| h)
+                    .collect();
+                for h in old {
+                    t.remove((key.as_str(), h.as_str()))?;
+                }
+                for h in hashes {
+                    t.insert((key.as_str(), h.as_str()), 1u8)?;
+                }
+            }
+            w.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Every (key, hash) the last export wrote.
+    pub fn exported_pairs(&self) -> Result<Vec<(String, String)>, redb::Error> {
+        self.with_db(|db| {
+            let r = db.begin_read()?;
+            let t = r.open_table(TS_EXPORTED)?;
+            let mut out = vec![];
+            for e in t.iter()? {
+                let (k, _) = e?;
+                out.push((k.value().0.to_string(), k.value().1.to_string()));
+            }
+            Ok(out)
+        })
+    }
+
+    /// The TS node acknowledged this message during a rollback: removes its row(s) and its entry in the exported set in ONE write transaction (crash-safe, idempotent). Returns
+    /// whether a row was removed. (A record of a pending upload, once such records exist, is removed in this same transaction.)
+    pub fn resolve_exported_gone(&self, key: &str, hash: &str) -> Result<bool, redb::Error> {
+        let key = key.to_uppercase();
+        self.with_db(|db| {
+            let w = db.begin_write()?;
+            let mut removed = false;
+            {
+                let mut msgs = w.open_table(MSGS)?;
+                let hit: Vec<u64> = msgs
+                    .range((key.as_str(), 0u64)..=(key.as_str(), u64::MAX))?
+                    .filter_map(|e| e.ok())
+                    .filter(|(_, v)| {
+                        serde_json::from_slice::<Row>(v.value())
+                            .is_ok_and(|r| r.hash.eq_ignore_ascii_case(hash))
+                    })
+                    .map(|(k, _)| k.value().1)
+                    .collect();
+                for s in hit {
+                    msgs.remove((key.as_str(), s))?;
+                    removed = true;
+                }
+                w.open_table(TS_EXPORTED)?.remove((key.as_str(), hash))?;
+            }
+            w.commit()?;
+            Ok(removed)
+        })
     }
 
     /// The armor hashes of the TS messages taken over for one key (acknowledged ones included).

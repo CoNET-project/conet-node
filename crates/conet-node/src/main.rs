@@ -256,8 +256,8 @@ fn run_ts_mailbox(
     if let Some(dir) = import_dir {
         let r = conet_node::ts_mailbox::import_ts_dir(&store, std::path::Path::new(&dir))?;
         println!(
-            "import-ts-mailbox: files={} keys={} read={} imported={} already_present={} already_imported={} failed_files={} skipped_non_string={}",
-            r.files, r.keys, r.read, r.imported, r.already_present, r.already_imported, r.failed_files, r.skipped_non_string
+            "import-ts-mailbox: files={} keys={} read={} imported={} already_present={} already_imported={} failed_files={} skipped_non_string={} acked_in_ts_removed={}",
+            r.files, r.keys, r.read, r.imported, r.already_present, r.already_imported, r.failed_files, r.skipped_non_string, r.removed_acked_in_ts
         );
         if r.failed_files > 0 {
             return Err(format!(

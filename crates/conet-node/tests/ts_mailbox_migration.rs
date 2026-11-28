@@ -619,3 +619,88 @@ fn the_digest_of_the_ts_files_equals_the_digest_of_the_store_after_the_import() 
     std::fs::write(ts2.join("0000000000000001.json"), "[\"half").unwrap();
     assert!(ts_dir_digest(&ts2).is_err());
 }
+
+/// DEFECT (found by the independent review): after a rollback export and TS running, a message that TS acknowledged and deleted must not come back at the next cutover with the
+/// same database. Reproduction: import a and b, export, acknowledge a in TS (it is removed from the TS file), import again: the pending set must be [b], not [a, b].
+#[test]
+fn a_message_acknowledged_in_ts_during_a_rollback_is_not_resurrected_at_the_next_cutover() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    write_ts(&ts, &format!("{K1}.json"), &["a", "b"]);
+    let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    import_ts_dir(&s, &ts).unwrap();
+    export_ts_dir(&s, &ts).unwrap();
+    // TS runs, the owner acknowledges a: TS removes it from its file
+    write_ts(&ts, &format!("{K1}.json"), &["b"]);
+    let r = import_ts_dir(&s, &ts).unwrap();
+    println!("MEASURE second cutover after the acknowledgement in TS: {r:?}");
+    assert_eq!(armors(&s, K1), ["b"], "a stays gone");
+    assert_eq!(
+        store_digest(&s).unwrap(),
+        ts_dir_digest(&ts).unwrap(),
+        "the digests agree after this step"
+    );
+    // idempotent: the same step again changes nothing
+    import_ts_dir(&s, &ts).unwrap();
+    assert_eq!(armors(&s, K1), ["b"]);
+}
+
+/// A message that Rust accepted during its run, exported to TS and acknowledged there, is also removed at the next import (it was never in the TS files before the export).
+#[test]
+fn a_rust_message_acknowledged_in_ts_after_the_export_is_removed_at_the_next_import() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    write_ts(&ts, &format!("{K1}.json"), &["a"]);
+    let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    import_ts_dir(&s, &ts).unwrap();
+    s.save_result(K1, item("n1"));
+    s.save_result(K1, item("n2"));
+    export_ts_dir(&s, &ts).unwrap();
+    assert_eq!(ts_reads(&ts, K1), ["a", "n1", "n2"]);
+    write_ts(&ts, &format!("{K1}.json"), &["a", "n2"]); // n1 acknowledged in TS
+    import_ts_dir(&s, &ts).unwrap();
+    assert_eq!(armors(&s, K1), ["a", "n2"]);
+}
+
+/// A new message that TS received during the rollback is imported at the next cutover.
+#[test]
+fn a_message_ts_received_during_the_rollback_is_imported_at_the_next_cutover() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    write_ts(&ts, &format!("{K1}.json"), &["a", "b"]);
+    let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    import_ts_dir(&s, &ts).unwrap();
+    export_ts_dir(&s, &ts).unwrap();
+    write_ts(&ts, &format!("{K1}.json"), &["a", "b", "c"]); // c arrived in TS
+    let r = import_ts_dir(&s, &ts).unwrap();
+    assert_eq!(r.imported, 1);
+    assert_eq!(armors(&s, K1), ["a", "b", "c"]);
+    assert_eq!(store_digest(&s).unwrap(), ts_dir_digest(&ts).unwrap());
+}
+
+/// Messages nobody touched during the rollback stay exactly as they were: same rows, same order, nothing removed, nothing imported.
+#[test]
+fn untouched_messages_stay_unchanged_across_a_rollback_and_the_next_cutover() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    write_ts(&ts, &format!("{K1}.inflight.json"), &["a"]);
+    write_ts(&ts, &format!("{K1}.json"), &["b", "c"]);
+    write_ts(&ts, &format!("{K2}.json"), &["x"]);
+    let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    import_ts_dir(&s, &ts).unwrap();
+    s.save_result(K1, item("n1"));
+    export_ts_dir(&s, &ts).unwrap();
+    let before = (armors(&s, K1), armors(&s, K2), store_digest(&s).unwrap());
+    let r = import_ts_dir(&s, &ts).unwrap();
+    println!("MEASURE next cutover with nothing changed in TS: {r:?}");
+    assert_eq!(r.imported, 0);
+    assert_eq!(
+        (armors(&s, K1), armors(&s, K2), store_digest(&s).unwrap()),
+        before
+    );
+    assert_eq!(before.2, ts_dir_digest(&ts).unwrap());
+}

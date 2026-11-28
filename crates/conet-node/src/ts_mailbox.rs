@@ -47,6 +47,8 @@ pub struct ImportReport {
     pub imported: usize,
     pub already_present: usize,
     pub already_imported: usize,
+    /// Rows removed because the TS node acknowledged (and removed) them during a rollback (they were in the last export and are no longer in the TS files).
+    pub removed_acked_in_ts: usize,
     /// Files that did not parse (nothing of them was imported).
     pub failed_files: usize,
     /// Array elements that were not strings (TS ignores them too).
@@ -148,6 +150,7 @@ pub fn import_ts_dir_with(
     after_each: &mut dyn FnMut(ImportOutcome),
 ) -> Result<ImportReport, MigrateError> {
     let mut rep = ImportReport::default();
+    reconcile_after_rollback(store, dir, &mut rep)?;
     for (key, (inflight, json)) in ts_files(dir)? {
         let mut key_has_file = false;
         // TS merge order: the inflight file first, then the new file.
@@ -204,6 +207,38 @@ pub fn import_ts_dir_with(
         }
     }
     Ok(rep)
+}
+
+/// Before an import: a message that the last export wrote into a TS file and that is no longer there was acknowledged by the TS node while it ran; its row is removed (with its
+/// entry in the exported set, in one transaction) so it does not come back. A key whose TS files do not parse is left alone and counted as a failed file.
+fn reconcile_after_rollback(
+    store: &DiskStore,
+    dir: &Path,
+    rep: &mut ImportReport,
+) -> Result<(), MigrateError> {
+    let files = ts_files(dir)?;
+    let mut by_key: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (k, h) in store.exported_pairs().map_err(MigrateError::Store)? {
+        by_key.entry(k).or_default().push(h);
+    }
+    for (key, hashes) in by_key {
+        let (inflight, json) = files.get(&key).cloned().unwrap_or((None, None));
+        let Ok(items) = read_ts_merged(&inflight, &json) else {
+            rep.failed_files += 1;
+            continue;
+        };
+        let present: HashSet<String> = items.iter().map(|a| armor_hash(a)).collect();
+        for h in hashes {
+            if !present.contains(&h)
+                && store
+                    .resolve_exported_gone(&key, &h)
+                    .map_err(MigrateError::Store)?
+            {
+                rep.removed_acked_in_ts += 1;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn export_ts_dir(store: &DiskStore, dir: &Path) -> Result<ExportReport, MigrateError> {
@@ -317,6 +352,11 @@ pub fn export_ts_dir_with(
             }
             rep.written += 1;
         }
+        // the set of messages the TS files now hold for this key, recorded AFTER the files were written (a crash before this line only means the export is run again)
+        let written: Vec<String> = result.iter().map(|a| armor_hash(a)).collect();
+        store
+            .record_exported(&key, &written)
+            .map_err(MigrateError::Store)?;
         after_each(&key);
     }
     Ok(rep)
