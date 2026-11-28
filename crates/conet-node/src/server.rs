@@ -244,6 +244,13 @@ pub(crate) async fn handle(mut stream: Conn, peer: SocketAddr, ctx: Arc<NodeCtx>
             let _ = stream.write_all(&http::options_204()).await;
         }
         ("POST", p) if p.starts_with("/post") => post(stream, peer, req, ctx).await,
+        // The public liveness probe: the PWA and worker mark a node healthy only on 200 to 399 for a bare `GET /` (chat SDK nodes.ts probeGossipNode)
+        // and choose entries from the healthy ones. TS answers with a proxied home page; here a fixed minimal page, no identity, no proxying.
+        ("GET", "/") => {
+            let _ = stream
+                .write_all(&http::ok_200("<html><body>ok</body></html>"))
+                .await;
+        }
         ("GET", "/webrtc") => {
             let st = ctx.webrtc.read().expect("webrtc").clone();
             let resp = match st {
