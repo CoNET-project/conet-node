@@ -120,7 +120,9 @@ fn max_body_from(value: Option<&str>) -> Result<Option<usize>, String> {
 /// followed by another flag, empty, or blank), would otherwise fall back to a default, to a
 /// different route, key, storage or certificate source, or to a built-in address. The node
 /// refuses to start instead. Only the flag name is printed, never a value.
-const FAIL_CLOSED_FLAGS: [&str; 26] = [
+const FAIL_CLOSED_FLAGS: [&str; 28] = [
+    "--import-ts-mailbox",
+    "--export-ts-mailbox",
     "--init-config",
     "--signer-socket",
     "--rpc",
@@ -233,6 +235,54 @@ fn selftest() -> Result<(), String> {
     Ok(())
 }
 
+/// `--import-ts-mailbox DIR --mailbox-db FILE`: takes over the TS offline mailbox files of DIR (idempotent; the source is only read).
+/// `--export-ts-mailbox DIR --mailbox-db FILE`: at a rollback, writes what the Rust store holds back into DIR in the TS format. Neither starts the node; a running node
+/// holds the database lock, so both refuse to run next to it. Only counts are printed, never a file name, key or message text.
+fn run_ts_mailbox(
+    import_dir: Option<String>,
+    export_dir: Option<String>,
+    db: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if import_dir.is_some() && export_dir.is_some() {
+        return Err(
+            "--import-ts-mailbox and --export-ts-mailbox are separate steps; give one".into(),
+        );
+    }
+    let Some(db) = db else {
+        return Err("--mailbox-db is required for the TS mailbox migration".into());
+    };
+    let store = conet_node::store::DiskStore::open(std::path::Path::new(&db))?;
+    if let Some(dir) = import_dir {
+        let r = conet_node::ts_mailbox::import_ts_dir(&store, std::path::Path::new(&dir))?;
+        println!(
+            "import-ts-mailbox: files={} keys={} read={} imported={} already_present={} already_imported={} failed_files={} skipped_non_string={}",
+            r.files, r.keys, r.read, r.imported, r.already_present, r.already_imported, r.failed_files, r.skipped_non_string
+        );
+        if r.failed_files > 0 {
+            return Err(format!(
+                "{} TS mailbox file(s) did not parse; nothing of them was imported",
+                r.failed_files
+            )
+            .into());
+        }
+    }
+    if let Some(dir) = export_dir {
+        let r = conet_node::ts_mailbox::export_ts_dir(&store, std::path::Path::new(&dir))?;
+        println!(
+            "export-ts-mailbox: keys={} written={} unchanged={} failed_keys={} skipped_keys={}",
+            r.keys, r.written, r.unchanged, r.failed_keys, r.skipped_keys
+        );
+        if r.failed_keys > 0 {
+            return Err(format!(
+                "{} key(s) have a TS file that does not parse and were left alone",
+                r.failed_keys
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_argv()?;
@@ -253,6 +303,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(flag) = valueless_flag(argv()) {
         return Err(format!("{flag} is given without a value; refusing to start").into());
+    }
+    // The one-shot mailbox migration steps of a cutover or a rollback (TS stopped, this node not running): counts only are printed.
+    let (import_dir, export_dir) = (arg("--import-ts-mailbox"), arg("--export-ts-mailbox"));
+    if import_dir.is_some() || export_dir.is_some() {
+        return run_ts_mailbox(import_dir, export_dir, setting("--mailbox-db"));
     }
     // One TLS crypto backend for the whole process (several may be compiled in through deps).
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -623,7 +678,7 @@ mod arg_tests {
     use super::{arg_in, flag_in, mining_node_ip_from};
 
     /// Every flag `main` reads through `arg()`.
-    const FLAGS: [&str; 30] = [
+    const FLAGS: [&str; 32] = [
         "--acme-cache",
         "--acme-contact",
         "--acme-directory",
@@ -634,7 +689,9 @@ mod arg_tests {
         "--dev-route-key",
         "--egress-policy",
         "--evidence-log",
+        "--export-ts-mailbox",
         "--health-listen",
+        "--import-ts-mailbox",
         "--init-config",
         "--listen",
         "--mailbox-db",

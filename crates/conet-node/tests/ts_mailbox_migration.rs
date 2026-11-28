@@ -56,26 +56,32 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
     write_ts(&ts, "0123456789ABCDEF.json", &["j1", "j2", "j3"]);
     write_ts(&ts, "FEDCBA9876543210.json", &["k1"]);
     std::fs::write(ts.join("nodeSetup-like.json"), "{}").unwrap(); // not a mailbox file
-    std::fs::write(ts.join("0123456789abcdef.json"), "[\"lower\"]").unwrap(); // lower-case name: TS writes upper case only
+    std::fs::write(ts.join("0123456789ABCDE.json"), "[\"short-name\"]").unwrap(); // 15 characters: not a key ID, not a mailbox file
     (d, ts)
 }
 
 const K1: &str = "0123456789ABCDEF";
 const K2: &str = "FEDCBA9876543210";
 
-/// RED TODAY, with the code as it is: a Rust node started on the TS data directory knows nothing of the TS messages (no code reads those files).
+/// The fact that makes the import step necessary: opening the Rust store next to the TS files reads none of them (no code in the node does), so without the import
+/// every unacknowledged TS message would stay on the disk, invisible to its owner. (This test was RED while it asserted that they were available.)
 #[test]
-fn today_a_rust_store_started_next_to_the_ts_files_has_none_of_the_ts_messages() {
-    let (d, _ts) = fixture();
+fn a_plain_open_reads_no_ts_file_so_the_import_step_is_required() {
+    let (d, ts) = fixture();
     let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    assert!(
+        armors(&s, K1).is_empty(),
+        "opening the store does not read the TS files"
+    );
+    import_ts_dir(&s, &ts).unwrap();
     assert_eq!(
         armors(&s, K1),
         ["i1", "i2", "j1", "j2", "j3"],
-        "the TS messages are available to the Rust node"
+        "after the import step they are available"
     );
 }
 
-/// Import: inflight first, then the new file (the TS merge order), the other key too; non-mailbox files, sub-directories and lower-case names are not touched; the source is not modified.
+/// Import: inflight first, then the new file (the TS merge order), the other key too; non-mailbox files, sub-directories and names that are not a 16-character key are not read; the source is not modified.
 #[test]
 fn import_takes_over_the_ts_messages_in_ts_order_and_leaves_the_source_alone() {
     let (d, ts) = fixture();
@@ -98,7 +104,11 @@ fn import_takes_over_the_ts_messages_in_ts_order_and_leaves_the_source_alone() {
     println!("MEASURE import report: {r:?}");
     assert_eq!(armors(&s, K1), ["i1", "i2", "j1", "j2", "j3"]);
     assert_eq!(armors(&s, K2), ["k1"]);
-    assert!(s.pending("0123456789abcdef-lower").is_empty());
+    assert_eq!(
+        s.mailbox_keys().unwrap().into_iter().collect::<Vec<_>>(),
+        [K1, K2],
+        "only the two mailbox keys exist"
+    );
     assert_eq!(
         (
             r.files,

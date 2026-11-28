@@ -91,6 +91,20 @@ impl MailboxStore for MemoryStore {
 const MSGS: TableDefinition<(&str, u64), &[u8]> = TableDefinition::new("msgs");
 /// user key → next sequence.
 const SEQ: TableDefinition<&str, u64> = TableDefinition::new("seq");
+/// (user key, armor hash) of every TS offline message the import has taken over (also the ones the owner acknowledged since): an import run never brings one back,
+/// and an export at a rollback knows which TS messages Rust has already served.
+const TS_IMPORTED: TableDefinition<(&str, &str), u8> = TableDefinition::new("ts_imported");
+
+/// What importing one TS message did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportOutcome {
+    /// Stored now (and recorded as taken over).
+    Imported,
+    /// The same armor was already stored (delivered live to this node); recorded as taken over, nothing added.
+    AlreadyPresent,
+    /// Taken over by an earlier run (it may have been acknowledged since): nothing done.
+    AlreadyImported,
+}
 
 #[derive(Serialize, Deserialize)]
 struct Row {
@@ -151,6 +165,7 @@ impl DiskStore {
         w.open_table(MSGS)?;
         w.open_table(SEQ)?;
         w.open_table(OFFERS)?;
+        w.open_table(TS_IMPORTED)?;
         w.commit()?;
         Ok(Self {
             path: path.to_path_buf(),
@@ -281,6 +296,88 @@ impl DiskStore {
             }
             w.commit()?;
             Ok(true)
+        })
+    }
+
+    /// Takes over one TS offline message in ONE write transaction: the ledger entry and the row commit together, so a crash leaves either both or neither.
+    pub fn import_message(&self, key: &str, item: Stored) -> Result<ImportOutcome, redb::Error> {
+        let key = key.to_uppercase();
+        let hash = armor_hash(&item.armor);
+        self.with_db(|db| {
+            let w = db.begin_write()?;
+            let outcome;
+            {
+                let mut ledger = w.open_table(TS_IMPORTED)?;
+                if ledger.get((key.as_str(), hash.as_str()))?.is_some() {
+                    return Ok(ImportOutcome::AlreadyImported);
+                }
+                let mut msgs = w.open_table(MSGS)?;
+                let mut seq = w.open_table(SEQ)?;
+                let mut present = false;
+                for e in msgs.range((key.as_str(), 0u64)..=(key.as_str(), u64::MAX))? {
+                    let (_, v) = e?;
+                    if serde_json::from_slice::<Row>(v.value()).is_ok_and(|r| r.hash == hash) {
+                        present = true;
+                        break;
+                    }
+                }
+                ledger.insert((key.as_str(), hash.as_str()), 1u8)?;
+                if present {
+                    outcome = ImportOutcome::AlreadyPresent;
+                } else {
+                    let next = seq.get(key.as_str())?.map(|v| v.value()).unwrap_or(0);
+                    let row = serde_json::to_vec(&Row {
+                        item: item.clone(),
+                        hash: hash.clone(),
+                        saved_at: now(),
+                    })
+                    .expect("row json");
+                    msgs.insert((key.as_str(), next), row.as_slice())?;
+                    seq.insert(key.as_str(), next + 1)?;
+                    outcome = ImportOutcome::Imported;
+                }
+            }
+            w.commit()?;
+            Ok(outcome)
+        })
+    }
+
+    /// The armor hashes of the TS messages taken over for one key (acknowledged ones included).
+    pub fn ts_imported_hashes(
+        &self,
+        key: &str,
+    ) -> Result<std::collections::HashSet<String>, redb::Error> {
+        let key = key.to_uppercase();
+        self.with_db(|db| {
+            let r = db.begin_read()?;
+            let t = r.open_table(TS_IMPORTED)?;
+            let mut out = std::collections::HashSet::new();
+            for e in t.range((key.as_str(), "")..)? {
+                let (k, _) = e?;
+                let (kk, h) = k.value();
+                if kk != key {
+                    break;
+                }
+                out.insert(h.to_string());
+            }
+            Ok(out)
+        })
+    }
+
+    /// Every user key that has a stored message or a TS ledger entry.
+    pub fn mailbox_keys(&self) -> Result<std::collections::BTreeSet<String>, redb::Error> {
+        self.with_db(|db| {
+            let r = db.begin_read()?;
+            let mut out = std::collections::BTreeSet::new();
+            for e in r.open_table(MSGS)?.iter()? {
+                let (k, _) = e?;
+                out.insert(k.value().0.to_string());
+            }
+            for e in r.open_table(TS_IMPORTED)?.iter()? {
+                let (k, _) = e?;
+                out.insert(k.value().0.to_string());
+            }
+            Ok(out)
         })
     }
 

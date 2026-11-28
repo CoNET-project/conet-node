@@ -36,6 +36,7 @@ pub mod term_watch;
 pub mod tls;
 pub mod treasury_v3;
 pub mod treasury_v3_miner;
+pub mod ts_mailbox;
 pub mod validator_mining;
 #[cfg(test)]
 pub mod validator_wallet_source;
