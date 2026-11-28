@@ -132,6 +132,9 @@ pub struct DiskStore {
     reopen_total: AtomicU64,
     pub reopen_limit: usize,
     pub reopen_window: Duration,
+    /// (key, reads to let through first, reads to fail after them).
+    #[cfg(feature = "test-fault")]
+    read_fault: Mutex<Option<(String, u32, u32)>>,
 }
 
 /// The errors after which reopening the file can help: redb's own write failed (`Io`) or an earlier one did (`PreviousIo`).
@@ -180,6 +183,8 @@ impl DiskStore {
             reopen_total: AtomicU64::new(0),
             reopen_limit: 3,
             reopen_window: Duration::from_secs(60),
+            #[cfg(feature = "test-fault")]
+            read_fault: Mutex::new(None),
         })
     }
 
@@ -273,7 +278,29 @@ impl DiskStore {
     }
 
     fn rows(&self, key: &str) -> Result<Vec<(u64, Row)>, redb::Error> {
+        self.injected_read_fault(key)?;
         self.with_db(|db| Self::rows_in(db, key))
+    }
+
+    /// Test builds only: after `skip` successful reads of `key`, the next `fail` reads return an I/O error.
+    #[cfg(feature = "test-fault")]
+    pub fn fail_reads_for(&self, key: &str, skip: u32, fail: u32) {
+        *self.read_fault.lock().expect("read fault") = Some((key.to_uppercase(), skip, fail));
+    }
+
+    fn injected_read_fault(&self, _key: &str) -> Result<(), redb::Error> {
+        #[cfg(feature = "test-fault")]
+        if let Some((k, skip, fail)) = self.read_fault.lock().expect("read fault").as_mut() {
+            if k == _key && *skip > 0 {
+                *skip -= 1;
+            } else if k == _key && *fail > 0 {
+                *fail -= 1;
+                return Err(redb::Error::from(redb::StorageError::Io(
+                    std::io::Error::other("injected read error"),
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn rows_in(db: &Database, key: &str) -> Result<Vec<(u64, Row)>, redb::Error> {

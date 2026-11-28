@@ -6,6 +6,10 @@ version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Test builds only: lets a test make the reads of one mailbox key fail. Never enabled by the package build.
+test-fault = []
+
 [dependencies]
 si-proto.workspace = true
 si-crypto.workspace = true
