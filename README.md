@@ -111,6 +111,10 @@ ABIs live in `crates/conet-node/abi/` (compiled from the node line's sources; se
 - **Registration data**: `conet-register` prints typed data, digests and calldata for
   `registerFor`, `registerReserved` and `setEgressPolicy`. It never sends a transaction.
 
+## Mailbox post acknowledgement
+
+A mailbox answers a post with `stored`, `duplicate` or `store_failed` and the digest of the armor it stored: see [docs/post-ack.md](docs/post-ack.md).
+
 ## Exit policy
 
 The SilentPass exit (`SaaS_Sock5*`) is off unless the operator gives a policy file:

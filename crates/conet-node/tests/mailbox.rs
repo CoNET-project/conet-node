@@ -291,7 +291,11 @@ async fn live_offline_ack_and_queries() {
     // live delivery through entry A to the listen on B
     let mut l = Listen::connect(&n, 1).await;
     let m1 = enc(10, "first", &user);
-    assert_eq!(post(n.a, &m1).await, "");
+    // the sender is told it was stored, with the digest of exactly what was stored
+    assert_eq!(
+        serde_json::from_str::<Value>(&post(n.a, &m1).await).unwrap(),
+        json!({ "ok": true, "stored": true, "h": armor_hash(&m1) })
+    );
     assert_eq!(l.next().await.unwrap()["data"], m1);
     assert_eq!(
         n.push.offline.lock().unwrap().as_slice(),
@@ -320,7 +324,10 @@ async fn live_offline_ack_and_queries() {
         &json!({ "data": m2, "NoPush": true }).to_string(),
         &pubkey(&n.g, "nodeB"),
     );
-    assert_eq!(post(n.a, &work).await, "");
+    assert_eq!(
+        serde_json::from_str::<Value>(&post(n.a, &work).await).unwrap(),
+        json!({ "ok": true, "stored": true, "h": armor_hash(m2.trim_end()) })
+    );
     assert_eq!(
         n.push.offline.lock().unwrap().len(),
         1,
@@ -449,7 +456,10 @@ async fn evidence_rows_follow_one_message_through_entry_and_mailbox() {
     // 1. A bare armor post (what live clients send for ordinary messages): stored byte for byte.
     let m1 = enc(10, "first", &user);
     let h1 = armor_hash(&m1);
-    assert_eq!(post(n.a, &m1).await, "");
+    assert_eq!(
+        serde_json::from_str::<Value>(&post(n.a, &m1).await).unwrap(),
+        json!({ "ok": true, "stored": true, "h": h1 })
+    );
     assert_eq!(l.next().await.unwrap()["data"], m1);
     // 2. Mailbox work (new clients): B stores the inner armor trimmed and cut after END.
     let m2 = enc(11, "second", &user);
@@ -460,7 +470,10 @@ async fn evidence_rows_follow_one_message_through_entry_and_mailbox() {
     );
     let h2 = armor_hash(m2.trim());
     assert_ne!(h2, armor_hash(&m2), "the fixture armor ends with a newline");
-    assert_eq!(post(n.a, &work).await, "");
+    assert_eq!(
+        serde_json::from_str::<Value>(&post(n.a, &work).await).unwrap(),
+        json!({ "ok": true, "stored": true, "h": h2 })
+    );
     assert_eq!(l.next().await.unwrap()["data"], m2.trim());
     // ACK of the first, presence query.
     let ack = json!({ "command": "gossip_delivery_ack", "walletAddress": n.g["wallets"]["client"]["address"], "armorHash": h1, "timestamp": now() });

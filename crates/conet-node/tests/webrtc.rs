@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use conet_node::chain::{BoxFut, ChainError, UserRoutes};
 use conet_node::route::RouteTable;
 use conet_node::server::{self, NodeCtx};
-use conet_node::store::MemoryStore;
+use conet_node::store::{armor_hash, MemoryStore};
 use conet_node::webrtc::{serve_webrtc, statement, verify_statement, Endpoint, WebRtcOpts};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -394,7 +394,11 @@ async fn listen_and_deliver_over_webrtc() {
         "delivery answered and pushed to the listen"
     );
     assert!(p.text(deliver).starts_with("HTTP/1.1 200"));
-    assert_eq!(body(&p.text(deliver)), "");
+    // the mailbox now says what it did: stored, with the digest of the armor it stored
+    assert_eq!(
+        serde_json::from_str::<Value>(&body(&p.text(deliver))).unwrap(),
+        json!({ "ok": true, "stored": true, "h": armor_hash(&m1) })
+    );
     assert_eq!(frames(&p.text(listen), &key)[1]["data"], m1);
     assert!(!p.closed.contains(&listen), "listen stays open");
 

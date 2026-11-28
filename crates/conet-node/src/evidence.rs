@@ -50,7 +50,7 @@ pub enum Forward {
 
 /// Closed reason codes. Anything else is `other`.
 pub mod reason {
-    pub const CLOSED: [&str; 16] = [
+    pub const CLOSED: [&str; 17] = [
         "body_json",
         "body_data",
         "not_pgp",
@@ -67,6 +67,7 @@ pub mod reason {
         "format",
         "route_unknown",
         "lookup_unavailable",
+        "store_failed",
     ];
 
     /// Maps a protocol reason onto the closed list; unknown text becomes `other`.
@@ -328,7 +329,13 @@ impl EvidenceLog {
         self.emit(Row {
             ev: ev::STORE,
             role: Some(Role::Mailbox),
-            outcome: Some(Outcome::Ok),
+            outcome: Some(if report.outcome == crate::store::SaveResult::Failed {
+                Outcome::Fail
+            } else {
+                Outcome::Ok
+            }),
+            reason: (report.outcome == crate::store::SaveResult::Failed)
+                .then_some(reason::closed("store_failed")),
             h_raw: rcv.map(|r| r.h_raw.clone()),
             h_recv: rcv.map(|r| r.h_recv.clone()),
             h_in: Some(hash(armor)),

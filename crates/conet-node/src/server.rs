@@ -340,6 +340,7 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
                     let hop_bytes = Node::verified_hop_bytes(&hops, now_secs());
                     let hops_len = hops.len();
                     let evidence_armor = ctx.evidence.is_some().then(|| armor.clone());
+                    let h = crate::store::armor_hash(&armor);
                     let report = ctx.mailbox.deliver_report(
                         &key_id,
                         Stored {
@@ -352,7 +353,7 @@ async fn post(mut stream: Conn, peer: SocketAddr, req: http::Request, ctx: Arc<N
                     if let (Some(ev), Some(a)) = (&ctx.evidence, evidence_armor) {
                         ev.store(received.as_ref(), &a, report);
                     }
-                    let _ = stream.write_all(&http::ok_200("")).await;
+                    let _ = stream.write_all(&http::ok_200(&report.ack_body(&h))).await;
                 }
                 Resolved::Remote(addr) => {
                     // The wallet may be the signer client (blocking socket call): keep it off I/O threads.

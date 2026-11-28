@@ -65,6 +65,8 @@ pub enum Outcome {
     /// Stored; the mailbox's raw HTTP reply, passed back to the sender.
     Stored(Vec<u8>),
     ChainInvalid,
+    /// The mailbox answered `ok:false,"store_failed"`: the armor is not durably stored there.
+    StoreFailed,
     Network,
     Refused,
     Unpaid,
@@ -80,10 +82,10 @@ pub fn classify(status: u16, body: &[u8]) -> Outcome {
     }
     if let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) {
         if v.get("ok") == Some(&serde_json::Value::Bool(false)) {
-            return if v.get("error").and_then(|e| e.as_str()) == Some(UNPAID) {
-                Outcome::Unpaid
-            } else {
-                Outcome::Refused
+            return match v.get("error").and_then(|e| e.as_str()) {
+                Some(UNPAID) => Outcome::Unpaid,
+                Some(crate::mailbox::STORE_FAILED) => Outcome::StoreFailed,
+                _ => Outcome::Refused,
             };
         }
     }
@@ -292,7 +294,13 @@ async fn send_slot(
             if let Some(ev) = &ctx.evidence {
                 ev.store(None, armor, report);
             }
-            Outcome::Stored(http::ok_200(""))
+            if report.outcome == crate::store::SaveResult::Failed {
+                Outcome::StoreFailed
+            } else {
+                Outcome::Stored(http::ok_200(
+                    &report.ack_body(&crate::store::armor_hash(armor)),
+                ))
+            }
         }
         Target::Remote(a) => send_remote(ctx, a, key_id, armor, hops, deadline).await,
     }
@@ -302,6 +310,11 @@ async fn send_slot(
 pub fn failure_reply(outcomes: &[Outcome]) -> Vec<u8> {
     if outcomes.contains(&Outcome::Unpaid) {
         http::ok_200(&format!(r#"{{"ok":false,"error":"{UNPAID}"}}"#))
+    } else if outcomes.contains(&Outcome::StoreFailed) {
+        http::ok_200(&format!(
+            r#"{{"ok":false,"error":"{}"}}"#,
+            crate::mailbox::STORE_FAILED
+        ))
     } else if outcomes
         .iter()
         .all(|o| matches!(o, Outcome::ChainInvalid | Outcome::Refused))
@@ -417,6 +430,18 @@ mod tests {
             classify(200, br#"{"ok":false,"error":"recipient_unpaid"}"#),
             Outcome::Unpaid
         );
+        assert_eq!(
+            classify(200, br#"{"ok":false,"error":"store_failed"}"#),
+            Outcome::StoreFailed
+        );
+        assert_eq!(
+            classify(200, br#"{"ok":true,"stored":true,"h":"0x00"}"#),
+            Outcome::Stored(vec![])
+        );
+        assert_eq!(
+            classify(200, br#"{"ok":true,"duplicate":true,"h":"0x00"}"#),
+            Outcome::Stored(vec![])
+        );
         assert_eq!(classify(404, b""), Outcome::Network);
         assert_eq!(classify(500, br#"{"ok":true}"#), Outcome::Network);
     }
@@ -425,6 +450,12 @@ mod tests {
     fn failure_replies() {
         let body = |v: Vec<u8>| String::from_utf8(v).unwrap();
         assert!(body(failure_reply(&[Outcome::Network, Outcome::Unpaid])).contains(UNPAID));
+        assert!(
+            body(failure_reply(&[Outcome::Refused, Outcome::StoreFailed])).contains("store_failed")
+        );
+        assert!(
+            body(failure_reply(&[Outcome::Network, Outcome::StoreFailed])).contains("store_failed")
+        );
         assert!(
             body(failure_reply(&[Outcome::ChainInvalid, Outcome::Refused])).contains("no_route")
         );

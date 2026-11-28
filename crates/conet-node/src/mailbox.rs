@@ -4,7 +4,7 @@
 //! stream sees no key ID, wallet or frame type. A wallet may hold several listens (phone,
 //! desktop, browser), each a separate delivery target.
 use crate::push::Push;
-use crate::store::{MailboxStore, Stored};
+use crate::store::{MailboxStore, SaveResult, Stored};
 use rand_core::{OsRng, RngCore};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -28,10 +28,33 @@ pub struct Listener {
 /// What one delivery did: stored newly, push queued, live listens written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeliverReport {
+    /// What the store did with this armor; `fresh` is `outcome == Stored`.
+    pub outcome: SaveResult,
     pub fresh: bool,
     pub push_enqueued: bool,
     pub live_sessions: u32,
 }
+
+impl DeliverReport {
+    /// The reply body a mailbox gives the sender for a post: `h` is the keccak256 of the armor exactly as stored (the `gossip_delivery_ack` hash).
+    /// Old senders only look for `ok:false`, so a stored or duplicate armor is `ok:true` and a storage failure is `ok:false`.
+    pub fn ack_body(&self, h: &str) -> String {
+        match self.outcome {
+            SaveResult::Stored => {
+                serde_json::json!({ "ok": true, "stored": true, "h": h }).to_string()
+            }
+            SaveResult::Duplicate => {
+                serde_json::json!({ "ok": true, "duplicate": true, "h": h }).to_string()
+            }
+            SaveResult::Failed => {
+                serde_json::json!({ "ok": false, "error": STORE_FAILED }).to_string()
+            }
+        }
+    }
+}
+
+/// The reply error when the armor could not be stored; the sender may retry the same armor.
+pub const STORE_FAILED: &str = "store_failed";
 
 pub struct Mailbox {
     pub store: Arc<dyn MailboxStore>,
@@ -72,7 +95,8 @@ impl Mailbox {
     pub fn deliver_report(&self, user_key: &str, item: Stored) -> DeliverReport {
         let armor = item.armor.clone();
         let no_push = item.no_push;
-        let fresh = self.store.save(user_key, item);
+        let outcome = self.store.save_result(user_key, item);
+        let fresh = outcome == SaveResult::Stored;
         let push_enqueued = fresh && !no_push;
         if push_enqueued {
             self.push.offline_chat(user_key.to_uppercase());
@@ -99,6 +123,7 @@ impl Mailbox {
             sent
         });
         DeliverReport {
+            outcome,
             fresh,
             push_enqueued,
             live_sessions,

@@ -23,9 +23,26 @@ pub fn armor_hash(armor: &str) -> String {
     si_crypto::eth::keccak_hex(armor)
 }
 
+/// What one save did. `Failed` means the armor is NOT durably stored (a storage error), which `save`'s bool cannot tell from a duplicate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveResult {
+    Stored,
+    /// The same armor was already stored (SI dedups byte for byte).
+    Duplicate,
+    Failed,
+}
+
 pub trait MailboxStore: Send + Sync {
-    /// Store ciphertext for a user key. Returns false when it was already stored (SI dedups).
+    /// Store ciphertext for a user key. Returns false when it was already stored (SI dedups) or when the store failed; use `save_result` to tell them apart.
     fn save(&self, user_key: &str, item: Stored) -> bool;
+    /// Same as `save`, but a storage error is `Failed`, not "already stored". Stores that cannot fail keep this default.
+    fn save_result(&self, user_key: &str, item: Stored) -> SaveResult {
+        if self.save(user_key, item) {
+            SaveResult::Stored
+        } else {
+            SaveResult::Duplicate
+        }
+    }
     /// Everything not yet acknowledged, oldest first.
     fn pending(&self, user_key: &str) -> Vec<Stored>;
     /// Delete by armor hash (client ACK). True when something was removed.
@@ -181,11 +198,17 @@ impl DiskStore {
 
 impl MailboxStore for DiskStore {
     fn save(&self, user_key: &str, item: Stored) -> bool {
-        self.save_inner(&user_key.to_uppercase(), item)
-            .unwrap_or_else(|e| {
+        self.save_result(user_key, item) == SaveResult::Stored
+    }
+    fn save_result(&self, user_key: &str, item: Stored) -> SaveResult {
+        match self.save_inner(&user_key.to_uppercase(), item) {
+            Ok(true) => SaveResult::Stored,
+            Ok(false) => SaveResult::Duplicate,
+            Err(e) => {
                 tracing::error!(%e, "mailbox save failed");
-                false
-            })
+                SaveResult::Failed
+            }
+        }
     }
     fn pending(&self, user_key: &str) -> Vec<Stored> {
         let cutoff = now().saturating_sub(self.max_age_secs);
