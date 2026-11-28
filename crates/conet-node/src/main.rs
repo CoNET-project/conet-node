@@ -322,8 +322,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !std::path::Path::new(&db).is_file() {
             return Err("the mailbox database does not exist; the digest never creates one".into());
         }
-        let store = conet_node::store::DiskStore::open(std::path::Path::new(&db))?;
-        let d = conet_node::ts_mailbox::store_digest(&store)?;
+        // a READ-ONLY open of the file: no write transaction, nothing created or changed
+        let d = conet_node::ts_mailbox::store_digest_at(std::path::Path::new(&db))?;
         println!(
             "mailbox-digest: keys={} messages={} sha256={}",
             d.keys, d.messages, d.sha256

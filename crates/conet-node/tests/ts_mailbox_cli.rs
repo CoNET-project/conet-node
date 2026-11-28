@@ -191,3 +191,80 @@ fn the_digest_options_print_counts_and_one_digest_only() {
         assert!(!t.contains("0x"), "no armor hash");
     }
 }
+
+/// A TS file that does not parse makes `--ts-mailbox-digest` exit non-zero and print NO digest (never a smaller one).
+#[test]
+fn a_corrupt_ts_file_gives_no_digest_and_a_non_zero_exit() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    std::fs::write(
+        ts.join("0123456789ABCDEF.json"),
+        serde_json::to_string_pretty(&["ok-1", "ok-2"]).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(ts.join("FEDCBA9876543210.json"), "[\"half").unwrap();
+    let o = run(&["--ts-mailbox-digest", ts.to_str().unwrap()]);
+    println!(
+        "MEASURE corrupt digest: status={:?} {}",
+        o.status.code(),
+        text(&o).trim()
+    );
+    assert!(!o.status.success(), "{}", text(&o));
+    assert!(
+        !String::from_utf8_lossy(&o.stdout).contains("sha256="),
+        "no digest is printed: {}",
+        text(&o)
+    );
+}
+
+/// `--mailbox-digest` opens the file READ-ONLY: it works on a read-only file in a read-only directory, and the file's bytes and modification time are unchanged.
+#[test]
+fn the_store_digest_option_opens_the_file_read_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    std::fs::write(
+        ts.join("0123456789ABCDEF.json"),
+        serde_json::to_string_pretty(&["m-1", "m-2", "m-3"]).unwrap(),
+    )
+    .unwrap();
+    let dbdir = d.path().join("db");
+    std::fs::create_dir_all(&dbdir).unwrap();
+    let db = dbdir.join("m.redb");
+    assert!(run(&[
+        "--import-ts-mailbox",
+        ts.to_str().unwrap(),
+        "--mailbox-db",
+        db.to_str().unwrap()
+    ])
+    .status
+    .success());
+    let before = (
+        std::fs::read(&db).unwrap(),
+        std::fs::metadata(&db).unwrap().modified().unwrap(),
+    );
+    std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::set_permissions(&dbdir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let o = run(&["--mailbox-digest", "--mailbox-db", db.to_str().unwrap()]);
+    std::fs::set_permissions(&dbdir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    println!("MEASURE read-only digest: {}", text(&o).trim());
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(text(&o).contains("keys=1 messages=3"), "{}", text(&o));
+    assert_eq!(
+        (
+            std::fs::read(&db).unwrap(),
+            std::fs::metadata(&db).unwrap().modified().unwrap()
+        ),
+        before,
+        "the file was not changed"
+    );
+    let ts_d = run(&["--ts-mailbox-digest", ts.to_str().unwrap()]);
+    let sha = |o: &Output| text(o).split("sha256=").nth(1).unwrap().trim().to_string();
+    assert_eq!(
+        sha(&o),
+        sha(&ts_d),
+        "right after the import the two sides are equal"
+    );
+}

@@ -322,7 +322,8 @@ pub fn export_ts_dir_with(
     Ok(rep)
 }
 
-/// Aggregate view of a mailbox for the reconciliation of a cutover or a rollback: how many keys and messages, and one SHA-256 over the sorted lines `KEY:armorhash`
+/// Aggregate view of a mailbox for the reconciliation of a cutover or a rollback. **The TS side and the store side are equal only right after the import has finished and before
+/// the Rust node has received any new message** (afterwards the store holds more, or fewer after an acknowledgement, by design): how many keys and messages, and one SHA-256 over the sorted lines `KEY:armorhash`
 /// (each distinct pair once). The seal compares two of these (the TS files and the Rust store); neither the keys nor the hashes leave the tool.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Digest {
@@ -362,6 +363,13 @@ pub fn ts_dir_digest(dir: &Path) -> Result<Digest, MigrateError> {
         }
     }
     Ok(digest_of(pairs))
+}
+
+/// The digest of the Rust store file, read through a READ-ONLY open (the reconciliation tool uses this one: no write transaction, nothing created or changed).
+pub fn store_digest_at(path: &Path) -> Result<Digest, MigrateError> {
+    Ok(digest_of(
+        DiskStore::read_pairs_readonly(path).map_err(MigrateError::Store)?,
+    ))
 }
 
 /// The digest of the Rust store: every pending message of every key.

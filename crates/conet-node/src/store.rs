@@ -362,6 +362,24 @@ impl DiskStore {
         })
     }
 
+    /// The pairs (key, armor hash) of every stored message, read through a READ-ONLY open of the file (no write transaction, no lock taken for writing, nothing created):
+    /// for the reconciliation digest. A running node holds the file, in which case the open is refused.
+    pub fn read_pairs_readonly(
+        path: &Path,
+    ) -> Result<std::collections::BTreeSet<(String, String)>, redb::Error> {
+        let db = redb::ReadOnlyDatabase::open(path)?;
+        let r = db.begin_read()?;
+        let t = r.open_table(MSGS)?;
+        let mut out = std::collections::BTreeSet::new();
+        for e in t.iter()? {
+            let (k, v) = e?;
+            if let Ok(row) = serde_json::from_slice::<Row>(v.value()) {
+                out.insert((k.value().0.to_string(), row.hash));
+            }
+        }
+        Ok(out)
+    }
+
     /// The armor hashes of the TS messages taken over for one key (acknowledged ones included).
     pub fn ts_imported_hashes(
         &self,
