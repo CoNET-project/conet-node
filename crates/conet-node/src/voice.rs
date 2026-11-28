@@ -6,7 +6,7 @@
 //! and never pushes it.
 use crate::chain::ChainError;
 use crate::server::{Conn, NodeCtx};
-use crate::store::Stored;
+use crate::store::{SaveResult, Stored};
 use crate::{http, route::Resolved};
 use rand_core::RngCore;
 use serde_json::{json, Map, Value};
@@ -364,6 +364,7 @@ pub async fn offer_store(mut stream: Conn, c: Value, ctx: Arc<NodeCtx>) {
     }
     out.insert("callId".into(), json!(call_id));
     out.insert("sessionId".into(), json!(session_id));
+    let mut mailbox_failed = false;
     if let (true, Some((cid, sid, armor, _))) = (ok, fields) {
         let key = si_crypto::opgp::recipient_key_ids(&armor)
             .ok()
@@ -373,7 +374,7 @@ pub async fn offer_store(mut stream: Conn, c: Value, ctx: Arc<NodeCtx>) {
             // Delivered only when the callee's mailbox is this node; stored without a chat push.
             match ctx.resolve(&key).await {
                 Resolved::Local => {
-                    ctx.mailbox.deliver(
+                    let report = ctx.mailbox.deliver_report(
                         &key,
                         Stored {
                             armor: armor.clone(),
@@ -382,14 +383,19 @@ pub async fn offer_store(mut stream: Conn, c: Value, ctx: Arc<NodeCtx>) {
                             hops: 0,
                         },
                     );
-                    out.insert("delivered".into(), json!(true));
+                    mailbox_failed = report.outcome == SaveResult::Failed;
+                    out.insert("delivered".into(), json!(!mailbox_failed));
                 }
                 Resolved::LookupUnavailable => {
                     out.insert("deliveryError".into(), json!("route_lookup_unavailable"));
                 }
                 _ => {}
             }
-            if si_proto::js_number(c.get("push")) == Some(1.0) {
+            // callers read `ok`: a refused offer is a failed one, and the callee is not rung for it
+            if mailbox_failed {
+                out.insert("ok".into(), json!(false));
+                out.insert("error".into(), json!(crate::mailbox::STORE_FAILED));
+            } else if si_proto::js_number(c.get("push")) == Some(1.0) {
                 match push_call(&c, &cid, &sid, &key, now, &ctx).await {
                     Ok(true) => {
                         out.insert("pushed".into(), json!(true));

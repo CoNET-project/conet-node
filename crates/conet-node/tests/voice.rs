@@ -5,7 +5,7 @@ use conet_node::mailbox::Mailbox;
 use conet_node::push::{Push, VoiceCall};
 use conet_node::route::RouteTable;
 use conet_node::server::{self, NodeCtx};
-use conet_node::store::{MailboxStore, MemoryStore};
+use conet_node::store::{MailboxStore, MemoryStore, SaveResult, Stored};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 use serde_json::{json, Value};
@@ -84,10 +84,34 @@ impl Push for Calls {
     fn register_device(&self, _p: Value) {}
 }
 
+/// A mailbox store whose writes can be made to fail, as a real storage failure reports them (`SaveResult::Failed`).
+#[derive(Default)]
+struct Faulty {
+    inner: MemoryStore,
+    fail: std::sync::atomic::AtomicBool,
+}
+impl MailboxStore for Faulty {
+    fn save(&self, k: &str, item: Stored) -> bool {
+        self.save_result(k, item) == SaveResult::Stored
+    }
+    fn save_result(&self, k: &str, item: Stored) -> SaveResult {
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            return SaveResult::Failed;
+        }
+        self.inner.save_result(k, item)
+    }
+    fn pending(&self, k: &str) -> Vec<Stored> {
+        self.inner.pending(k)
+    }
+    fn remove_by_hash(&self, k: &str, h: &str) -> bool {
+        self.inner.remove_by_hash(k, h)
+    }
+}
+
 struct Net {
     g: Value,
     entry: SocketAddr,
-    relay_store: Arc<MemoryStore>,
+    relay_store: Arc<Faulty>,
     calls: Arc<Calls>,
 }
 
@@ -112,7 +136,7 @@ async fn start() -> Net {
         r.replace_nodes([(idr.clone(), ar), (ide.clone(), ae)]);
         Arc::new(r)
     };
-    let relay_store = Arc::new(MemoryStore::default());
+    let relay_store = Arc::new(Faulty::default());
     let calls = Arc::new(Calls::default());
     let mut cr = NodeCtx::new(
         idr.clone(),
@@ -425,4 +449,45 @@ async fn offers_store_deliver_push_and_fetch() {
         post(n.entry, &voice_cmd(&n.g, &bad)).await,
         json!({ "ok": false, "error": "invalid_voice_offer_store", "callId": "short", "sessionId": "0123456789abcdef0123" })
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_offer_that_cannot_be_stored_in_the_mailbox_is_not_reported_as_delivered() {
+    let n = start().await;
+    let offer = opgp::encrypt(
+        rng(),
+        b"offer for the callee",
+        &pubkey(&n.g, "user"),
+        opgp::EncryptOpts {
+            text: true,
+            zlib: true,
+            sign_with: None,
+        },
+    )
+    .unwrap();
+    let store = json!({ "command": "voice_offer_store", "callId": "call-abcdef01", "sessionId": "0123456789abcdef0123", "offerArmor": offer, "expiresAt": now() * 1000 + 120_000, "push": 1, "pushTimestamp": now() });
+    n.relay_store
+        .fail
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let r = post(n.entry, &voice_cmd(&n.g, &store)).await;
+    println!(
+        "MEASURE voice offer with a failing mailbox write -> {r}; pushes={}",
+        n.calls.0.lock().unwrap().len()
+    );
+    assert_eq!(
+        r,
+        json!({ "ok": false, "error": "store_failed", "delivered": false, "callId": "call-abcdef01", "sessionId": "0123456789abcdef0123" })
+    );
+    assert!(
+        n.calls.0.lock().unwrap().is_empty(),
+        "no call push for an offer that was refused"
+    );
+    // after the storage works again the same command is stored, delivered and rung
+    n.relay_store
+        .fail
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let r = post(n.entry, &voice_cmd(&n.g, &store)).await;
+    assert_eq!(r["ok"], true);
+    assert_eq!(r["delivered"], true);
+    assert_eq!(n.calls.0.lock().unwrap().len(), 1);
 }
