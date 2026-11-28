@@ -60,11 +60,19 @@ struct Counters {
     failed: usize,
     /// (n, outcome, armor hash): hashes only, never content.
     events: Vec<(usize, &'static str, String)>,
+    /// Replies withheld in drop-response mode: in all and per hash prefix.
+    dropped: usize,
+    dropped_by_hash: std::collections::BTreeMap<String, usize>,
 }
+
+/// How long a reply is withheld in drop-response mode (the sender's attempt timeout is 8 seconds).
+const DROP_DELAY: Duration = Duration::from_secs(12);
 
 struct SwitchStore {
     inner: DiskStore,
     fail: AtomicBool,
+    /// The message is stored as usual but the reply is withheld (see DROP_DELAY).
+    drop_response: AtomicBool,
     seen: Mutex<Counters>,
 }
 
@@ -95,7 +103,20 @@ impl MailboxStore for SwitchStore {
             }
         };
         let n = c.events.len() + 1;
-        c.events.push((n, name, h));
+        c.events.push((n, name, h.clone()));
+        let withhold = r != SaveResult::Failed && self.drop_response.load(Ordering::SeqCst);
+        if withhold {
+            c.dropped += 1;
+            *c.dropped_by_hash
+                .entry(h[..14.min(h.len())].to_string())
+                .or_default() += 1;
+        }
+        drop(c);
+        if withhold {
+            // "Response lost": the message is already stored; the reply is held back for DROP_DELAY, longer than the sender's 8 second attempt timeout, so the sender sees no answer
+            // and retries; the reply is then written to a connection the sender has closed. The thread is handed back to the runtime meanwhile.
+            tokio::task::block_in_place(|| std::thread::sleep(DROP_DELAY));
+        }
         r
     }
     fn pending(&self, k: &str) -> Vec<Stored> {
@@ -120,9 +141,16 @@ async fn control(listener: TcpListener, store: Arc<SwitchStore>) {
             let body = match path.as_str() {
                 "/fail" => {
                     store.fail.store(true, Ordering::SeqCst);
+                    store.drop_response.store(false, Ordering::SeqCst);
                     json!({ "mode": "store_failed" })
                 }
+                "/drop-response" => {
+                    store.fail.store(false, Ordering::SeqCst);
+                    store.drop_response.store(true, Ordering::SeqCst);
+                    json!({ "mode": "drop_response" })
+                }
                 "/ok" => {
+                    store.drop_response.store(false, Ordering::SeqCst);
                     store.fail.store(false, Ordering::SeqCst);
                     json!({ "mode": "ok" })
                 }
@@ -136,7 +164,8 @@ async fn control(listener: TcpListener, store: Arc<SwitchStore>) {
                         .map(|k| store.inner.pending(k).len())
                         .sum();
                     json!({
-                        "mode": if store.fail.load(Ordering::SeqCst) { "store_failed" } else { "ok" },
+                        "mode": if store.fail.load(Ordering::SeqCst) { "store_failed" } else if store.drop_response.load(Ordering::SeqCst) { "drop_response" } else { "ok" },
+                        "responses_dropped": c.dropped,
                         "rows_stored_now": rows,
                         "events": { "stored": c.stored, "duplicate": c.duplicate, "store_failed": c.failed },
                     })
@@ -165,10 +194,12 @@ async fn control(listener: TcpListener, store: Arc<SwitchStore>) {
                             _ => e[2] += 1,
                         }
                     }
-                    let per: Vec<Value> = m.iter().map(|(h, e)| json!({ "armor_hash_prefix": h, "stored": e[0], "duplicate": e[1], "store_failed": e[2] })).collect();
-                    json!({ "distinct_messages": per.len(), "per_message": per })
+                    let per: Vec<Value> = m.iter().map(|(h, e)| json!({ "armor_hash_prefix": h, "stored": e[0], "duplicate": e[1], "store_failed": e[2], "responses_dropped": c.dropped_by_hash.get(h).copied().unwrap_or(0) })).collect();
+                    json!({ "distinct_messages": per.len(), "responses_dropped": c.dropped, "per_message": per })
                 }
-                _ => json!({ "paths": ["/fail", "/ok", "/status", "/events", "/byhash"] }),
+                _ => {
+                    json!({ "paths": ["/fail", "/ok", "/drop-response", "/status", "/events", "/byhash"] })
+                }
             };
             let body = body.to_string();
             let _ = s
@@ -229,6 +260,7 @@ async fn serve_failing_mailbox_endpoint() {
     let store = Arc::new(SwitchStore {
         inner: DiskStore::open(&std::path::Path::new(&dir).join("mailbox.redb")).unwrap(),
         fail: AtomicBool::new(false),
+        drop_response: AtomicBool::new(false),
         seen: Mutex::new(Counters::default()),
     });
     let mut ca = NodeCtx::new(
@@ -405,4 +437,107 @@ async fn drive_failing_mailbox_endpoint() {
             && p["duplicate"].as_u64() == Some(1)),
         "the refused message: one refusal, one store after the recovery, one duplicate"
     );
+}
+
+/// Drives a RUNNING endpoint through "stored but the reply is lost": /drop-response → the message is stored (the counters show it, `responses_dropped` goes up) but the sender gets
+/// NO answer within its timeout; /ok → the SAME armor again is answered `duplicate` with its hash (no second row); the counters agree.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "drives a running endpoint; needs ENDPOINT_DIR"]
+async fn drive_drop_response_mode() {
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+    let dir = std::env::var("ENDPOINT_DIR").expect("ENDPOINT_DIR");
+    let info: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::path::Path::new(&dir).join("endpoint.json")).unwrap(),
+    )
+    .unwrap();
+    let g = golden();
+    let user = si_crypto::opgp::PublicCert::from_armor(
+        g["keys"]["user"]["armoredPublic"].as_str().unwrap(),
+    )
+    .unwrap();
+    let armor = si_crypto::opgp::encrypt(
+        ChaCha20Rng::from_seed([9; 32]),
+        b"response lost then retried",
+        &user,
+        si_crypto::opgp::EncryptOpts {
+            text: true,
+            zlib: true,
+            sign_with: None,
+        },
+    )
+    .unwrap();
+    let a = info["entryA"]["http"].as_str().unwrap().to_string();
+    let ctl = info["control"].as_str().unwrap().to_string();
+    let call = |addr: String, req: String, wait: u64| async move {
+        let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut out = Vec::new();
+        let done = tokio::time::timeout(Duration::from_secs(wait), s.read_to_end(&mut out))
+            .await
+            .is_ok();
+        (
+            done,
+            String::from_utf8_lossy(&out)
+                .split("\r\n\r\n")
+                .nth(1)
+                .unwrap_or("")
+                .to_string(),
+        )
+    };
+    let get = |p: &str| {
+        let (ctl, p) = (ctl.clone(), p.to_string());
+        async move {
+            serde_json::from_str::<Value>(
+                &call(
+                    ctl,
+                    format!("GET {p} HTTP/1.1\r\nHost: c\r\nConnection: close\r\n\r\n"),
+                    5,
+                )
+                .await
+                .1,
+            )
+            .unwrap()
+        }
+    };
+    let body = json!({ "data": armor }).to_string();
+    let post = format!("POST /post HTTP/1.1\r\nHost: t\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+    let before = get("/status").await;
+    println!("MEASURE switch: {}", get("/drop-response").await);
+    let (answered, text) = call(a.clone(), post.clone(), 3).await;
+    println!("MEASURE post while the reply is dropped: answered within 3 s = {answered}, body = {text:?}");
+    assert!(!answered || text.is_empty(), "the sender got no answer");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let s = get("/status").await;
+    println!("MEASURE status after the dropped reply: {s}");
+    assert_eq!(
+        s["events"]["stored"].as_u64().unwrap(),
+        before["events"]["stored"].as_u64().unwrap() + 1,
+        "the message WAS stored"
+    );
+    assert_eq!(
+        s["responses_dropped"].as_u64().unwrap(),
+        before["responses_dropped"].as_u64().unwrap_or(0) + 1
+    );
+    assert_eq!(
+        s["rows_stored_now"].as_u64().unwrap(),
+        before["rows_stored_now"].as_u64().unwrap() + 1
+    );
+    println!("MEASURE switch back: {}", get("/ok").await);
+    let (answered, text) = call(a.clone(), post, 8).await;
+    let r: Value = serde_json::from_str(&text).unwrap();
+    println!("MEASURE the SAME armor again after /ok: answered = {answered}, reply = {r}");
+    assert!(
+        answered && r["ok"] == true && r["duplicate"] == true,
+        "the retry is answered duplicate with its hash"
+    );
+    let s2 = get("/status").await;
+    println!("MEASURE status after the retry: {s2}");
+    assert_eq!(s2["rows_stored_now"], s["rows_stored_now"], "no second row");
+    assert_eq!(
+        s2["events"]["duplicate"].as_u64().unwrap(),
+        s["events"]["duplicate"].as_u64().unwrap() + 1
+    );
+    let by = get("/byhash").await;
+    println!("MEASURE counts per message: {by}");
 }
