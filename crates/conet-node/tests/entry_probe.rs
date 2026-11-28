@@ -297,3 +297,61 @@ async fn get_root_carries_access_control_allow_origin_on_both_ports() {
         "tls:\n{head}"
     );
 }
+
+/// MEASUREMENT HELPER (not a regression test): serves the node's plain and TLS ports on loopback for a real-browser check of the cross-origin probe
+/// (`BROWSER_PROBE_DIR` receives `ports.json` and the self-signed certificate; `BROWSER_PROBE_SECS` is how long it serves, default 90). Run:
+/// `BROWSER_PROBE_DIR=/some/dir cargo test -p conet-node --test entry_probe -- --ignored serve_for_browser_probe`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "helper for the real-browser measurement; needs BROWSER_PROBE_DIR"]
+async fn serve_for_browser_probe() {
+    let Ok(dir) = std::env::var("BROWSER_PROBE_DIR") else {
+        println!("skipped: set BROWSER_PROBE_DIR");
+        return;
+    };
+    let secs: u64 = std::env::var("BROWSER_PROBE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(90);
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let g = golden();
+    let (k, id) = si_core::node::load_route(
+        g["keys"]["nodeA"]["armoredPrivate"].as_str().unwrap(),
+        g["keys"]["nodeA"]["passphrase"].as_str().unwrap(),
+    )
+    .unwrap();
+    let wallet = || {
+        Arc::new(EthKey::from_hex(g["wallets"]["nodeA"]["privateKey"].as_str().unwrap()).unwrap())
+    };
+    let lp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let lt = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (plain, tls) = (lp.local_addr().unwrap(), lt.local_addr().unwrap());
+    let routes = Arc::new(RouteTable::new(&id, Duration::from_secs(600)));
+    routes.replace_nodes([(id.clone(), plain)]);
+    let ctx = Arc::new(NodeCtx::new(
+        id.clone(),
+        Arc::new(k),
+        wallet(),
+        wallet(),
+        routes,
+        Arc::new(MemoryStore::default()),
+    ));
+    let ck =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+            .unwrap();
+    std::fs::write(std::path::Path::new(&dir).join("cert.pem"), ck.cert.pem()).unwrap();
+    tokio::spawn(conet_node::tls::serve_tls(
+        lt,
+        ctx.clone(),
+        conet_node::tls::TlsSource::Static {
+            cert_pem: ck.cert.pem().into_bytes(),
+            key_pem: ck.signing_key.serialize_pem().into_bytes(),
+        },
+    ));
+    tokio::spawn(server::serve(lp, ctx));
+    std::fs::write(
+        std::path::Path::new(&dir).join("ports.json"),
+        format!("{{\"plain\":{},\"tls\":{}}}", plain.port(), tls.port()),
+    )
+    .unwrap();
+    tokio::time::sleep(Duration::from_secs(secs)).await;
+}
