@@ -263,11 +263,20 @@ async fn delivery_ack(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {
     let Some(key) = key else {
         return reply(stream, json!({ "ok": false, "error": "no_pgp" })).await;
     };
-    let removed = ctx.mailbox.store.remove_by_hash(&key, hash);
+    let removed = ctx.mailbox.store.remove_result(&key, hash);
     if let Some(ev) = &ctx.evidence {
-        ev.ack(hash, removed);
+        ev.ack(hash, removed == Ok(true));
     }
-    reply(stream, json!({ "ok": true, "removed": removed })).await
+    match removed {
+        Ok(removed) => reply(stream, json!({ "ok": true, "removed": removed })).await,
+        Err(_) => {
+            reply(
+                stream,
+                json!({ "ok": false, "error": crate::mailbox::STORE_FAILED }),
+            )
+            .await
+        }
+    }
 }
 
 async fn online_query(stream: &mut Conn, c: &Value, ctx: &NodeCtx) {

@@ -6,6 +6,7 @@
 //! (`SaveResult::Failed`), which the post reply reports as `ok:false` so the sender keeps the message and retries.
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -51,6 +52,26 @@ pub trait MailboxStore: Send + Sync {
     fn pending(&self, user_key: &str) -> Vec<Stored>;
     /// Delete by armor hash (client ACK). True when something was removed.
     fn remove_by_hash(&self, user_key: &str, hash: &str) -> bool;
+    /// Same, but "the removal could not be carried out or decided" is `Err`, not "nothing to remove". Stores that cannot fail keep this default.
+    fn remove_result(&self, user_key: &str, hash: &str) -> Result<bool, StorageFailed> {
+        Ok(self.remove_by_hash(user_key, hash))
+    }
+    /// Storage problems seen since the store was opened (health line).
+    fn health(&self) -> StoreHealth {
+        StoreHealth::default()
+    }
+}
+
+/// The storage could not carry the operation out; the details are in the node log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageFailed;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StoreHealth {
+    /// Rows that cannot be read as stored (found at open or by a later read). They are kept as they are.
+    pub damaged_rows: usize,
+    /// Reads of mailbox rows that returned an error.
+    pub read_errors: u64,
 }
 
 #[derive(Default)]
@@ -132,6 +153,8 @@ pub struct DiskStore {
     reopen_total: AtomicU64,
     pub reopen_limit: usize,
     pub reopen_window: Duration,
+    damaged: Mutex<BTreeSet<(String, u64)>>,
+    read_errors: AtomicU64,
     /// (key, reads to let through first, reads to fail after them).
     #[cfg(feature = "test-fault")]
     read_fault: Mutex<Option<(String, u32, u32)>>,
@@ -175,7 +198,7 @@ impl DiskStore {
         w.open_table(TS_IMPORTED)?;
         w.open_table(TS_EXPORTED)?;
         w.commit()?;
-        Ok(Self {
+        let store = Self {
             path: path.to_path_buf(),
             db: RwLock::new(Some(db)),
             generation: AtomicU64::new(0),
@@ -183,9 +206,46 @@ impl DiskStore {
             reopen_total: AtomicU64::new(0),
             reopen_limit: 3,
             reopen_window: Duration::from_secs(60),
+            damaged: Mutex::new(BTreeSet::new()),
+            read_errors: AtomicU64::new(0),
             #[cfg(feature = "test-fault")]
             read_fault: Mutex::new(None),
-        })
+        };
+        store.find_damaged_rows()?;
+        Ok(store)
+    }
+
+    /// Looks at every stored row once, so that damage is on the health line before anyone asks for the mailbox it sits in. Nothing is changed.
+    fn find_damaged_rows(&self) -> Result<(), redb::Error> {
+        let found = self.with_db(|db| {
+            let r = db.begin_read()?;
+            let t = r.open_table(MSGS)?;
+            let mut found = vec![];
+            for e in t.iter()? {
+                let (k, v) = e?;
+                let (key, seq) = k.value();
+                if Self::checked_row(key, seq, v.value()).is_err() {
+                    found.push((key.to_string(), seq));
+                }
+            }
+            Ok(found)
+        })?;
+        for (key, seq) in found {
+            self.note_damaged(&key, seq);
+        }
+        Ok(())
+    }
+
+    fn note_damaged(&self, key: &str, seq: u64) {
+        let new = self
+            .damaged
+            .lock()
+            .expect("damaged rows")
+            .insert((key.to_string(), seq));
+        if new {
+            // the key id and the row number only; never the message text
+            tracing::error!(%key, seq, "mailbox row cannot be read; it is kept as it is and not delivered");
+        }
     }
 
     /// How many times the store has reopened its file after an I/O error (diagnostics and tests).
@@ -277,9 +337,24 @@ impl DiskStore {
         }
     }
 
-    fn rows(&self, key: &str) -> Result<Vec<(u64, Row)>, redb::Error> {
-        self.injected_read_fault(key)?;
-        self.with_db(|db| Self::rows_in(db, key))
+    /// The readable rows of a key and how many of its rows are not readable. Both a failed read and an unreadable row are logged and counted.
+    fn rows(&self, key: &str) -> Result<(Vec<(u64, Row)>, usize), redb::Error> {
+        let read = self
+            .injected_read_fault(key)
+            .and_then(|()| self.with_db(|db| Self::rows_in(db, key)));
+        match read {
+            Ok((rows, damaged)) => {
+                for seq in &damaged {
+                    self.note_damaged(key, *seq);
+                }
+                Ok((rows, damaged.len()))
+            }
+            Err(e) => {
+                self.read_errors.fetch_add(1, Ordering::Relaxed);
+                tracing::error!(%e, "mailbox read failed");
+                Err(e)
+            }
+        }
     }
 
     /// Test builds only: after `skip` successful reads of `key`, the next `fail` reads return an I/O error.
@@ -303,17 +378,19 @@ impl DiskStore {
         Ok(())
     }
 
-    fn rows_in(db: &Database, key: &str) -> Result<Vec<(u64, Row)>, redb::Error> {
+    fn rows_in(db: &Database, key: &str) -> Result<(Vec<(u64, Row)>, Vec<u64>), redb::Error> {
         let r = db.begin_read()?;
         let t = r.open_table(MSGS)?;
-        let mut out = vec![];
+        let (mut out, mut damaged) = (vec![], vec![]);
         for e in t.range((key, 0u64)..=(key, u64::MAX))? {
             let (k, v) = e?;
-            if let Ok(row) = serde_json::from_slice::<Row>(v.value()) {
-                out.push((k.value().1, row));
+            let seq = k.value().1;
+            match Self::checked_row(key, seq, v.value()) {
+                Ok(row) => out.push((seq, row)),
+                Err(_) => damaged.push(seq),
             }
         }
-        Ok(out)
+        Ok((out, damaged))
     }
 
     /// Like `rows_in`, but nothing is left out: an entry that cannot be read, a row that does not parse, or a row whose text no longer matches its recorded hash is an error.
@@ -493,15 +570,15 @@ impl DiskStore {
             let mut removed = false;
             {
                 let mut msgs = w.open_table(MSGS)?;
-                let hit: Vec<u64> = msgs
-                    .range((key.as_str(), 0u64)..=(key.as_str(), u64::MAX))?
-                    .filter_map(|e| e.ok())
-                    .filter(|(_, v)| {
-                        serde_json::from_slice::<Row>(v.value())
-                            .is_ok_and(|r| r.hash.eq_ignore_ascii_case(hash))
-                    })
-                    .map(|(k, _)| k.value().1)
-                    .collect();
+                let mut hit: Vec<u64> = vec![];
+                for e in msgs.range((key.as_str(), 0u64)..=(key.as_str(), u64::MAX))? {
+                    let (k, v) = e?;
+                    if serde_json::from_slice::<Row>(v.value())
+                        .is_ok_and(|r| r.hash.eq_ignore_ascii_case(hash))
+                    {
+                        hit.push(k.value().1);
+                    }
+                }
                 for s in hit {
                     msgs.remove((key.as_str(), s))?;
                     removed = true;
@@ -553,13 +630,18 @@ impl DiskStore {
     }
 
     fn remove_inner(&self, key: &str, hash: &str) -> Result<bool, redb::Error> {
-        let hit: Vec<u64> = self
-            .rows(key)?
+        let (rows, damaged) = self.rows(key)?;
+        let hit: Vec<u64> = rows
             .into_iter()
             .filter(|(_, r)| r.hash.eq_ignore_ascii_case(hash))
             .map(|(s, _)| s)
             .collect();
         if hit.is_empty() {
+            if damaged > 0 {
+                return Err(redb::Error::Corrupted(
+                    "the message may be in a row that cannot be read".into(),
+                ));
+            }
             return Ok(false);
         }
         self.with_db(|db| {
@@ -591,13 +673,26 @@ impl MailboxStore for DiskStore {
         }
     }
     fn pending(&self, user_key: &str) -> Vec<Stored> {
+        // every readable message; a failed read or an unreadable row was logged and counted by `rows`
         self.rows(&user_key.to_uppercase())
-            .map(|v| v.into_iter().map(|(_, r)| r.item).collect())
+            .map(|(v, _)| v.into_iter().map(|(_, r)| r.item).collect())
             .unwrap_or_default()
     }
     fn remove_by_hash(&self, user_key: &str, hash: &str) -> bool {
+        self.remove_result(user_key, hash).unwrap_or(false)
+    }
+    fn remove_result(&self, user_key: &str, hash: &str) -> Result<bool, StorageFailed> {
         self.remove_inner(&user_key.to_uppercase(), hash)
-            .unwrap_or(false)
+            .map_err(|e| {
+                tracing::error!(%e, "mailbox removal failed");
+                StorageFailed
+            })
+    }
+    fn health(&self) -> StoreHealth {
+        StoreHealth {
+            damaged_rows: self.damaged.lock().expect("damaged rows").len(),
+            read_errors: self.read_errors.load(Ordering::Relaxed),
+        }
     }
 }
 

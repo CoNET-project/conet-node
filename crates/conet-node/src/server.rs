@@ -466,7 +466,7 @@ async fn forward(
 }
 
 /// Local health endpoint for the updater and boot guard. Bind it to 127.0.0.1 only.
-/// `GET /healthz` → `ok <version> nodes=<n> listens=<n>`; anything else → 404.
+/// `GET /healthz` → `ok <version> nodes=<n> listens=<n> mailbox_damaged=<rows> mailbox_read_errors=<n>`; anything else → 404.
 pub async fn serve_health(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::Result<()> {
     loop {
         let (mut s, _) = listener.accept().await?;
@@ -480,11 +480,14 @@ pub async fn serve_health(listener: TcpListener, ctx: Arc<NodeCtx>) -> std::io::
                 return;
             };
             let body = if req.method == "GET" && req.path == "/healthz" {
+                let store = ctx.mailbox.store.health();
                 http::ok_200(&format!(
-                    "ok {} nodes={} listens={}",
+                    "ok {} nodes={} listens={} mailbox_damaged={} mailbox_read_errors={}",
                     env!("CARGO_PKG_VERSION"),
                     ctx.routes.node_count(),
-                    ctx.mailbox.listener_count()
+                    ctx.mailbox.listener_count(),
+                    store.damaged_rows,
+                    store.read_errors
                 ))
             } else {
                 http::not_found()
