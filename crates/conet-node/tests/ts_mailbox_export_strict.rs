@@ -451,3 +451,65 @@ mod read_errors {
         assert!(problems.is_empty(), "{}", problems.join("; "));
     }
 }
+
+#[test]
+fn rev_a_prior_export_record_survives_a_failed_export() {
+    let f = fixture();
+    {
+        let s = DiskStore::open(&f.db).unwrap();
+        export_ts_dir(&s, &f.ts).expect("first export");
+    }
+    damage(&f.db, K1, "j2", Damage::NotJson);
+    let before = tree(&f.ts);
+    let s = DiskStore::open(&f.db).unwrap();
+    let record_before = record_of(&s, K1);
+    assert!(
+        record_before.len() >= 6,
+        "the fixture must hold a non-empty record: {}",
+        record_before.len()
+    );
+    let r = export_ts_dir(&s, &f.ts);
+    println!(
+        "REV-A record before={} after={} result={:?}",
+        record_before.len(),
+        record_of(&s, K1).len(),
+        r.as_ref().map_err(|e| e.to_string())
+    );
+    assert!(failed(&r), "export reported success");
+    assert_eq!(
+        record_of(&s, K1),
+        record_before,
+        "REV-A the export record of the unreadable key changed"
+    );
+    assert_eq!(
+        files_of(&tree(&f.ts), K1),
+        files_of(&before, K1),
+        "REV-A files changed"
+    );
+}
+
+#[test]
+fn rev_b_a_bad_first_key_does_not_stop_the_later_key() {
+    let f = fixture();
+    {
+        let s = DiskStore::open(&f.db).unwrap();
+        assert_eq!(s.save_result(K2, item("n2")), SaveResult::Stored);
+    }
+    damage(&f.db, K1, "j2", Damage::NotJson);
+    let s = DiskStore::open(&f.db).unwrap();
+    let r = export_ts_dir(&s, &f.ts);
+    let live = ts_messages(&f.ts);
+    println!(
+        "REV-B result={:?} live={live:?}",
+        r.as_ref().map_err(|e| e.to_string())
+    );
+    assert!(failed(&r), "export reported success");
+    assert!(
+        live.contains("n2") && live.contains("k1"),
+        "REV-B the later readable key was not exported"
+    );
+    assert!(
+        record_of(&s, K2).contains(&(K2.to_string(), armor_hash("n2"))),
+        "REV-B record of the readable key"
+    );
+}
