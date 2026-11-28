@@ -202,3 +202,98 @@ async fn the_sdk_probe_rule_marks_both_ports_healthy() {
         );
     }
 }
+
+/// A browser-style probe, as the chat SDK `probeGossipNode` issues it from a page: a cross-origin `fetch` GET with `Accept: text/html` (a CORS-safelisted header, so no preflight)
+/// that must finish within 4 seconds in total (connect, handshake for TLS, reply); the browser rejects the fetch unless the reply carries `Access-Control-Allow-Origin`
+/// for the page's origin. Both ports. On a real node the TLS probe runs after the ACME certificate is in place (cutover seal); here a static test certificate stands in for it.
+async fn browser_style_probe<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S) -> (u16, String) {
+    let req = "GET / HTTP/1.1\r\nHost: node.example\r\nOrigin: https://beamio.ca\r\nAccept: text/html\r\nConnection: close\r\n\r\n";
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let read = tokio::time::timeout(Duration::from_secs(4), s.read_to_end(&mut out))
+        .await
+        .expect("the probe answers and closes within 4 seconds");
+    // The node closes a TLS connection without close_notify; a browser accepts that when Content-Length is satisfied, so the same is required here.
+    if let Err(e) = read {
+        assert_eq!(e.kind(), std::io::ErrorKind::UnexpectedEof, "{e}");
+    }
+    let t = String::from_utf8_lossy(&out).into_owned();
+    let status = t
+        .split(' ')
+        .nth(1)
+        .and_then(|x| x.parse().ok())
+        .unwrap_or(0);
+    let (head, body) = t.split_once("\r\n\r\n").unwrap_or((t.as_str(), ""));
+    let cl: usize = head
+        .lines()
+        .find_map(|l| {
+            l.to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse().unwrap())
+        })
+        .expect("content-length");
+    assert_eq!(
+        cl,
+        body.len(),
+        "the answer is complete (Content-Length satisfied)"
+    );
+    (status, head.to_string())
+}
+
+fn allows_origin(head: &str, origin: &str) -> bool {
+    head.lines().any(|l| {
+        l.split_once(':').is_some_and(|(k, v)| {
+            k.trim().eq_ignore_ascii_case("access-control-allow-origin")
+                && (v.trim() == "*" || v.trim() == origin)
+        })
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_style_cross_origin_probe_succeeds_on_both_ports() {
+    let n = start().await;
+    let mut p = TcpStream::connect(n.plain).await.unwrap();
+    let (status, head) = browser_style_probe(&mut p).await;
+    println!(
+        "MEASURE browser-style probe plain: status={status} acao={}",
+        allows_origin(&head, "https://beamio.ca")
+    );
+    assert!(sdk_probe_healthy(status), "plain: status {status}");
+    assert!(
+        allows_origin(&head, "https://beamio.ca"),
+        "plain: no Access-Control-Allow-Origin for the page origin:\n{head}"
+    );
+    let started = std::time::Instant::now();
+    let mut t = tls_stream(&n).await;
+    let (status, head) = browser_style_probe(&mut t).await;
+    println!(
+        "MEASURE browser-style probe tls: status={status} acao={} elapsed_ms={}",
+        allows_origin(&head, "https://beamio.ca"),
+        started.elapsed().as_millis()
+    );
+    assert!(sdk_probe_healthy(status), "tls: status {status}");
+    assert!(
+        allows_origin(&head, "https://beamio.ca"),
+        "tls: no Access-Control-Allow-Origin for the page origin:\n{head}"
+    );
+}
+
+/// The ACAO header is also on the plain probe of the first test (assertion kept next to the status): GET / answers with Access-Control-Allow-Origin on both ports.
+#[tokio::test(flavor = "multi_thread")]
+async fn get_root_carries_access_control_allow_origin_on_both_ports() {
+    let n = start().await;
+    let mut p = TcpStream::connect(n.plain).await.unwrap();
+    let (_, head, _) = get(&mut p, "/").await;
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("access-control-allow-origin: *"),
+        "plain:\n{head}"
+    );
+    let mut t = tls_stream(&n).await;
+    let (_, head, _) = get(&mut t, "/").await;
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("access-control-allow-origin: *"),
+        "tls:\n{head}"
+    );
+}
