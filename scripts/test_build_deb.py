@@ -66,6 +66,11 @@ class Stage(unittest.TestCase):
             want = sorted([r for r, _ in entries] + ["DEBIAN/control", "DEBIAN/md5sums", "DEBIAN/postinst"])
             self.assertEqual(files, want)
             self.assertFalse(any(f.startswith("etc/") for f in files))
+            # 12 payload files (fc0939af shipped 10): the first-start unit and examples/init.json are new.
+            # A seal that pins the file set needs its own constant for this commit.
+            self.assertEqual(len(entries), 12)
+            self.assertIn("usr/lib/systemd/system/conet-node-first-start.service", [r for r, _ in entries])
+            self.assertIn("usr/share/doc/conet-node/examples/init.json", [r for r, _ in entries])
             self.assertEqual(set(r for r, _ in entries if r.startswith("usr/lib/conet-node/")), {"usr/lib/conet-node/conet-node", "usr/lib/conet-node/conet-signer"})
             control = (tree / "DEBIAN/control").read_text()
             self.assertIn("Version: 0.0.1+git20261127.1a2b3c4d-1\n", control)
@@ -102,8 +107,19 @@ class Stage(unittest.TestCase):
         tmp = (root / "tmpfiles.d/conet-node.conf").read_text()
         self.assertIn("\nType=oneshot\n", first)
         self.assertIn("\nStandardInput=null\n", first)
+        # The host key credential.secret is made by `systemd-creds encrypt` on a fresh host; the
+        # sandbox must let it (the KEK directory alone is not enough).
+        self.assertIn("\nReadWritePaths=/etc/credstore.encrypted /var/lib/systemd\n", first)
+        self.assertIn("\nProtectSystem=strict\n", first)
         self.assertIn("\nTimeoutStartSec=", first)
         self.assertNotIn("--insecure", first)
+        # Test-only flags of conet-signer must not appear in any shipped unit.
+        for hook in ("--passwd-file", "--proc-dir", "--systemd-creds", "--systemd-run", "--ts-home-base", "--ts-root-home", "--ts-unit-dirs"):
+            for text in (first, signer, node):
+                self.assertNotIn(hook, text, hook)
+        readme = (root / "README.md").read_text()
+        for hook in ("--passwd-file", "--proc-dir", "--systemd-creds", "--systemd-run", "--ts-home-base", "--ts-root-home", "--ts-unit-dirs"):
+            self.assertIn(hook, readme, f"README S7 note does not list {hook}")
         self.assertIn("ExecStart=/usr/lib/conet-node/conet-signer first-start", first)
         self.assertIn("\nRequires=conet-node-first-start.service\n", signer)
         self.assertIn("conet-node-first-start.service", [w for l in signer.splitlines() if l.startswith("After=") for w in l[6:].split()])

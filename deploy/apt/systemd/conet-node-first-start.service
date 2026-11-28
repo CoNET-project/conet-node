@@ -25,7 +25,12 @@ LimitCORE=0
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/etc/credstore.encrypted
+# /etc/credstore.encrypted: the KEK credential. /var/lib/systemd: on a host that has never encrypted
+# a credential, `systemd-creds encrypt` creates the host key /var/lib/systemd/credential.secret
+# (root, 0400) on demand; under ProtectSystem=strict that directory would be read-only and the
+# first start would refuse. A directory entry is used (the file does not exist yet, and a missing
+# ReadWritePaths target would fail the unit's namespace setup).
+ReadWritePaths=/etc/credstore.encrypted /var/lib/systemd
 ProtectHome=read-only
 PrivateTmp=yes
 ProtectKernelTunables=yes

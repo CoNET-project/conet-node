@@ -65,6 +65,32 @@ const VALUE_FLAGS: [&str; 24] = [
     "--verifying-contract",
 ];
 
+/// Flags that exist only so tests can point `first-start` at a scratch host (a fake passwd file, a
+/// stand-in `systemd-run`, a fake `/proc`, ...). A release build refuses them: the program that
+/// runs as root must not be steerable away from the real system files. They are honored only in
+/// builds with the `test-fault` feature, which this package enables for its own tests through a
+/// dev-dependency and which no release build has. (`--insecure-kek-file` is the older, separately
+/// tracked S7 flag and is not changed here.)
+#[cfg_attr(feature = "test-fault", allow(dead_code))]
+const TEST_HOOK_FLAGS: [&str; 7] = [
+    "--passwd-file",
+    "--proc-dir",
+    "--systemd-creds",
+    "--systemd-run",
+    "--ts-home-base",
+    "--ts-root-home",
+    "--ts-unit-dirs",
+];
+
+/// The first test-hook flag present in `args`, by name.
+#[cfg_attr(feature = "test-fault", allow(dead_code))]
+fn test_hook_flag(args: &[String]) -> Option<&'static str> {
+    TEST_HOOK_FLAGS
+        .iter()
+        .copied()
+        .find(|f| args.iter().any(|a| a == f))
+}
+
 /// True when a value is present and usable: not missing, not another flag, not blank.
 fn has_value(v: Option<&String>) -> bool {
     v.is_some_and(|v| !v.starts_with("--") && !v.trim().is_empty())
@@ -129,6 +155,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let argv: Vec<String> = std::env::args().collect();
     if let Some(flag) = valueless_flag(&argv) {
         return Err(format!("{flag} is given without a value; refusing to start").into());
+    }
+    #[cfg(not(feature = "test-fault"))]
+    if let Some(flag) = test_hook_flag(&argv) {
+        return Err(format!("{flag} is a test-only flag; this build refuses it").into());
     }
     // The KEK is read only by the commands that open or seal a keystore (not by `first-start`,
     // which runs as root before the KEK credential may even exist).
@@ -410,7 +440,10 @@ fn set_mode(path: &std::path::Path, mode: u32) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod arg_tests {
-    use super::{allow_uid_from, arg_in, quota_flags, valueless_flag, VALUE_FLAGS};
+    use super::{
+        allow_uid_from, arg_in, quota_flags, test_hook_flag, valueless_flag, TEST_HOOK_FLAGS,
+        VALUE_FLAGS,
+    };
 
     extern "C" {
         fn getuid() -> u32;
@@ -646,5 +679,31 @@ mod arg_tests {
         ]));
         assert_eq!(got, Some("--quota-state"));
         assert!(!got.unwrap().contains(secret));
+    }
+
+    #[test]
+    fn every_test_hook_flag_is_a_known_value_flag_and_is_found_by_name() {
+        let argv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for f in TEST_HOOK_FLAGS {
+            assert!(VALUE_FLAGS.contains(&f), "{f} is not a value flag");
+            assert_eq!(
+                test_hook_flag(&argv(&["conet-signer", "first-start", f, "/x"])),
+                Some(f)
+            );
+        }
+        // The flags the unit really passes are not hooks.
+        assert_eq!(
+            test_hook_flag(&argv(&[
+                "conet-signer",
+                "first-start",
+                "--init-config",
+                "/etc/conet-node/init.json",
+                "--keystore",
+                "/var/lib/conet-signer/keystore.json",
+                "--kek-credential",
+                "/etc/credstore.encrypted/conet-node-kek",
+            ])),
+            None
+        );
     }
 }

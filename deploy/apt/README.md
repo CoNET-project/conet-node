@@ -50,7 +50,7 @@ What `conet-node-first-start.service` does, in order, every time it runs:
    or in `/root`, a `conet.service` unit, a running TS process. With traces and `identity.mode`
    `auto` it refuses (`ts_node_detected`): choose `ts-import`, or `generate` with the explicit
    `confirm_generate_on_ts_host`. Without traces it makes the KEK if missing
-   (`systemd-creds encrypt` fed from a pipe) and then runs the sealing stage as `conet-signer`
+   (`systemd-creds encrypt` fed from a pipe; on a host that has never encrypted a credential this also creates the host key `/var/lib/systemd/credential.secret`, which is why the unit may write `/var/lib/systemd`) and then runs the sealing stage as `conet-signer`
    (`systemd-run`, no network, `RuntimeMaxSec=120`, the KEK as an encrypted credential), which
    generates the wallet and route key, or imports the TS identity, and publishes the keystore
    atomically (temporary file, `fsync`, no-overwrite `link`, directory `fsync`, read-back; only then
@@ -90,7 +90,7 @@ Priority per setting: command-line flag, then `init.json`, then the `node.env` v
 `CONET_RPC`, `BEAMIO_API_BASE`, `CONET_PUBLIC_IP`, then auto-detection, then the defaults. The unit
 passes only `--init-config`, so an `init.json` port really is the listening port; without
 `init.json`, a node with only `node.env` starts with exactly the flags the previous unit gave it.
-A blank variable counts as unset.
+A blank variable counts as unset and the start log says so by name (`environment variable CONET_RPC is set but empty; treated as unset`); the previous unit would have refused to start.
 
 TS `nodeSetup.json` field names are understood too, so nothing from a TS setup is dropped silently:
 `ipV4Port` and `ipV4` are consumed (as `http_port`, `public_ip`); `ipV6`, `ipV6Port`, `cpus`,
@@ -201,14 +201,23 @@ Stop and disable `conet.service` first (port 80 and 443 must be free). The TS pr
 `conet-node.service`, `conet-signer.service` and `conet-node-first-start.service`, then enable and
 start `conet.service`.
 
-## Known gap (S7): `--insecure-*` flags are still in the binaries
+## Known gap (S7): test-only flags are still in the binaries
 
 `conet-node` still accepts `--insecure-dev-keys` (test keys from the environment) and `conet-signer`
 still accepts `--insecure-kek-file`. Neither unit uses them; each prints a warning at start. They are
-to be removed from release builds (a Cargo feature) before this package goes beyond the pilot. After
-installing, check that both units are exactly the shipped ones:
+to be removed from release builds (a Cargo feature) before this package goes beyond the pilot.
+
+`conet-signer` also has flags that exist only so tests can point `first-start` at a scratch host:
+`--passwd-file`, `--proc-dir`, `--systemd-creds`, `--systemd-run`, `--ts-home-base`,
+`--ts-root-home`, `--ts-unit-dirs`. **They must never be used on a real node.** The shipped binary
+refuses every one of them ("is a test-only flag; this build refuses it", exit 1); they work only in
+builds made with the `test-fault` feature, which this package turns on for its own tests and no
+release build has. (`--insecure-kek-file` and `--insecure-dev-keys` above are older and are not
+covered by that refusal yet.) After installing, check that the units are exactly the shipped ones and
+carry none of these flags:
 
 ```sh
-systemctl cat conet-node.service conet-signer.service | grep -c -- '--insecure'   # must print 0
-systemctl cat conet-node.service conet-signer.service | grep -E '^# /'            # only /usr/lib/... paths, no drop-in
+systemctl cat conet-node.service conet-signer.service conet-node-first-start.service \
+  | grep -cE -- '--(insecure|passwd-file|proc-dir|systemd-creds|systemd-run|ts-home-base|ts-root-home|ts-unit-dirs)'   # must print 0
+systemctl cat conet-node.service conet-signer.service conet-node-first-start.service | grep -E '^# /'   # only /usr/lib/... paths, no drop-in
 ```

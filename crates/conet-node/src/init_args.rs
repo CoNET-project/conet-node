@@ -22,20 +22,30 @@ pub struct EnvSettings {
     pub rpc: Option<String>,
     pub api_base: Option<String>,
     pub public_ip: Option<String>,
+    /// Names of variables that are set but blank. The old unit would have passed an empty flag and
+    /// refused to start; here they count as unset, and `merge` says so (name only).
+    pub blank: Vec<&'static str>,
 }
 
 impl EnvSettings {
     pub fn from_env() -> Self {
-        let get = |n: &str| {
-            std::env::var(n)
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
+        let mut blank = Vec::new();
+        let mut get = |n: &'static str| match std::env::var(n) {
+            Ok(v) if !v.trim().is_empty() => Some(v.trim().to_string()),
+            Ok(_) => {
+                blank.push(n);
+                None
+            }
+            Err(_) => None,
         };
+        let rpc = get("CONET_RPC");
+        let api_base = get("BEAMIO_API_BASE");
+        let public_ip = get("CONET_PUBLIC_IP");
         EnvSettings {
-            rpc: get("CONET_RPC"),
-            api_base: get("BEAMIO_API_BASE"),
-            public_ip: get("CONET_PUBLIC_IP"),
+            rpc,
+            api_base,
+            public_ip,
+            blank,
         }
     }
 }
@@ -246,6 +256,11 @@ pub fn merge(
             _ => {}
         }
     }
+    for name in &env.blank {
+        notes.push(format!(
+            "init-config: environment variable {name} is set but empty; treated as unset"
+        ));
+    }
     for f in &c.legacy_ignored {
         notes.push(format!("init-config: ignored {f} (no Rust consumer)"));
     }
@@ -330,6 +345,7 @@ mod tests {
             rpc: Some("https://from-env".into()),
             api_base: Some("https://api-env".into()),
             public_ip: Some("198.51.100.1".into()),
+            blank: vec![],
         };
         // init.json beats env and default; env fills what init.json does not say.
         let m = merge(&v(&["bin", "--init-config", "/c"]), Some(&cfg), &env, &none).unwrap();
@@ -401,7 +417,20 @@ mod tests {
         std::env::set_var("CONET_RPC", "  ");
         std::env::set_var("BEAMIO_API_BASE", "");
         let e = EnvSettings::from_env();
-        assert_eq!((e.rpc, e.api_base), (None, None));
+        assert_eq!((e.rpc.clone(), e.api_base.clone()), (None, None));
+        assert_eq!(e.blank, vec!["CONET_RPC", "BEAMIO_API_BASE"]);
+        // merge names them, never a value.
+        let m = merge(&v(&["bin", "--init-config", "/c"]), None, &e, &none).unwrap();
+        assert!(m.notes.iter().any(|n| n
+            == "init-config: environment variable CONET_RPC is set but empty; treated as unset"));
+        assert!(m
+            .notes
+            .iter()
+            .any(|n| n.contains("BEAMIO_API_BASE is set but empty")));
+        assert!(
+            !m.argv.contains(&"--rpc".to_string()),
+            "a blank variable must not become a flag"
+        );
         std::env::remove_var("CONET_RPC");
         std::env::remove_var("BEAMIO_API_BASE");
     }

@@ -226,6 +226,32 @@ fn a_damaged_init_json_stops_the_start_and_nothing_listens() {
 }
 
 #[test]
+fn a_blank_node_env_variable_is_reported_by_name_on_the_real_start_path() {
+    let n = Node::new();
+    let (http, health) = (free_port(), free_port());
+    let init = n.init(&format!(
+        r#"{{"version":1,"http_port":{http},"https_port":0}}"#
+    ));
+    let mut child = n
+        .command(&["--init-config", init.to_str().unwrap()], health)
+        .env("CONET_RPC", "")
+        .env("BEAMIO_API_BASE", "   ")
+        .spawn()
+        .unwrap();
+    let up = wait_reachable(&mut child, http);
+    let log = stop(child);
+    assert!(up, "{log}");
+    assert!(
+        log.contains("environment variable CONET_RPC is set but empty; treated as unset"),
+        "{log}"
+    );
+    assert!(
+        log.contains("environment variable BEAMIO_API_BASE is set but empty; treated as unset"),
+        "{log}"
+    );
+}
+
+#[test]
 fn node_env_values_reach_the_real_validation_when_there_is_no_init_json() {
     let n = Node::new();
     let (http, health) = (free_port(), free_port());
@@ -338,6 +364,7 @@ fn without_init_json_the_new_unit_and_node_env_give_the_flags_of_the_old_unit() 
         rpc: Some(env["CONET_RPC"].into()),
         api_base: Some(env["BEAMIO_API_BASE"].into()),
         public_ip: Some(env["CONET_PUBLIC_IP"].into()),
+        blank: vec![],
     };
     let merged = conet_node::init_args::merge(&new_argv, None, &settings, &|| vec![]).unwrap();
     let new = flag_pairs(&merged.argv);
