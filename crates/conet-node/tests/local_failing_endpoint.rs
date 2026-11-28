@@ -149,11 +149,26 @@ async fn control(listener: TcpListener, store: Arc<SwitchStore>) {
                         .rev()
                         .take(50)
                         .rev()
-                        .map(|(n, o, h)| json!({ "n": n, "outcome": o, "armor_hash": h }))
+                        .map(|(n, o, h)| json!({ "n": n, "outcome": o, "armor_hash_prefix": &h[..14.min(h.len())] }))
                         .collect();
                     json!({ "events": last })
                 }
-                _ => json!({ "paths": ["/fail", "/ok", "/status", "/events"] }),
+                // counts per inner armor (keccak256 of what the mailbox stores), by hash prefix only: stored, duplicate and store_failed for each distinct message
+                "/byhash" => {
+                    let c = store.seen.lock().unwrap();
+                    let mut m: std::collections::BTreeMap<String, [usize; 3]> = Default::default();
+                    for (_, o, h) in &c.events {
+                        let e = m.entry(h[..14.min(h.len())].to_string()).or_default();
+                        match *o {
+                            "stored" => e[0] += 1,
+                            "duplicate" => e[1] += 1,
+                            _ => e[2] += 1,
+                        }
+                    }
+                    let per: Vec<Value> = m.iter().map(|(h, e)| json!({ "armor_hash_prefix": h, "stored": e[0], "duplicate": e[1], "store_failed": e[2] })).collect();
+                    json!({ "distinct_messages": per.len(), "per_message": per })
+                }
+                _ => json!({ "paths": ["/fail", "/ok", "/status", "/events", "/byhash"] }),
             };
             let body = body.to_string();
             let _ = s
@@ -375,7 +390,19 @@ async fn drive_failing_mailbox_endpoint() {
         (Some(2), Some(1), Some(1), Some(2))
     );
     println!(
-        "MEASURE last events (hashes only): {}",
+        "MEASURE last events (hash prefixes only): {}",
         get("/events").await
+    );
+    let by = get("/byhash").await;
+    println!("MEASURE counts per inner armor (prefixes only): {by}");
+    assert_eq!(by["distinct_messages"], 2);
+    let per = by["per_message"].as_array().unwrap();
+    let total: u64 = per.iter().map(|p| p["stored"].as_u64().unwrap()).sum();
+    assert_eq!(total, 2, "each of the two messages was stored once");
+    assert!(
+        per.iter().any(|p| p["store_failed"].as_u64() == Some(1)
+            && p["stored"].as_u64() == Some(1)
+            && p["duplicate"].as_u64() == Some(1)),
+        "the refused message: one refusal, one store after the recovery, one duplicate"
     );
 }
