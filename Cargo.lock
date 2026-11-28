@@ -1063,6 +1063,7 @@ dependencies = [
 name = "conet-node"
 version = "0.0.1"
 dependencies = [
+ "aes-gcm",
  "alloy-primitives",
  "alloy-sol-types",
  "base64 0.22.1",

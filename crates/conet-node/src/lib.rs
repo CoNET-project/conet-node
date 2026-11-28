@@ -14,6 +14,7 @@ pub mod evidence;
 pub mod exit;
 pub mod http;
 pub mod init_args;
+pub mod ipfs_fragment;
 pub mod limits;
 pub mod mailbox;
 pub mod mining_liveness;
