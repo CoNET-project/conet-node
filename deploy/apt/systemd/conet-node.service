@@ -1,5 +1,6 @@
 # conet-node: network process (mailbox, entry, forwarding). Holds no keys: it asks conet-signer.
-# Listens on :80 and :443 of both IPv4 and IPv6 ([::] is dual-stack while net.ipv6.bindv6only=0).
+# Listens on [::]:80 and [::]:443 by default (dual-stack while net.ipv6.bindv6only=0); init.json
+# can change the ports.
 [Unit]
 Description=CoNET node
 Documentation=https://github.com/CoNET-project/conet-node
@@ -17,14 +18,14 @@ SupplementaryGroups=conet-signer
 StateDirectory=conet-node conet-node/evidence
 StateDirectoryMode=0750
 EnvironmentFile=/etc/conet-node/node.env
+# The listen ports, RPC, API base and public address come from /etc/conet-node/init.json and, for
+# a node that only has node.env, from CONET_RPC / BEAMIO_API_BASE / CONET_PUBLIC_IP: the process
+# merges them itself (flag > init.json > node.env > auto-detect > default 80/443). Nothing here
+# expands an empty variable into a valueless flag, and an explicit flag added by hand still wins.
 ExecStart=/usr/lib/conet-node/conet-node \
-  --listen [::]:80 \
-  --tls-listen [::]:443 \
+  --init-config /etc/conet-node/init.json \
   --acme-cache /var/lib/conet-node/acme \
   --signer-socket /run/conet-signer/signer.sock \
-  --rpc ${CONET_RPC} \
-  --api-base ${BEAMIO_API_BASE} \
-  --public-ip ${CONET_PUBLIC_IP} \
   --mailbox-db /var/lib/conet-node/mailbox.redb \
   --health-listen 127.0.0.1:9180 \
   --evidence-log /var/lib/conet-node/evidence/evidence.jsonl

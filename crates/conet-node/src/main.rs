@@ -27,8 +27,44 @@ use std::time::Duration;
 /// The value of flag `name`: the token after it. A flag with no value never takes the next flag
 /// (`--…`) as its value; that is what an empty `${VAR}` expanded by systemd looks like.
 fn arg(name: &str) -> Option<String> {
-    let a: Vec<String> = std::env::args().collect();
-    arg_in(&a, name)
+    arg_in(argv(), name)
+}
+
+/// The argument vector every reader below uses: the command line, plus (only when `--init-config`
+/// was given) the settings merged in from `init.json` and `node.env` (see `init_args`).
+static ARGV: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+fn argv() -> &'static [String] {
+    ARGV.get_or_init(|| std::env::args().collect())
+}
+
+/// Load `--init-config` (if given) and fix the merged argument vector for the rest of the process.
+/// A damaged config refuses to start; an absent file (and only that) means "no node-provided
+/// config", so the defaults and `node.env` apply.
+fn init_argv() -> Result<(), Box<dyn std::error::Error>> {
+    use conet_node::init_args::{self, EnvSettings};
+    let raw: Vec<String> = std::env::args().collect();
+    let merged = match init_args::config_path(&raw)? {
+        None => init_args::Merged {
+            argv: raw,
+            notes: vec![],
+        },
+        Some(path) => {
+            let cfg = si_signer::init_config::load(std::path::Path::new(&path))
+                .map_err(|e| e.to_string())?;
+            init_args::merge(
+                &raw,
+                cfg.as_ref(),
+                &EnvSettings::from_env(),
+                &init_args::probe_global_ipv4,
+            )?
+        }
+    };
+    for n in &merged.notes {
+        eprintln!("{n}");
+    }
+    let _ = ARGV.set(merged.argv);
+    Ok(())
 }
 
 fn arg_in(args: &[String], name: &str) -> Option<String> {
@@ -84,7 +120,8 @@ fn max_body_from(value: Option<&str>) -> Result<Option<usize>, String> {
 /// followed by another flag, empty, or blank), would otherwise fall back to a default, to a
 /// different route, key, storage or certificate source, or to a built-in address. The node
 /// refuses to start instead. Only the flag name is printed, never a value.
-const FAIL_CLOSED_FLAGS: [&str; 25] = [
+const FAIL_CLOSED_FLAGS: [&str; 26] = [
+    "--init-config",
     "--signer-socket",
     "--rpc",
     "--node-registry",
@@ -148,7 +185,7 @@ fn keys() -> Result<Keys, Box<dyn std::error::Error>> {
         let old = c.old_route_key_ids().to_vec();
         return Ok((c.clone(), c.clone(), c, id, old));
     }
-    if std::env::args().any(|a| a == "--insecure-dev-keys") {
+    if flag("--insecure-dev-keys") {
         eprintln!("WARNING: --insecure-dev-keys is for local test networks with test keys only");
         let armor = std::fs::read_to_string(
             arg("--dev-route-key").ok_or("--dev-route-key <armored test key>")?,
@@ -198,7 +235,8 @@ fn selftest() -> Result<(), String> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::args().any(|a| a == "--selftest") {
+    init_argv()?;
+    if flag("--selftest") {
         return match selftest() {
             Ok(()) => {
                 println!("selftest ok {}", env!("CARGO_PKG_VERSION"));
@@ -213,8 +251,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = conet_node::treasury_v3::check_backfill_env(backfill.as_deref()) {
         return Err(e.into());
     }
-    let argv: Vec<String> = std::env::args().collect();
-    if let Some(flag) = valueless_flag(&argv) {
+    if let Some(flag) = valueless_flag(argv()) {
         return Err(format!("{flag} is given without a value; refusing to start").into());
     }
     // One TLS crypto backend for the whole process (several may be compiled in through deps).
@@ -320,7 +357,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(b) = max_body_from(arg("--max-body").as_deref())? {
         ctx.limits.max_body_bytes = b;
     }
-    if std::env::args().any(|a| a == "--no-legacy-chat-listen") {
+    if flag("--no-legacy-chat-listen") {
         ctx.legacy_chat_listen = false;
     }
     let ctx = Arc::new(ctx);
@@ -414,7 +451,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .parse::<std::net::SocketAddr>()
             .map_err(|_| "--tls-listen <ip:port>")?
             .port();
-        let staging = std::env::args().any(|a| a == "--acme-staging");
+        let staging = flag("--acme-staging");
         let cache = || -> Result<std::path::PathBuf, &'static str> {
             Ok(arg("--acme-cache")
                 .ok_or("--acme-cache <dir> (keeps the certificate across restarts)")?
@@ -501,7 +538,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn flag(name: &str) -> bool {
-    flag_in(&std::env::args().collect::<Vec<_>>(), name)
+    flag_in(argv(), name)
 }
 
 fn flag_in(args: &[String], name: &str) -> bool {
@@ -586,7 +623,7 @@ mod arg_tests {
     use super::{arg_in, flag_in, mining_node_ip_from};
 
     /// Every flag `main` reads through `arg()`.
-    const FLAGS: [&str; 29] = [
+    const FLAGS: [&str; 30] = [
         "--acme-cache",
         "--acme-contact",
         "--acme-directory",
@@ -598,6 +635,7 @@ mod arg_tests {
         "--egress-policy",
         "--evidence-log",
         "--health-listen",
+        "--init-config",
         "--listen",
         "--mailbox-db",
         "--max-body",

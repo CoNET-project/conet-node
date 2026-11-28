@@ -8,7 +8,10 @@
 //! (`LoadCredentialEncrypted=`), so the passphrase never lives next to the key (issue S1).
 #![forbid(unsafe_code)]
 
+pub mod atomic;
 pub mod client;
+pub mod first_start;
+pub mod init_config;
 pub mod kek;
 pub mod keystore;
 pub mod probe_role;

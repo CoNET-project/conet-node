@@ -94,6 +94,30 @@ class Stage(unittest.TestCase):
             self.assertNotIn(word, "\n".join(l for l in post.splitlines() if not l.lstrip().startswith("#")), word)
         self.assertIn("[Install]", node)
 
+    def test_first_start_units_are_non_interactive_and_chained(self):
+        root = b.ROOT / "deploy/apt"
+        first = (root / "systemd/conet-node-first-start.service").read_text()
+        signer = (root / "systemd/conet-signer.service").read_text()
+        node = (root / "systemd/conet-node.service").read_text()
+        tmp = (root / "tmpfiles.d/conet-node.conf").read_text()
+        self.assertIn("\nType=oneshot\n", first)
+        self.assertIn("\nStandardInput=null\n", first)
+        self.assertIn("\nTimeoutStartSec=", first)
+        self.assertNotIn("--insecure", first)
+        self.assertIn("ExecStart=/usr/lib/conet-node/conet-signer first-start", first)
+        self.assertIn("\nRequires=conet-node-first-start.service\n", signer)
+        self.assertIn("conet-node-first-start.service", [w for l in signer.splitlines() if l.startswith("After=") for w in l[6:].split()])
+        # The node unit hands settings to the process through init.json / node.env, never as
+        # ${VAR} flags that an empty value would turn into a valueless flag.
+        self.assertNotIn("${", node)
+        self.assertIn("--init-config /etc/conet-node/init.json", node)
+        for hard in ("--listen", "--tls-listen", "--rpc ", "--api-base", "--public-ip"):
+            self.assertNotIn(hard, node.split("ExecStart=", 1)[1].split("Restart=", 1)[0], hard)
+        self.assertIn("d /etc/credstore.encrypted 0700 root root", tmp)
+        files = [src for src, _, _ in b.FILES]
+        self.assertIn("deploy/apt/systemd/conet-node-first-start.service", files)
+        self.assertIn("deploy/apt/examples/init.json", files)
+
 
 if __name__ == "__main__":
     unittest.main()
