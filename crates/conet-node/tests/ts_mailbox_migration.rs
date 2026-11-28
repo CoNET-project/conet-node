@@ -475,3 +475,109 @@ fn export_refuses_to_overwrite_a_ts_file_it_cannot_read() {
         "the unreadable file is untouched"
     );
 }
+
+fn ts_hash_set(dir: &Path) -> std::collections::BTreeSet<(String, String)> {
+    let mut out = std::collections::BTreeSet::new();
+    for e in std::fs::read_dir(dir).unwrap() {
+        let name = e.unwrap().file_name().to_string_lossy().into_owned();
+        let stem = name
+            .strip_suffix(".inflight.json")
+            .or_else(|| name.strip_suffix(".json"));
+        let Some(key) = stem.filter(|k| {
+            k.len() == 16
+                && k.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
+        }) else {
+            continue;
+        };
+        for a in ts_reads(dir, key) {
+            out.insert((key.to_string(), armor_hash(&a)));
+        }
+    }
+    out
+}
+
+fn rust_hash_set(s: &DiskStore) -> std::collections::BTreeSet<(String, String)> {
+    let mut out = std::collections::BTreeSet::new();
+    for k in s.mailbox_keys().unwrap() {
+        for a in armors(s, &k) {
+            out.insert((k.clone(), armor_hash(&a)));
+        }
+    }
+    out
+}
+
+/// Before and after the import the SET of (key, armor hash) and the count are equal: nothing lost, nothing invented (duplicates in the TS files count once, as TS merges them).
+#[test]
+fn the_hash_set_and_the_count_are_equal_before_and_after_the_import() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    write_ts(&ts, &format!("{K1}.inflight.json"), &["a", "b", "dup"]);
+    write_ts(&ts, &format!("{K1}.json"), &["dup", "c"]);
+    write_ts(&ts, &format!("{K2}.json"), &["x", "y"]);
+    let before = ts_hash_set(&ts);
+    assert_eq!(before.len(), 6, "the TS side holds six distinct messages");
+    let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    assert!(rust_hash_set(&s).is_empty());
+    import_ts_dir(&s, &ts).unwrap();
+    let after = rust_hash_set(&s);
+    println!(
+        "MEASURE TS set {} entries, Rust set {} entries, equal: {}",
+        before.len(),
+        after.len(),
+        before == after
+    );
+    assert_eq!(before, after, "the hash sets are equal");
+    assert_eq!(after.len(), 6, "and so are the counts");
+    // after a rollback export the TS side again equals the Rust side
+    s.save_result(K1, item("new"));
+    export_ts_dir(&s, &ts).unwrap();
+    assert_eq!(
+        ts_hash_set(&ts),
+        rust_hash_set(&s),
+        "after the export the TS files serve exactly the Rust set"
+    );
+}
+
+/// The import only reads: every TS file keeps its bytes and its modification time, and the directory gains and loses no entry.
+#[test]
+fn the_import_leaves_ts_file_bytes_and_mtimes_unchanged() {
+    let (d, ts) = fixture();
+    let snap = |dir: &Path| -> Vec<(String, Vec<u8>, std::time::SystemTime)> {
+        let mut v: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                let m = e.metadata().unwrap();
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    if m.is_file() {
+                        std::fs::read(e.path()).unwrap()
+                    } else {
+                        vec![]
+                    },
+                    m.modified().unwrap(),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let before = snap(&ts);
+    let dir_mtime = std::fs::metadata(&ts).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50)); // a rewrite would now show a later mtime
+    let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    import_ts_dir(&s, &ts).unwrap();
+    import_ts_dir(&s, &ts).unwrap();
+    assert_eq!(
+        snap(&ts),
+        before,
+        "bytes, mtimes and the list of entries are unchanged"
+    );
+    assert_eq!(
+        std::fs::metadata(&ts).unwrap().modified().unwrap(),
+        dir_mtime,
+        "the directory itself was not touched"
+    );
+}
