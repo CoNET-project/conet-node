@@ -27,6 +27,25 @@ pub const UNSIGNED_VOICE_COMMANDS: [&str; 4] = [
     "voice_offer_fetch",
 ];
 
+/// Commands that act for the wallet named in `walletAddress`. When the wallet that signed (the paying wallet) is not that wallet, the owner's own
+/// signature over the message is required (`ownerSignature`); the paying wallet is used for billing only.
+pub const OWNER_BOUND_COMMANDS: [&str; 9] = [
+    "mailbox_listen",
+    "gossip_delivery_ack",
+    "push_device_register",
+    "mining",
+    "mining_validator",
+    "SaaS_Sock5",
+    "SaaS_Sock5_v2",
+    "wallet_online_query",
+    "wallet_native_wake_query",
+];
+
+/// Statement the owner signs to authorise one delegated message: a fixed prefix and the keccak256 of the exact message string.
+pub fn owner_statement(message_hash_hex: &str) -> String {
+    format!("CoNET-SI owner authorization v1\n{message_hash_hex}")
+}
+
 /// define.d.ts `SICommandObj.command`. Anything else is closed by SI's `default` branch.
 pub const KNOWN_COMMANDS: [&str; 24] = [
     "SilentPass",

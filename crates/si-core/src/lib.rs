@@ -341,7 +341,8 @@ pub fn classify_post(armor: &str, local: &LocalRoute<'_>, write_keys: &WriteKeys
     ) else {
         return Decision::Reject { reason: "format" };
     };
-    match check_sign(message, sig) {
+    let owner_sig = content.get("ownerSignature").and_then(Value::as_str);
+    match check_sign_with_owner(message, sig, owner_sig) {
         Some(cmd) => Decision::SignedCommand { command: cmd },
         None => Decision::Reject {
             reason: "signature",
@@ -384,6 +385,12 @@ fn truthy(v: Option<&Value>) -> bool {
 /// SI `checkSign` (localNodeCommand.ts): EIP-191 or raw keccak digest, signer must be
 /// `billingWallet || walletAddress`; voice commands skip the signature and drop wallets.
 pub fn check_sign(message: &str, sig: &str) -> Option<Value> {
+    check_sign_with_owner(message, sig, None)
+}
+
+/// `check_sign` plus the owner proof: for the commands in `proto::OWNER_BOUND_COMMANDS`, a message whose `walletAddress` is not the wallet that signed
+/// is accepted only with an `ownerSignature` (EIP-191) by `walletAddress` over the statement for this exact message.
+pub fn check_sign_with_owner(message: &str, sig: &str, owner_sig: Option<&str>) -> Option<Value> {
     let mut obj: Map<String, Value> = serde_json::from_str::<Value>(message)
         .ok()?
         .as_object()?
@@ -421,6 +428,15 @@ pub fn check_sign(message: &str, sig: &str) -> Option<Value> {
         return None;
     }
     let wl = wallet.to_lowercase();
+    if proto::OWNER_BOUND_COMMANDS.contains(&command) && wl != bl {
+        let proven = owner_sig.is_some_and(|o| {
+            let statement = proto::owner_statement(&eth::keccak_hex(message));
+            eth::recover_message(&statement, o).is_ok_and(|a| a.to_lowercase() == wl)
+        });
+        if !proven {
+            return None;
+        }
+    }
     if !wallet.is_empty()
         && eth::is_address(&wallet)
         && (billing_field.is_some() || v == wl || raw == wl)
