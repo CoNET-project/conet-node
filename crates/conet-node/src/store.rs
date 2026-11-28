@@ -316,6 +316,38 @@ impl DiskStore {
         Ok(out)
     }
 
+    /// Like `rows_in`, but nothing is left out: an entry that cannot be read, a row that does not parse, or a row whose text no longer matches its recorded hash is an error.
+    fn rows_complete_in(db: &Database, key: &str) -> Result<Vec<(u64, Row)>, redb::Error> {
+        let r = db.begin_read()?;
+        let t = r.open_table(MSGS)?;
+        let mut out = vec![];
+        for e in t.range((key, 0u64)..=(key, u64::MAX))? {
+            let (k, v) = e?;
+            let seq = k.value().1;
+            out.push((seq, Self::checked_row(key, seq, v.value())?));
+        }
+        Ok(out)
+    }
+
+    fn checked_row(key: &str, seq: u64, bytes: &[u8]) -> Result<Row, redb::Error> {
+        // the message text is never part of the error
+        let bad = |why: &str| redb::Error::Corrupted(format!("mailbox row {key}/{seq} {why}"));
+        let row: Row = serde_json::from_slice(bytes).map_err(|_| bad("does not parse"))?;
+        if row.hash != armor_hash(&row.item.armor) {
+            return Err(bad("does not match its recorded hash"));
+        }
+        Ok(row)
+    }
+
+    /// Every stored message of one key, or an error; never a shorter list. For callers that treat "not in this list" as "no longer held" (export, digest). `pending` is not
+    /// suitable for that: it returns what it can read.
+    pub fn pending_complete(&self, user_key: &str) -> Result<Vec<Stored>, redb::Error> {
+        let key = user_key.to_uppercase();
+        self.injected_read_fault(&key)?;
+        self.with_db(|db| Self::rows_complete_in(db, &key))
+            .map(|v| v.into_iter().map(|(_, r)| r.item).collect())
+    }
+
     fn save_inner(&self, key: &str, item: Stored) -> Result<bool, redb::Error> {
         let hash = armor_hash(&item.armor);
         self.with_db(|db| {
@@ -395,7 +427,7 @@ impl DiskStore {
     }
 
     /// The pairs (key, armor hash) of every stored message, read through a READ-ONLY open of the file (no write transaction, no lock taken for writing, nothing created):
-    /// for the reconciliation digest. A running node holds the file, in which case the open is refused.
+    /// for the reconciliation digest. A running node holds the file, in which case the open is refused. A row that cannot be read is an error, never a smaller set.
     pub fn read_pairs_readonly(
         path: &Path,
     ) -> Result<std::collections::BTreeSet<(String, String)>, redb::Error> {
@@ -405,9 +437,9 @@ impl DiskStore {
         let mut out = std::collections::BTreeSet::new();
         for e in t.iter()? {
             let (k, v) = e?;
-            if let Ok(row) = serde_json::from_slice::<Row>(v.value()) {
-                out.insert((k.value().0.to_string(), row.hash));
-            }
+            let (key, seq) = k.value();
+            let row = Self::checked_row(key, seq, v.value())?;
+            out.insert((key.to_string(), row.hash));
         }
         Ok(out)
     }

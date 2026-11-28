@@ -10,7 +10,9 @@
 //! continues), never brings back a message the owner acknowledged, never writes to the source, and counts but never prints message text.
 //! Export (Rust stopped, TS not started): per key the TS files are rewritten so that TS serves the Rust node's pending messages (acknowledged ones are gone, new ones are
 //! present) plus any TS message the Rust store has never seen; originals are kept as `*.rollback-bak`; an unreadable file is never overwritten.
-use crate::store::{armor_hash, DiskStore, ImportOutcome, MailboxStore, Stored};
+//! The database side of a key is read completely or the key is left alone and counted in `failed_keys` (the command then exits non-zero): an imported original is only
+//! dropped from the TS files when the complete list of the key's rows does not hold it. The other keys are still exported. The store digests fail on any unreadable row.
+use crate::store::{armor_hash, DiskStore, ImportOutcome, Stored};
 use serde::de::{SeqAccess, Visitor};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
@@ -355,10 +357,15 @@ pub fn export_ts_dir_with(
             rep.failed_keys += 1;
             continue;
         };
-        let rust: Vec<String> = store.pending(&key).into_iter().map(|i| i.armor).collect();
-        let imported = store
-            .ts_imported_hashes(&key)
-            .map_err(MigrateError::Store)?;
+        // An imported original that is missing from this list is removed from the TS files, so the list must be complete. A key whose database side cannot be read
+        // completely is counted as failed and left alone: its TS files and its export record stay as they are, and the export can be run again.
+        let (Ok(complete), Ok(imported)) =
+            (store.pending_complete(&key), store.ts_imported_hashes(&key))
+        else {
+            rep.failed_keys += 1;
+            continue;
+        };
+        let rust: Vec<String> = complete.into_iter().map(|i| i.armor).collect();
         let in_rust: HashSet<&String> = rust.iter().collect();
         let extras: Vec<String> = ts_items
             .iter()
@@ -459,7 +466,7 @@ pub fn store_digest_at(path: &Path) -> Result<Digest, MigrateError> {
 pub fn store_digest(store: &DiskStore) -> Result<Digest, MigrateError> {
     let mut pairs = BTreeSet::new();
     for key in store.mailbox_keys().map_err(MigrateError::Store)? {
-        for m in store.pending(&key) {
+        for m in store.pending_complete(&key).map_err(MigrateError::Store)? {
             pairs.insert((key.clone(), armor_hash(&m.armor)));
         }
     }

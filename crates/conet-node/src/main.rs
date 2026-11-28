@@ -282,7 +282,7 @@ fn run_ts_mailbox(
         );
         if r.failed_keys > 0 {
             return Err(format!(
-                "{} key(s) have a TS file that does not parse and were left alone",
+                "{} key(s) were left alone: a TS file does not parse or the database rows cannot be read completely (--mailbox-digest names an unreadable row); the TS node must not be started until the export succeeds",
                 r.failed_keys
             )
             .into());
