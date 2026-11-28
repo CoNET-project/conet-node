@@ -1246,6 +1246,36 @@ fn stage_a_ts_import_refuses_instead_of_generating_when_anything_is_off() {
 }
 
 #[test]
+fn stage_a_a_ts_import_refused_while_sealing_leaves_the_kek_which_the_rerun_reuses() {
+    let (w, k, setup) = small_public();
+    let h = Host::new();
+    let import = |expect_wallet: &str| {
+        h.init(json!({"version":1,"identity":{"mode":"ts-import","ts_service_account":"tsuser","expect_wallet":expect_wallet,"expect_key_id":k}}));
+    };
+    import("0x00000000000000000000000000000000000000a1");
+    let home = h.p("home/tsuser/.CoNET-SI");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("nodeSetup.json"), &setup).unwrap();
+    let r = h.first_start();
+    assert!(
+        !r.ok && r.stderr.contains("wallet_mismatch"),
+        "{}",
+        r.stderr
+    );
+    assert!(!h.keystore().exists());
+    assert!(h.kek().is_file(), "the KEK made before the refused stage");
+    assert_eq!(std::fs::read(home.join("nodeSetup.json")).unwrap(), setup);
+    let kek = std::fs::read(h.kek()).unwrap();
+    import(&w);
+    let r = h.first_start();
+    assert!(r.ok, "{}", r.stderr);
+    assert!(r.stdout.contains("kek: present"), "{}", r.stdout);
+    assert_eq!(std::fs::read(h.kek()).unwrap(), kek, "the KEK was replaced");
+    assert!(h.keystore().is_file());
+    assert_eq!(std::fs::read(home.join("nodeSetup.json")).unwrap(), setup);
+}
+
+#[test]
 fn stage_a_a_damaged_or_secret_bearing_init_json_refuses_before_anything_is_created() {
     let h = Host::new();
     let cases: Vec<(&[u8], &str)> = vec![

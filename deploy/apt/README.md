@@ -145,8 +145,11 @@ The first-start unit checks that the file is a plain file owned by that account 
 by others, hands it to the sealing stage as a systemd credential (so no key or password appears in
 argv or environment), and the sealing stage opens it, compares the public values with `expect_*`
 **before** publishing, publishes, and reads back and compares again. A mismatch, a wrong password,
-a damaged file stops it with a fixed code, writes nothing and never falls back to making a new
-identity. The file itself is only read: it is never moved or edited, and later boots do not need it.
+a damaged file stops it with a fixed code: no keystore is written and it never falls back to making
+a new identity. A refusal in this stage can still leave behind what was made before it: the new KEK
+credential, the systemd host key (`/var/lib/systemd/credential.secret`, if the host had none) and the
+keystore lock file. Correct the cause and run it again; the KEK is reused. Do not delete these by
+hand and do not expect a refused import to leave the host unchanged. The file itself is only read: it is never moved or edited, and later boots do not need it.
 (`systemd-run` with `LoadCredential=` holds an in-memory copy of it for as long as the transient unit
 exists; the copy vanishes when the unit ends, and `LimitCORE=0` keeps a crash from writing it to disk.)
 
