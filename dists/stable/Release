@@ -2,10 +2,10 @@ Origin: CoNET Project
 Label: CoNET-SI Rust
 Suite: stable
 Codename: stable
-Date: Sat, 28 Nov 2026 04:30:00 GMT
+Date: Sat, 28 Nov 2026 19:14:55 GMT
 Architectures: amd64
 Components: main
 Description: CoNET-SI Rust packages
 SHA256:
- f3289cc7736fa31badc1a193f9b844e4b889a509a91f90ba93b80ac6a67d4c5a 3927 PROVENANCE.json
- 98c451a261058c4392d283b888f8803862e21acf30b0555ef0d13402f14fcffe 2114 main/binary-amd64/Packages
+ 2326ce019a4429e71426ad9552f013380a37a2ef8efd1d612f8df3d465d591c1 5237 PROVENANCE.json
+ d81f5d15a06d50e6ce676c4ef13bcb394e5a31837bcd7b07ad583b06e70e3f46 2943 main/binary-amd64/Packages
