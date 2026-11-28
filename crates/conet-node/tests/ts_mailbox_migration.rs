@@ -5,7 +5,8 @@
 //! the Rust node's pending messages are exported back in the TS format so the TS node serves them. Synthetic files and a synthetic redb only; no node, no network.
 use conet_node::store::{armor_hash, DiskStore, MailboxStore, SaveResult, Stored};
 use conet_node::ts_mailbox::{
-    export_ts_dir, export_ts_dir_with, import_ts_dir, import_ts_dir_with,
+    export_ts_dir, export_ts_dir_with, import_ts_dir, import_ts_dir_with, store_digest,
+    ts_dir_digest,
 };
 use std::path::Path;
 
@@ -580,4 +581,41 @@ fn the_import_leaves_ts_file_bytes_and_mtimes_unchanged() {
         dir_mtime,
         "the directory itself was not touched"
     );
+}
+
+/// The reconciliation digest: keys, messages and one SHA-256 over the sorted (key, armor hash) pairs. Equal sets give equal digests whatever the order or the file layout
+/// (inflight or new file, duplicates), different sets differ, and an unreadable TS file is an error, never a smaller digest.
+#[test]
+fn the_digest_of_the_ts_files_equals_the_digest_of_the_store_after_the_import() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    write_ts(&ts, &format!("{K1}.inflight.json"), &["a", "b", "dup"]);
+    write_ts(&ts, &format!("{K1}.json"), &["dup", "c"]);
+    write_ts(&ts, &format!("{K2}.json"), &["x", "y"]);
+    let s = DiskStore::open(&d.path().join("m.redb")).unwrap();
+    let before = ts_dir_digest(&ts).unwrap();
+    assert_eq!((before.keys, before.messages), (2, 6));
+    assert_eq!(before.sha256.len(), 64);
+    assert_ne!(store_digest(&s).unwrap(), before, "an empty store differs");
+    import_ts_dir(&s, &ts).unwrap();
+    assert_eq!(
+        store_digest(&s).unwrap(),
+        before,
+        "after the import the two digests are equal"
+    );
+    // another layout of the same set (everything in one file, other order, a repeated message) gives the same digest
+    let ts2 = d.path().join(".data2");
+    std::fs::create_dir_all(&ts2).unwrap();
+    write_ts(&ts2, &format!("{K1}.json"), &["c", "dup", "b", "a", "a"]);
+    write_ts(&ts2, &format!("{K2}.inflight.json"), &["y", "x"]);
+    assert_eq!(ts_dir_digest(&ts2).unwrap(), before);
+    // a different set differs; one acknowledged message changes the store's digest
+    assert!(s.remove_by_hash(K1, &armor_hash("b")));
+    let after_ack = store_digest(&s).unwrap();
+    assert_eq!((after_ack.keys, after_ack.messages), (2, 5));
+    assert_ne!(after_ack.sha256, before.sha256);
+    // an unreadable TS file is an error
+    std::fs::write(ts2.join("0000000000000001.json"), "[\"half").unwrap();
+    assert!(ts_dir_digest(&ts2).is_err());
 }

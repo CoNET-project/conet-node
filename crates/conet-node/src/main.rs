@@ -120,7 +120,8 @@ fn max_body_from(value: Option<&str>) -> Result<Option<usize>, String> {
 /// followed by another flag, empty, or blank), would otherwise fall back to a default, to a
 /// different route, key, storage or certificate source, or to a built-in address. The node
 /// refuses to start instead. Only the flag name is printed, never a value.
-const FAIL_CLOSED_FLAGS: [&str; 28] = [
+const FAIL_CLOSED_FLAGS: [&str; 29] = [
+    "--ts-mailbox-digest",
     "--import-ts-mailbox",
     "--export-ts-mailbox",
     "--init-config",
@@ -305,6 +306,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("{flag} is given without a value; refusing to start").into());
     }
     // The one-shot mailbox migration steps of a cutover or a rollback (TS stopped, this node not running): counts only are printed.
+    // The reconciliation views: only the number of keys, the number of messages and one SHA-256 over the sorted (key, armor hash) pairs are printed.
+    if let Some(dir) = arg("--ts-mailbox-digest") {
+        let d = conet_node::ts_mailbox::ts_dir_digest(std::path::Path::new(&dir))?;
+        println!(
+            "ts-mailbox-digest: keys={} messages={} sha256={}",
+            d.keys, d.messages, d.sha256
+        );
+        return Ok(());
+    }
+    if flag("--mailbox-digest") {
+        let Some(db) = setting("--mailbox-db") else {
+            return Err("--mailbox-db is required for --mailbox-digest".into());
+        };
+        if !std::path::Path::new(&db).is_file() {
+            return Err("the mailbox database does not exist; the digest never creates one".into());
+        }
+        let store = conet_node::store::DiskStore::open(std::path::Path::new(&db))?;
+        let d = conet_node::ts_mailbox::store_digest(&store)?;
+        println!(
+            "mailbox-digest: keys={} messages={} sha256={}",
+            d.keys, d.messages, d.sha256
+        );
+        return Ok(());
+    }
     let (import_dir, export_dir) = (arg("--import-ts-mailbox"), arg("--export-ts-mailbox"));
     if import_dir.is_some() || export_dir.is_some() {
         return run_ts_mailbox(import_dir, export_dir, setting("--mailbox-db"));
@@ -678,7 +703,7 @@ mod arg_tests {
     use super::{arg_in, flag_in, mining_node_ip_from};
 
     /// Every flag `main` reads through `arg()`.
-    const FLAGS: [&str; 32] = [
+    const FLAGS: [&str; 33] = [
         "--acme-cache",
         "--acme-contact",
         "--acme-directory",
@@ -708,6 +733,7 @@ mod arg_tests {
         "--tls-domain",
         "--tls-key",
         "--tls-listen",
+        "--ts-mailbox-digest",
         "--webrtc-cert",
         "--webrtc-listen",
         "--webrtc-public",

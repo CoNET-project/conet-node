@@ -321,3 +321,56 @@ pub fn export_ts_dir_with(
     }
     Ok(rep)
 }
+
+/// Aggregate view of a mailbox for the reconciliation of a cutover or a rollback: how many keys and messages, and one SHA-256 over the sorted lines `KEY:armorhash`
+/// (each distinct pair once). The seal compares two of these (the TS files and the Rust store); neither the keys nor the hashes leave the tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Digest {
+    pub keys: usize,
+    pub messages: usize,
+    pub sha256: String,
+}
+
+fn digest_of(pairs: BTreeSet<(String, String)>) -> Digest {
+    use sha2::{Digest as _, Sha256};
+    let keys = pairs.iter().map(|(k, _)| k).collect::<BTreeSet<_>>().len();
+    let mut h = Sha256::new();
+    for (k, a) in &pairs {
+        h.update(format!("{k}:{a}\n").as_bytes());
+    }
+    Digest {
+        keys,
+        messages: pairs.len(),
+        sha256: hex::encode(h.finalize()),
+    }
+}
+
+/// The digest of the TS files: per key the inflight and the new file merged without duplicates (as TS merges them). A file that does not parse is an error, never a smaller digest.
+pub fn ts_dir_digest(dir: &Path) -> Result<Digest, MigrateError> {
+    let mut pairs = BTreeSet::new();
+    for (key, (inflight, json)) in ts_files(dir)? {
+        for path in [inflight, json].into_iter().flatten() {
+            read_array(&path, &mut |a| {
+                pairs.insert((key.clone(), armor_hash(&a)));
+            })
+            .map_err(|_| {
+                MigrateError::Dir(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "a TS mailbox file does not parse",
+                ))
+            })?;
+        }
+    }
+    Ok(digest_of(pairs))
+}
+
+/// The digest of the Rust store: every pending message of every key.
+pub fn store_digest(store: &DiskStore) -> Result<Digest, MigrateError> {
+    let mut pairs = BTreeSet::new();
+    for key in store.mailbox_keys().map_err(MigrateError::Store)? {
+        for m in store.pending(&key) {
+            pairs.insert((key.clone(), armor_hash(&m.armor)));
+        }
+    }
+    Ok(digest_of(pairs))
+}

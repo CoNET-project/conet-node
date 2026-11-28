@@ -140,3 +140,54 @@ fn the_step_refuses_while_the_database_is_open_elsewhere() {
     );
     assert!(!o.status.success(), "{}", text(&o));
 }
+
+/// The digest options print the number of keys, the number of messages and one SHA-256 only: no key ID, no armor hash, no message text, and the two sides agree after the import.
+#[test]
+fn the_digest_options_print_counts_and_one_digest_only() {
+    let d = tempfile::tempdir().unwrap();
+    let ts = d.path().join(".data");
+    std::fs::create_dir_all(&ts).unwrap();
+    std::fs::write(
+        ts.join("0123456789ABCDEF.json"),
+        serde_json::to_string_pretty(&["SECRET-ARMOR-ONE", "SECRET-ARMOR-TWO"]).unwrap(),
+    )
+    .unwrap();
+    let db = d.path().join("m.redb");
+    let (dbs, tss) = (db.to_str().unwrap(), ts.to_str().unwrap());
+    let missing = run(&["--mailbox-digest", "--mailbox-db", dbs]);
+    assert!(
+        !missing.status.success(),
+        "the digest never creates a database: {}",
+        text(&missing)
+    );
+    assert!(!db.exists());
+    let a = run(&["--ts-mailbox-digest", tss]);
+    assert!(a.status.success(), "{}", text(&a));
+    assert!(run(&["--import-ts-mailbox", tss, "--mailbox-db", dbs])
+        .status
+        .success());
+    let b = run(&["--mailbox-digest", "--mailbox-db", dbs]);
+    println!("MEASURE {} | {}", text(&a).trim(), text(&b).trim());
+    let digest = |o: &Output| {
+        text(o)
+            .split("messages=")
+            .nth(1)
+            .unwrap()
+            .trim()
+            .to_string()
+    };
+    assert_eq!(
+        digest(&a),
+        digest(&b),
+        "the TS side and the store side agree after the import"
+    );
+    assert!(text(&a).contains("keys=1 messages=2") && text(&b).contains("keys=1 messages=2"));
+    for o in [&a, &b] {
+        let t = text(o);
+        assert!(
+            !t.contains("SECRET-ARMOR") && !t.contains("0123456789ABCDEF"),
+            "no message text and no key ID"
+        );
+        assert!(!t.contains("0x"), "no armor hash");
+    }
+}
