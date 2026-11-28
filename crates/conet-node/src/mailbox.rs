@@ -98,6 +98,16 @@ impl Mailbox {
         let outcome = self.store.save_result(user_key, item);
         let fresh = outcome == SaveResult::Stored;
         let push_enqueued = fresh && !no_push;
+        if outcome == SaveResult::Failed {
+            // A real storage failure is a clear refusal (the post reply is ok:false and the sender keeps the message and retries):
+            // nothing is pushed and nothing is written to a live listen, so a refused message is never half delivered.
+            return DeliverReport {
+                outcome,
+                fresh: false,
+                push_enqueued: false,
+                live_sessions: 0,
+            };
+        }
         if push_enqueued {
             self.push.offline_chat(user_key.to_uppercase());
         }

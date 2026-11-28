@@ -1,7 +1,9 @@
 //! Offline mailbox store, mirroring SI `saveLocal` / `tryGetLocal` / `removeLocalByArmorHash`:
 //! every delivery is stored first, flushed on each listen, and deleted only by the client's
-//! `gossip_delivery_ack` (keccak256 of the armor). Unlike SI, the disk store bounds each
-//! mailbox by count and age, so one key cannot fill the disk.
+//! `gossip_delivery_ack` (keccak256 of the armor). Like SI, the disk store has NO limit on the number of
+//! messages per key and NO age limit (project decision, relayed: 「沿用 TS，不设条数或天数上限，实际存储失败时明确拒收」):
+//! an accepted message stays until the mailbox owner acknowledges it. The only refusal is a real storage failure
+//! (`SaveResult::Failed`), which the post reply reports as `ok:false` so the sender keeps the message and retries.
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -92,13 +94,13 @@ const SEQ: TableDefinition<&str, u64> = TableDefinition::new("seq");
 struct Row {
     item: Stored,
     hash: String,
+    /// Kept for diagnostics and for compatibility with databases written by earlier builds; never used to drop a message.
+    #[serde(default)]
     saved_at: u64,
 }
 
 pub struct DiskStore {
     db: Database,
-    pub max_per_key: usize,
-    pub max_age_secs: u64,
 }
 
 fn now() -> u64 {
@@ -116,11 +118,7 @@ impl DiskStore {
         w.open_table(SEQ)?;
         w.open_table(OFFERS)?;
         w.commit()?;
-        Ok(Self {
-            db,
-            max_per_key: 2000,
-            max_age_secs: 30 * 24 * 3600,
-        })
+        Ok(Self { db })
     }
 
     fn rows(&self, key: &str) -> Result<Vec<(u64, Row)>, redb::Error> {
@@ -142,24 +140,11 @@ impl DiskStore {
         if existing.iter().any(|(_, r)| r.hash == hash) {
             return Ok(false);
         }
-        let cutoff = now().saturating_sub(self.max_age_secs);
         let w = self.db.begin_write()?;
         {
             let mut msgs = w.open_table(MSGS)?;
             let mut seq = w.open_table(SEQ)?;
-            // Drop expired rows, then the oldest beyond the cap (keeping room for the new one).
-            let mut live: Vec<u64> = vec![];
-            for (s, r) in &existing {
-                if r.saved_at < cutoff {
-                    msgs.remove((key, *s))?;
-                } else {
-                    live.push(*s);
-                }
-            }
-            while live.len() >= self.max_per_key {
-                let s = live.remove(0);
-                msgs.remove((key, s))?;
-            }
+            // Nothing is removed here: no count cap, no age purge. A failure anywhere in this block or in `commit` is an error, not a store.
             let next = seq.get(key)?.map(|v| v.value()).unwrap_or(0);
             let row = serde_json::to_vec(&Row {
                 item,
@@ -211,14 +196,8 @@ impl MailboxStore for DiskStore {
         }
     }
     fn pending(&self, user_key: &str) -> Vec<Stored> {
-        let cutoff = now().saturating_sub(self.max_age_secs);
         self.rows(&user_key.to_uppercase())
-            .map(|v| {
-                v.into_iter()
-                    .filter(|(_, r)| r.saved_at >= cutoff)
-                    .map(|(_, r)| r.item)
-                    .collect()
-            })
+            .map(|v| v.into_iter().map(|(_, r)| r.item).collect())
             .unwrap_or_default()
     }
     fn remove_by_hash(&self, user_key: &str, hash: &str) -> bool {
@@ -359,10 +338,9 @@ mod tests {
     }
 
     #[test]
-    fn disk_store_saves_dedups_acks_and_caps() {
+    fn disk_store_saves_dedups_acks_and_never_evicts() {
         let dir = tempfile::tempdir().unwrap();
-        let mut s = DiskStore::open(&dir.path().join("m.redb")).unwrap();
-        s.max_per_key = 3;
+        let s = DiskStore::open(&dir.path().join("m.redb")).unwrap();
         assert!(s.save("k1", item("a")));
         assert!(!s.save("K1", item("a")), "dedup, key case-insensitive");
         assert!(s.save("k1", item("b")));
@@ -376,20 +354,21 @@ mod tests {
         );
         assert!(s.remove_by_hash("k1", &armor_hash("a")));
         assert!(!s.remove_by_hash("k1", &armor_hash("a")));
-        for a in ["c", "d", "e"] {
-            s.save("k1", item(a));
+        for a in ["c", "d", "e", "f", "g"] {
+            assert!(s.save("k1", item(a)));
         }
         assert_eq!(
             s.pending("k1")
                 .iter()
                 .map(|i| i.armor.as_str())
                 .collect::<Vec<_>>(),
-            ["c", "d", "e"]
+            ["b", "c", "d", "e", "f", "g"],
+            "nothing is evicted to make room"
         );
         assert_eq!(s.pending("k2").len(), 1);
         drop(s);
         let s = DiskStore::open(&dir.path().join("m.redb")).unwrap();
-        assert_eq!(s.pending("k1").len(), 3, "survives reopen");
+        assert_eq!(s.pending("k1").len(), 6, "survives reopen");
     }
 
     #[test]
