@@ -161,6 +161,26 @@ no statement, and `BindNode` stays refused; with the all-zero value the signer a
 NodeRegistryV2 is deployed. The signer was tested to start and serve chat with the all-zero value
 (`the_all_zero_verifying_contract_placeholder_starts_and_serves_chat`).
 
+## Mailbox database
+
+The node opens `/var/lib/conet-node/mailbox.redb` and never creates it. With a missing, empty or
+damaged file, or a wrong `--mailbox-db` path, it exits with an error before it listens, and leaves
+the files as they are. `--export-ts-mailbox` refuses in the same way. The unit's `ExecStartPre`
+(`--prepare-mailbox-db`) creates the database once on a new installation and writes the marker
+`/var/lib/conet-node/mailbox.installed`. It refuses to create one when the marker exists, or when
+`/var/lib/conet-node-install/upgraded` exists (the package writes that when it is configured over an
+earlier version). A database from an earlier version is kept and gets the marker.
+
+When it refuses: do not delete the marker or the record to make the node start. First find the
+database (wrong path, unmounted disk, restore). Creating a new, empty one means the messages
+accepted before are gone for their owners; that is an operator decision with its own record.
+Removing both the marker and the record is how that decision is carried out. If the whole state
+directory is lost and no earlier version was ever upgraded here, the step cannot tell this host
+from a new one.
+
+The health line reports `mailbox_damaged=<rows>` and `mailbox_read_errors=<n>`. A damaged row is
+kept as it is; the other messages of the same mailbox are still delivered.
+
 ## Evidence log
 
 `conet-node.service` passes `--evidence-log /var/lib/conet-node/evidence/evidence.jsonl` (owner

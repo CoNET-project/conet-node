@@ -120,7 +120,7 @@ fn max_body_from(value: Option<&str>) -> Result<Option<usize>, String> {
 /// followed by another flag, empty, or blank), would otherwise fall back to a default, to a
 /// different route, key, storage or certificate source, or to a built-in address. The node
 /// refuses to start instead. Only the flag name is printed, never a value.
-const FAIL_CLOSED_FLAGS: [&str; 29] = [
+const FAIL_CLOSED_FLAGS: [&str; 31] = [
     "--ts-mailbox-digest",
     "--import-ts-mailbox",
     "--export-ts-mailbox",
@@ -130,6 +130,8 @@ const FAIL_CLOSED_FLAGS: [&str; 29] = [
     "--node-registry",
     "--node-lens",
     "--mailbox-db",
+    "--mailbox-marker",
+    "--mailbox-upgrade-record",
     "--node-ip-address",
     "--listen",
     "--health-listen",
@@ -252,7 +254,12 @@ fn run_ts_mailbox(
     let Some(db) = db else {
         return Err("--mailbox-db is required for the TS mailbox migration".into());
     };
-    let store = conet_node::store::DiskStore::open(std::path::Path::new(&db))?;
+    // only the import creates a database; an export from a path that holds none is refused
+    let store = if import_dir.is_some() {
+        conet_node::store::DiskStore::open(std::path::Path::new(&db))?
+    } else {
+        conet_node::store::DiskStore::open_installed(std::path::Path::new(&db))?
+    };
     if let Some(dir) = import_dir {
         let r = conet_node::ts_mailbox::import_ts_dir_opts(
             &store,
@@ -337,6 +344,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
+    if flag("--prepare-mailbox-db") {
+        let (Some(db), Some(marker)) = (setting("--mailbox-db"), setting("--mailbox-marker"))
+        else {
+            return Err("--prepare-mailbox-db needs --mailbox-db and --mailbox-marker".into());
+        };
+        let record = setting("--mailbox-upgrade-record").map(std::path::PathBuf::from);
+        let done = conet_node::mailbox_install::prepare(
+            std::path::Path::new(&db),
+            std::path::Path::new(&marker),
+            record.as_deref(),
+        )?;
+        println!("prepare-mailbox-db: {done:?}");
+        return Ok(());
+    }
     let (import_dir, export_dir) = (arg("--import-ts-mailbox"), arg("--export-ts-mailbox"));
     if import_dir.is_some() || export_dir.is_some() {
         return run_ts_mailbox(import_dir, export_dir, setting("--mailbox-db"));
@@ -351,7 +372,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // One redb file holds the offline mailbox and the voice offer index.
     let (store, offers): (Arc<dyn MailboxStore>, Arc<dyn OfferStore>) = match arg("--mailbox-db") {
         Some(p) => {
-            let d = Arc::new(DiskStore::open(std::path::Path::new(&p))?);
+            // never creates one: `--prepare-mailbox-db` does that, once, on a new installation
+            let d = Arc::new(DiskStore::open_installed(std::path::Path::new(&p))?);
             (d.clone(), d)
         }
         None => {
@@ -710,7 +732,7 @@ mod arg_tests {
     use super::{arg_in, flag_in, mining_node_ip_from};
 
     /// Every flag `main` reads through `arg()`.
-    const FLAGS: [&str; 33] = [
+    const FLAGS: [&str; 35] = [
         "--acme-cache",
         "--acme-contact",
         "--acme-directory",
@@ -727,6 +749,8 @@ mod arg_tests {
         "--init-config",
         "--listen",
         "--mailbox-db",
+        "--mailbox-marker",
+        "--mailbox-upgrade-record",
         "--max-body",
         "--node-lens",
         "--node-ip-address",

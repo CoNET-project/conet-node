@@ -22,6 +22,13 @@ EnvironmentFile=/etc/conet-node/node.env
 # a node that only has node.env, from CONET_RPC / BEAMIO_API_BASE / CONET_PUBLIC_IP: the process
 # merges them itself (flag > init.json > node.env > auto-detect > default 80/443). Nothing here
 # expands an empty variable into a valueless flag, and an explicit flag added by hand still wins.
+# The node never creates its mailbox database. This step does, once, on a new installation; where the marker or the package's upgrade record
+# says a database should be there and it is not, it fails and the node does not start.
+ExecStartPre=/usr/lib/conet-node/conet-node \
+  --prepare-mailbox-db \
+  --mailbox-db /var/lib/conet-node/mailbox.redb \
+  --mailbox-marker /var/lib/conet-node/mailbox.installed \
+  --mailbox-upgrade-record /var/lib/conet-node-install/upgraded
 ExecStart=/usr/lib/conet-node/conet-node \
   --init-config /etc/conet-node/init.json \
   --acme-cache /var/lib/conet-node/acme \

@@ -14,6 +14,8 @@ StateDirectory=conet-node
 # Offline boot guard (not part of the binary it guards): after 3 starts of a new version
 # without reaching "healthy", switch back to the previous release and blacklist it.
 ExecStartPre=+/opt/conet-node/updater/conet-boot-guard --root /opt/conet-node
+# The node never creates its mailbox database; this step does, once, on a new installation.
+ExecStartPre=/opt/conet-node/current/conet-node --prepare-mailbox-db --mailbox-db /var/lib/conet-node/mailbox.redb --mailbox-marker /var/lib/conet-node/mailbox.installed
 ExecStart=/opt/conet-node/current/conet-node \
   --listen 0.0.0.0:80 \
   --tls-listen 0.0.0.0:443 \

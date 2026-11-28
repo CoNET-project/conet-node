@@ -55,6 +55,8 @@ start_si() { # name ip
   PIDS+=($!)
 }
 start_rust() { # name ip wallet
+  target/debug/conet-node --prepare-mailbox-db --mailbox-db "$NET/$1/mailbox.redb" \
+    --mailbox-marker "$NET/$1/mailbox.installed" >> "$WORK/logs/$1.prepare.log" 2>&1
   CONET_DEV_ROUTE_PASS="" CONET_DEV_WALLET_KEY="$(jq -r ".wallets.$3.privateKey" $G)" RUST_LOG=conet_node=debug \
     target/debug/conet-node --insecure-dev-keys --dev-route-key "$NET/$1/route.sec" \
     --listen "$2:80" --health-listen "$2:9180" --rpc http://127.0.0.1:8545 \

@@ -189,8 +189,31 @@ fn now() -> u64 {
 }
 
 impl DiskStore {
+    /// Opens the database, **creating** it when there is none. Only for the steps that are meant to create one (the first preparation of a new installation, the TS import)
+    /// and for tests. The node and the export use [`DiskStore::open_installed`].
     pub fn open(path: &Path) -> Result<Self, redb::Error> {
-        let db = Database::create(path)?;
+        Self::with_tables(path, Database::create(path)?)
+    }
+
+    /// Opens the mailbox database of an existing installation. A missing, empty, damaged or foreign file is an error; nothing is created and the file is not replaced.
+    pub fn open_installed(path: &Path) -> Result<Self, redb::Error> {
+        let refused = |why: &str| {
+            redb::Error::Corrupted(format!("the mailbox database {why}; nothing was created"))
+        };
+        match std::fs::metadata(path) {
+            Ok(m) if m.is_file() && m.len() > 0 => {}
+            Ok(m) if m.is_file() => return Err(refused("is empty")),
+            Ok(_) => return Err(refused("path is not a file")),
+            Err(_) => return Err(refused("does not exist or cannot be read")),
+        }
+        let db = open_existing(path)?;
+        if db.begin_read()?.open_table(MSGS).is_err() {
+            return Err(refused("holds no mailbox table"));
+        }
+        Self::with_tables(path, db)
+    }
+
+    fn with_tables(path: &Path, db: Database) -> Result<Self, redb::Error> {
         let w = db.begin_write()?;
         w.open_table(MSGS)?;
         w.open_table(SEQ)?;

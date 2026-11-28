@@ -17,6 +17,7 @@ pub mod init_args;
 pub mod ipfs_fragment;
 pub mod limits;
 pub mod mailbox;
+pub mod mailbox_install;
 pub mod mining_liveness;
 #[cfg(test)]
 pub mod mining_telemetry;
