@@ -183,6 +183,20 @@ impl DiskStore {
         self.reopen_total.load(Ordering::Relaxed)
     }
 
+    /// Reopens the file now, outside the budget (measurements and an operator's tool): the exclusive lock is held for the open only. Returns how long it took.
+    pub fn reopen_now(&self) -> Result<Duration, redb::Error> {
+        let mut g = self
+            .db
+            .write()
+            .map_err(|_| redb::Error::from(redb::StorageError::DatabaseClosed))?;
+        let t = Instant::now();
+        *g = None;
+        *g = Some(open_existing(&self.path)?);
+        self.generation.fetch_add(1, Ordering::Release);
+        self.reopen_total.fetch_add(1, Ordering::Relaxed);
+        Ok(t.elapsed())
+    }
+
     /// Runs `f` on the database. On an I/O error the file is reopened (single writer, bounded) and `f` runs once more on the new handle.
     fn with_db<R>(
         &self,
@@ -241,6 +255,12 @@ impl DiskStore {
                 }
             }
         }
+        // The exclusive lock is held only for the reopen itself: the retry runs under a shared lock, so other callers are not kept waiting for the whole operation.
+        drop(g);
+        let g = self
+            .db
+            .read()
+            .map_err(|_| redb::Error::from(redb::StorageError::DatabaseClosed))?;
         match g.as_ref() {
             Some(db) => f(db),
             None => Err(redb::Error::from(redb::StorageError::DatabaseClosed)),
