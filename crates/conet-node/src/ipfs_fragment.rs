@@ -15,10 +15,25 @@ use rand_core::{OsRng, RngCore};
 use si_crypto::eth::{keccak_hex, EthKey};
 use std::time::Duration;
 
-/// The largest object a read may return (the node holds the body in memory: a small node may have only a few hundred MiB available). A mailbox message is far smaller.
-pub const MAX_OBJECT_BYTES: usize = 4 * 1024 * 1024;
-/// The whole budget of one put (write plus read-back) or one get: under the sender's 25 second budget for one entry, with room to answer.
-pub const TOTAL_BUDGET: Duration = Duration::from_secs(20);
+/// Size of the node-local sealed object for an armor of `armor_len` bytes: base64 of nonce(12) + ciphertext + tag(16).
+pub const fn sealed_len(armor_len: usize) -> usize {
+    (armor_len + 28).div_ceil(3) * 4
+}
+
+/// The largest object the client uploads or reads, aligned with the largest message body the node accepts (`http::Limits` default 256 KiB): the sealed form of the largest
+/// acceptable armor. A larger object is refused BEFORE any upload (an uploaded object is public and cannot be deleted, so a refusal after the upload would leave an orphan).
+pub const MAX_OBJECT_BYTES: usize = sealed_len(256 * 1024);
+/// The largest body of an answer to a write: the answer is a few dozen bytes.
+const MAX_ANSWER_BYTES: usize = 64 * 1024;
+
+/// The acceptance budget: the sender's attempt through one entry waits 8 seconds (its total budget is 25 seconds), and the node's acceptance (the IPFS write, the read-back
+/// and the local commit) must be answered within about 5 to 6 seconds, so the IPFS part has 5 seconds in all, each request 3 seconds; a put that does not finish in time is
+/// not an acceptance and the reply is ok:false.
+pub const ACCEPT_BUDGET: Duration = Duration::from_secs(5);
+pub const ACCEPT_REQUEST: Duration = Duration::from_secs(3);
+/// The budget of a BACKGROUND upload only (a later asynchronous queue, once durable hand-over and deduplication exist): never used to answer a sender.
+pub const BACKGROUND_BUDGET: Duration = Duration::from_secs(20);
+pub const BACKGROUND_REQUEST: Duration = Duration::from_secs(10);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PutError {
@@ -34,9 +49,9 @@ pub enum PutError {
     ReadBackMissing(u16),
     /// The object read back differs from what was uploaded.
     ReadBackMismatch,
-    /// The object read back is larger than MAX_OBJECT_BYTES.
+    /// The object is larger than the client's limit (refused before any upload), or an answer or the read-back is larger than its cap.
     TooLarge,
-    /// The whole budget (TOTAL_BUDGET) was used up.
+    /// The whole budget (ACCEPT_BUDGET or BACKGROUND_BUDGET) was used up.
     Budget,
 }
 
@@ -64,7 +79,7 @@ pub struct FragmentClient {
     base: String,
     wallet: EthKey,
     http: reqwest::Client,
-    timeout: Duration,
+    max_object: usize,
 }
 
 impl FragmentClient {
@@ -76,8 +91,14 @@ impl FragmentClient {
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
-            timeout: Duration::from_secs(10),
+            max_object: MAX_OBJECT_BYTES,
         })
+    }
+
+    /// A different object limit (the node's `--max-body` changes the largest armor it accepts; see [`sealed_len`]).
+    pub fn with_max_object_bytes(mut self, n: usize) -> Self {
+        self.max_object = n;
+        self
     }
 
     pub fn uploader_address(&self) -> String {
@@ -85,13 +106,32 @@ impl FragmentClient {
     }
 
     /// Uploads `image` (the encoded ciphertext) and returns its content address only after the answer's hash AND a byte-equal read-back agree with the local values.
+    /// This is the ACCEPTANCE call: 5 seconds in all (3 per request). An object above the client's limit is refused before any request is made.
     pub async fn put_verified(&self, image: &str) -> Result<String, PutError> {
-        tokio::time::timeout(TOTAL_BUDGET, self.put_inner(image))
+        self.put_with(image, ACCEPT_BUDGET, ACCEPT_REQUEST).await
+    }
+
+    /// The same, with the budgets of a background upload (20 seconds in all, 10 per request); never used to answer a sender.
+    pub async fn put_verified_background(&self, image: &str) -> Result<String, PutError> {
+        self.put_with(image, BACKGROUND_BUDGET, BACKGROUND_REQUEST)
+            .await
+    }
+
+    async fn put_with(
+        &self,
+        image: &str,
+        total: Duration,
+        per_request: Duration,
+    ) -> Result<String, PutError> {
+        if image.len() > self.max_object {
+            return Err(PutError::TooLarge);
+        }
+        tokio::time::timeout(total, self.put_inner(image, per_request))
             .await
             .unwrap_or(Err(PutError::Budget))
     }
 
-    async fn put_inner(&self, image: &str) -> Result<String, PutError> {
+    async fn put_inner(&self, image: &str, per_request: Duration) -> Result<String, PutError> {
         let want = keccak_hex(image);
         let wallet = self.wallet.address().to_lowercase();
         let sign = self
@@ -101,7 +141,7 @@ impl FragmentClient {
         let resp = self
             .http
             .post(format!("{}/storageFragment", self.base))
-            .timeout(self.timeout)
+            .timeout(per_request)
             .json(&serde_json::json!({ "wallet": wallet, "signMessage": sign, "image": image }))
             .send()
             .await
@@ -110,7 +150,14 @@ impl FragmentClient {
         if status != 200 {
             return Err(PutError::Status(status));
         }
-        let body: serde_json::Value = resp.json().await.map_err(|_| PutError::NotOk)?;
+        let answer = read_capped(resp, MAX_ANSWER_BYTES)
+            .await
+            .map_err(|e| match e {
+                ReadCapped::TooLarge => PutError::TooLarge,
+                ReadCapped::Transport(m) => PutError::Transport(m),
+            })?;
+        let body: serde_json::Value =
+            serde_json::from_slice(&answer).map_err(|_| PutError::NotOk)?;
         if body["ok"] != serde_json::Value::Bool(true) {
             return Err(PutError::NotOk);
         }
@@ -121,7 +168,7 @@ impl FragmentClient {
         let back = self
             .http
             .get(format!("{}/getFragment?hash={}", self.base, want))
-            .timeout(self.timeout)
+            .timeout(per_request)
             .send()
             .await
             .map_err(|e| PutError::Transport(e.without_url().to_string()))?;
@@ -129,10 +176,12 @@ impl FragmentClient {
         if rs != 200 {
             return Err(PutError::ReadBackMissing(rs));
         }
-        let bytes = read_capped(back).await.map_err(|e| match e {
-            ReadCapped::TooLarge => PutError::TooLarge,
-            ReadCapped::Transport(m) => PutError::Transport(m),
-        })?;
+        let bytes = read_capped(back, self.max_object)
+            .await
+            .map_err(|e| match e {
+                ReadCapped::TooLarge => PutError::TooLarge,
+                ReadCapped::Transport(m) => PutError::Transport(m),
+            })?;
         if bytes.as_slice() != image.as_bytes() {
             return Err(PutError::ReadBackMismatch);
         }
@@ -141,12 +190,12 @@ impl FragmentClient {
 
     /// Reads an object and checks that it hashes to the address asked for.
     pub async fn get_verified(&self, hash: &str) -> Result<String, GetError> {
-        tokio::time::timeout(TOTAL_BUDGET, self.get_inner(hash))
+        tokio::time::timeout(ACCEPT_BUDGET, self.get_inner(hash, ACCEPT_REQUEST))
             .await
             .unwrap_or(Err(GetError::Budget))
     }
 
-    async fn get_inner(&self, hash: &str) -> Result<String, GetError> {
+    async fn get_inner(&self, hash: &str, per_request: Duration) -> Result<String, GetError> {
         // the address goes into a URL unescaped: only 0x and hex digits are accepted
         if !(hash.starts_with("0x") && hash[2..].bytes().all(|b| b.is_ascii_hexdigit())) {
             return Err(GetError::Status(400));
@@ -154,7 +203,7 @@ impl FragmentClient {
         let r = self
             .http
             .get(format!("{}/getFragment?hash={}", self.base, hash))
-            .timeout(self.timeout)
+            .timeout(per_request)
             .send()
             .await
             .map_err(|e| GetError::Transport(e.without_url().to_string()))?;
@@ -162,7 +211,7 @@ impl FragmentClient {
         if s != 200 {
             return Err(GetError::Status(s));
         }
-        let bytes = read_capped(r).await.map_err(|e| match e {
+        let bytes = read_capped(r, self.max_object).await.map_err(|e| match e {
             ReadCapped::TooLarge => GetError::TooLarge,
             ReadCapped::Transport(m) => GetError::Transport(m),
         })?;
@@ -179,12 +228,9 @@ enum ReadCapped {
     Transport(String),
 }
 
-/// Reads a response body chunk by chunk and stops with an error as soon as it would exceed MAX_OBJECT_BYTES (a declared length above the cap is refused at once).
-async fn read_capped(mut resp: reqwest::Response) -> Result<Vec<u8>, ReadCapped> {
-    if resp
-        .content_length()
-        .is_some_and(|l| l > MAX_OBJECT_BYTES as u64)
-    {
+/// Reads a response body chunk by chunk and stops with an error as soon as it would exceed `cap` (a declared length above the cap is refused at once).
+async fn read_capped(mut resp: reqwest::Response, cap: usize) -> Result<Vec<u8>, ReadCapped> {
+    if resp.content_length().is_some_and(|l| l > cap as u64) {
         return Err(ReadCapped::TooLarge);
     }
     let mut out = Vec::new();
@@ -193,7 +239,7 @@ async fn read_capped(mut resp: reqwest::Response) -> Result<Vec<u8>, ReadCapped>
         .await
         .map_err(|e| ReadCapped::Transport(e.without_url().to_string()))?
     {
-        if out.len() + chunk.len() > MAX_OBJECT_BYTES {
+        if out.len() + chunk.len() > cap {
             return Err(ReadCapped::TooLarge);
         }
         out.extend_from_slice(&chunk);

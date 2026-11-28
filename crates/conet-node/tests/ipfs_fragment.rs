@@ -27,6 +27,14 @@ enum Mode {
     BigBody,
     /// Reads the request and never answers.
     Stall,
+    /// The read answers with a chunked body of 5 MiB and NO declared length (only the chunk cap can stop it).
+    ChunkedBig,
+    /// The read declares a length of 6 MiB and sends 10 bytes (only the declared-length check can refuse it).
+    DeclaredBig,
+    /// The write answers 200 with a 5 MiB body.
+    BigAnswer,
+    /// Every answer is delayed by this many milliseconds (each request is within its own timeout).
+    Slow(u64),
 }
 
 #[derive(Default)]
@@ -99,6 +107,9 @@ async fn start(mode: Mode) -> Fake {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                     return;
                 }
+                if let Mode::Slow(ms) = mode {
+                    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                }
                 let reply = if line.starts_with("GET /elsewhere") {
                     seen.lock().unwrap().redirect_target_hits += 1;
                     let v = store
@@ -136,7 +147,10 @@ async fn start(mode: Mode) -> Fake {
                         | Mode::GetRedirect
                         | Mode::BigBody
                         | Mode::PostRedirect
-                        | Mode::Stall => {
+                        | Mode::Stall
+                        | Mode::ChunkedBig
+                        | Mode::DeclaredBig
+                        | Mode::Slow(_) => {
                             store.lock().unwrap().insert(
                                 hash.clone(),
                                 if mode == Mode::ReadMutated {
@@ -150,6 +164,7 @@ async fn start(mode: Mode) -> Fake {
                                 json!({ "ok": true, "hash": hash }).to_string().into_bytes(),
                             )
                         }
+                        Mode::BigAnswer => respond(200, vec![b' '; 5 * 1024 * 1024]),
                         Mode::FalseSuccess => respond(
                             200,
                             json!({ "ok": true, "hash": hash }).to_string().into_bytes(),
@@ -174,6 +189,21 @@ async fn start(mode: Mode) -> Fake {
                         .to_string();
                     match (mode, store.lock().unwrap().get(&hash).cloned()) {
                         (Mode::BigBody, _) => respond(200, vec![b'A'; 5 * 1024 * 1024]),
+                        (Mode::ChunkedBig, _) => {
+                            let mut out = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".to_vec();
+                            for _ in 0..5 {
+                                out.extend_from_slice(format!("{:x}\r\n", 1024 * 1024).as_bytes());
+                                out.extend(vec![b'A'; 1024 * 1024]);
+                                out.extend_from_slice(b"\r\n");
+                            }
+                            out.extend_from_slice(b"0\r\n\r\n");
+                            out
+                        }
+                        (Mode::DeclaredBig, _) => {
+                            let mut out = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", 6 * 1024 * 1024).into_bytes();
+                            out.extend_from_slice(b"0123456789");
+                            out
+                        }
                         (Mode::GetRedirect, Some(_)) => b"HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
                         (Mode::ReadMissing, _) | (_, None) => respond(404, vec![]),
                         (_, Some(v)) => respond(200, v.into_bytes()),
@@ -434,7 +464,7 @@ async fn redirects_are_not_followed() {
     );
 }
 
-/// A read larger than the cap is refused without being held in memory, and a service that never answers ends in an error within the budget.
+/// A read larger than the cap is refused without being held in memory, and a service that never answers ends in an error within the 5 second budget (the sender waits 8 seconds per attempt).
 #[tokio::test(flavor = "multi_thread")]
 async fn an_oversized_body_and_a_silent_service_are_bounded() {
     use conet_node::ipfs_fragment::MAX_OBJECT_BYTES;
@@ -462,4 +492,91 @@ async fn an_oversized_body_and_a_silent_service_are_bounded() {
         took.as_secs() <= 21,
         "bounded by the 20 second budget, took {took:?}"
     );
+}
+
+/// The chunk cap and the declared-length check are separate protections; each is tested where the other cannot help: a chunked body of 5 MiB with no declared length, and a
+/// declared length of 6 MiB with 10 bytes sent. An answer to the write that is far larger than an answer can be is refused too (it is not read whole).
+#[tokio::test(flavor = "multi_thread")]
+async fn each_read_cap_is_tested_alone() {
+    let f = start(Mode::ChunkedBig).await;
+    assert_eq!(
+        client(&f).put_verified(&synthetic(200)).await,
+        Err(PutError::TooLarge),
+        "the chunk cap stops a body with no declared length"
+    );
+    let g = start(Mode::DeclaredBig).await;
+    assert_eq!(
+        client(&g).put_verified(&synthetic(200)).await,
+        Err(PutError::TooLarge),
+        "the declared length alone is refused, without reading the body"
+    );
+    let h = start(Mode::BigAnswer).await;
+    assert_eq!(
+        client(&h).put_verified(&synthetic(200)).await,
+        Err(PutError::TooLarge),
+        "an answer to the write is capped"
+    );
+    assert_eq!(
+        h.seen.lock().unwrap().gets,
+        0,
+        "no read is attempted after an oversized answer"
+    );
+}
+
+/// An object above the limit is refused BEFORE any request: nothing is uploaded (an uploaded object is public and cannot be deleted). The limit is aligned with the largest
+/// message body the node accepts: the sealed form of the largest acceptable armor fits, one byte more does not.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_object_above_the_limit_is_refused_before_any_upload() {
+    use conet_node::ipfs_fragment::{sealed_len, MAX_OBJECT_BYTES};
+    assert_eq!(
+        MAX_OBJECT_BYTES,
+        sealed_len(conet_node::http::Limits::default().max_body_bytes),
+        "aligned with the node's largest message body"
+    );
+    assert_eq!(sealed_len(0), 40);
+    let seal = LocalSeal::new(&[3u8; 32]);
+    assert_eq!(
+        seal.seal(&"a".repeat(1000)).len(),
+        sealed_len(1000),
+        "sealed_len is the exact length of the sealed string"
+    );
+    let f = start(Mode::Honest).await;
+    let c = client(&f);
+    assert_eq!(
+        c.put_verified(&synthetic(MAX_OBJECT_BYTES + 1)).await,
+        Err(PutError::TooLarge)
+    );
+    assert_eq!(
+        f.seen.lock().unwrap().posts,
+        0,
+        "no request was made for an oversized object"
+    );
+    assert!(
+        c.put_verified(&synthetic(MAX_OBJECT_BYTES - 4))
+            .await
+            .is_ok(),
+        "an object at the limit is accepted"
+    );
+    assert_eq!(f.seen.lock().unwrap().posts, 1);
+}
+
+/// The total budget is a protection of its own: two answers that are each within the 3 second request timeout but together take longer than the 5 second budget are not an
+/// acceptance (Budget), while the background budget (20 seconds, 10 per request) lets the same service succeed.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_total_budget_stops_what_each_request_timeout_allows() {
+    let f = start(Mode::Slow(2800)).await;
+    let t = std::time::Instant::now();
+    let r = client(&f).put_verified(&synthetic(300)).await;
+    let took = t.elapsed();
+    println!(
+        "MEASURE acceptance against a service that takes 2.8 s per answer: {r:?} after {:.1} s",
+        took.as_secs_f64()
+    );
+    assert_eq!(r, Err(PutError::Budget));
+    assert!(
+        took.as_secs_f64() < 5.6,
+        "stopped by the total budget, not by two completed requests: {took:?}"
+    );
+    let ok = client(&f).put_verified_background(&synthetic(300)).await;
+    assert!(ok.is_ok(), "the background budget allows it: {ok:?}");
 }
