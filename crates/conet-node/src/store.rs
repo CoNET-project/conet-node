@@ -7,9 +7,11 @@
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Stored {
@@ -99,8 +101,40 @@ struct Row {
     saved_at: u64,
 }
 
+/// The mailbox database. After a real I/O error redb refuses every later write on the same handle (`PreviousIo`) until the file is opened again; the store
+/// therefore keeps the handle behind a lock and, on such an error, reopens the EXISTING file itself: one writer at a time (the reopen holds the exclusive lock),
+/// at most `reopen_limit` attempts within `reopen_window`, and the failed operation is retried once on the new handle (its duplicate check runs again, so a write that
+/// did commit is never stored twice). While the storage stays unhealthy the operation keeps failing and is refused. The reopen never creates a database: a missing,
+/// emptied or corrupted file is opened with an integrity check, fails, and is left exactly as it is.
 pub struct DiskStore {
-    db: Database,
+    path: PathBuf,
+    db: RwLock<Option<Database>>,
+    generation: AtomicU64,
+    reopens: Mutex<VecDeque<Instant>>,
+    reopen_total: AtomicU64,
+    pub reopen_limit: usize,
+    pub reopen_window: Duration,
+}
+
+/// The errors after which reopening the file can help: redb's own write failed (`Io`) or an earlier one did (`PreviousIo`).
+fn heals_by_reopening(e: &redb::Error) -> bool {
+    matches!(e, redb::Error::Io(_) | redb::Error::PreviousIo)
+}
+
+/// Opens an existing database; never creates one. The integrity check turns a damaged file into an error instead of a panic.
+fn open_existing(path: &Path) -> Result<Database, redb::Error> {
+    let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Database::builder()
+            .set_check_integrity_on_open(true)
+            .open(path)
+    }));
+    match opened {
+        Ok(Ok(db)) => Ok(db),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Err(redb::Error::Corrupted(
+            "the database file could not be opened".into(),
+        )),
+    }
 }
 
 fn now() -> u64 {
@@ -118,11 +152,92 @@ impl DiskStore {
         w.open_table(SEQ)?;
         w.open_table(OFFERS)?;
         w.commit()?;
-        Ok(Self { db })
+        Ok(Self {
+            path: path.to_path_buf(),
+            db: RwLock::new(Some(db)),
+            generation: AtomicU64::new(0),
+            reopens: Mutex::new(VecDeque::new()),
+            reopen_total: AtomicU64::new(0),
+            reopen_limit: 3,
+            reopen_window: Duration::from_secs(60),
+        })
+    }
+
+    /// How many times the store has reopened its file after an I/O error (diagnostics and tests).
+    pub fn reopen_attempts(&self) -> u64 {
+        self.reopen_total.load(Ordering::Relaxed)
+    }
+
+    /// Runs `f` on the database. On an I/O error the file is reopened (single writer, bounded) and `f` runs once more on the new handle.
+    fn with_db<R>(
+        &self,
+        mut f: impl FnMut(&Database) -> Result<R, redb::Error>,
+    ) -> Result<R, redb::Error> {
+        let seen;
+        {
+            let g = self
+                .db
+                .read()
+                .map_err(|_| redb::Error::from(redb::StorageError::DatabaseClosed))?;
+            seen = self.generation.load(Ordering::Acquire);
+            if let Some(db) = g.as_ref() {
+                match f(db) {
+                    Err(e) if heals_by_reopening(&e) => {
+                        tracing::warn!(%e, "mailbox database I/O error; reopening")
+                    }
+                    other => return other,
+                }
+            }
+        }
+        // The handle is gone or refused a write: one writer reopens it.
+        let mut g = self
+            .db
+            .write()
+            .map_err(|_| redb::Error::from(redb::StorageError::DatabaseClosed))?;
+        if self.generation.load(Ordering::Acquire) == seen {
+            let now = Instant::now();
+            {
+                let mut q = self.reopens.lock().expect("reopen budget");
+                while q
+                    .front()
+                    .is_some_and(|t| now.duration_since(*t) > self.reopen_window)
+                {
+                    q.pop_front();
+                }
+                if q.len() >= self.reopen_limit {
+                    tracing::error!(
+                        limit = self.reopen_limit,
+                        "mailbox database reopen budget used up; refusing until the window passes"
+                    );
+                    return Err(redb::Error::PreviousIo);
+                }
+                q.push_back(now);
+            }
+            self.reopen_total.fetch_add(1, Ordering::Relaxed);
+            *g = None; // closes the old handle (its file lock) before the file is opened again
+            match open_existing(&self.path) {
+                Ok(db) => {
+                    *g = Some(db);
+                    self.generation.fetch_add(1, Ordering::Release);
+                }
+                Err(e) => {
+                    tracing::error!(%e, "mailbox database could not be reopened; refusing");
+                    return Err(e);
+                }
+            }
+        }
+        match g.as_ref() {
+            Some(db) => f(db),
+            None => Err(redb::Error::from(redb::StorageError::DatabaseClosed)),
+        }
     }
 
     fn rows(&self, key: &str) -> Result<Vec<(u64, Row)>, redb::Error> {
-        let r = self.db.begin_read()?;
+        self.with_db(|db| Self::rows_in(db, key))
+    }
+
+    fn rows_in(db: &Database, key: &str) -> Result<Vec<(u64, Row)>, redb::Error> {
+        let r = db.begin_read()?;
         let t = r.open_table(MSGS)?;
         let mut out = vec![];
         for e in t.range((key, 0u64)..=(key, u64::MAX))? {
@@ -136,27 +251,37 @@ impl DiskStore {
 
     fn save_inner(&self, key: &str, item: Stored) -> Result<bool, redb::Error> {
         let hash = armor_hash(&item.armor);
-        let existing = self.rows(key)?;
-        if existing.iter().any(|(_, r)| r.hash == hash) {
-            return Ok(false);
-        }
-        let w = self.db.begin_write()?;
-        {
-            let mut msgs = w.open_table(MSGS)?;
-            let mut seq = w.open_table(SEQ)?;
-            // Nothing is removed here: no count cap, no age purge. A failure anywhere in this block or in `commit` is an error, not a store.
-            let next = seq.get(key)?.map(|v| v.value()).unwrap_or(0);
-            let row = serde_json::to_vec(&Row {
-                item,
-                hash,
-                saved_at: now(),
-            })
-            .expect("row json");
-            msgs.insert((key, next), row.as_slice())?;
-            seq.insert(key, next + 1)?;
-        }
-        w.commit()?;
-        Ok(true)
+        self.with_db(|db| {
+            // The duplicate check runs INSIDE the write transaction: redb allows one writer at a time, so two concurrent posts of the same armor cannot both pass the check.
+            let w = db.begin_write()?;
+            {
+                let mut msgs = w.open_table(MSGS)?;
+                let mut seq = w.open_table(SEQ)?;
+                let mut duplicate = false;
+                for e in msgs.range((key, 0u64)..=(key, u64::MAX))? {
+                    let (_, v) = e?;
+                    if serde_json::from_slice::<Row>(v.value()).is_ok_and(|r| r.hash == hash) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if duplicate {
+                    return Ok(false); // the transaction is dropped without a commit
+                }
+                // Nothing is removed here: no count cap, no age purge. A failure anywhere in this block or in `commit` is an error, not a store.
+                let next = seq.get(key)?.map(|v| v.value()).unwrap_or(0);
+                let row = serde_json::to_vec(&Row {
+                    item: item.clone(),
+                    hash: hash.clone(),
+                    saved_at: now(),
+                })
+                .expect("row json");
+                msgs.insert((key, next), row.as_slice())?;
+                seq.insert(key, next + 1)?;
+            }
+            w.commit()?;
+            Ok(true)
+        })
     }
 
     fn remove_inner(&self, key: &str, hash: &str) -> Result<bool, redb::Error> {
@@ -169,15 +294,17 @@ impl DiskStore {
         if hit.is_empty() {
             return Ok(false);
         }
-        let w = self.db.begin_write()?;
-        {
-            let mut msgs = w.open_table(MSGS)?;
-            for s in hit {
-                msgs.remove((key, s))?;
+        self.with_db(|db| {
+            let w = db.begin_write()?;
+            {
+                let mut msgs = w.open_table(MSGS)?;
+                for s in &hit {
+                    msgs.remove((key, *s))?;
+                }
             }
-        }
-        w.commit()?;
-        Ok(true)
+            w.commit()?;
+            Ok(true)
+        })
     }
 }
 
@@ -280,35 +407,37 @@ const OFFERS: TableDefinition<&str, &[u8]> = TableDefinition::new("voice_offers"
 impl OfferStore for DiskStore {
     fn put(&self, call_id: &str, session_id: &str, armor: &str, expires_at: i64, now: i64) -> bool {
         let run = || -> Result<(), redb::Error> {
-            let w = self.db.begin_write()?;
-            {
-                let mut t = w.open_table(OFFERS)?;
-                let expired: Vec<String> = t
-                    .iter()?
-                    .filter_map(|e| e.ok())
-                    .filter(|(_, v)| {
-                        serde_json::from_slice::<Offer>(v.value())
-                            .map(|o| o.expires_at <= now)
-                            .unwrap_or(true)
-                    })
-                    .map(|(k, _)| k.value().to_string())
-                    .collect();
-                for k in expired {
-                    t.remove(k.as_str())?;
+            self.with_db(|db| {
+                let w = db.begin_write()?;
+                {
+                    let mut t = w.open_table(OFFERS)?;
+                    let expired: Vec<String> = t
+                        .iter()?
+                        .filter_map(|e| e.ok())
+                        .filter(|(_, v)| {
+                            serde_json::from_slice::<Offer>(v.value())
+                                .map(|o| o.expires_at <= now)
+                                .unwrap_or(true)
+                        })
+                        .map(|(k, _)| k.value().to_string())
+                        .collect();
+                    for k in expired {
+                        t.remove(k.as_str())?;
+                    }
+                    let o = Offer {
+                        call_id: call_id.into(),
+                        session_id: session_id.into(),
+                        offer_armor: armor.into(),
+                        expires_at,
+                    };
+                    t.insert(
+                        offer_key(call_id, session_id).as_str(),
+                        serde_json::to_vec(&o).expect("offer json").as_slice(),
+                    )?;
                 }
-                let o = Offer {
-                    call_id: call_id.into(),
-                    session_id: session_id.into(),
-                    offer_armor: armor.into(),
-                    expires_at,
-                };
-                t.insert(
-                    offer_key(call_id, session_id).as_str(),
-                    serde_json::to_vec(&o).expect("offer json").as_slice(),
-                )?;
-            }
-            w.commit()?;
-            Ok(())
+                w.commit()?;
+                Ok(())
+            })
         };
         run().is_ok()
     }
@@ -316,11 +445,15 @@ impl OfferStore for DiskStore {
         if call_id.is_empty() || session_id.is_empty() {
             return None;
         }
-        let r = self.db.begin_read().ok()?;
-        let t = r.open_table(OFFERS).ok()?;
-        let v = t.get(offer_key(call_id, session_id).as_str()).ok()??;
-        let o: Offer = serde_json::from_slice(v.value()).ok()?;
-        (o.expires_at > now).then_some(o)
+        self.with_db(|db| {
+            let r = db.begin_read()?;
+            let t = r.open_table(OFFERS)?;
+            Ok(t.get(offer_key(call_id, session_id).as_str())?
+                .and_then(|v| serde_json::from_slice::<Offer>(v.value()).ok()))
+        })
+        .ok()
+        .flatten()
+        .filter(|o| o.expires_at > now)
     }
 }
 
