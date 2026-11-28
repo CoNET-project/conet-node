@@ -73,6 +73,8 @@ struct SwitchStore {
     fail: AtomicBool,
     /// The message is stored as usual but the reply is withheld (see DROP_DELAY).
     drop_response: AtomicBool,
+    /// How many more replies to withhold before returning to normal by itself; negative means until /ok.
+    drop_remaining: std::sync::atomic::AtomicI64,
     seen: Mutex<Counters>,
 }
 
@@ -105,6 +107,23 @@ impl MailboxStore for SwitchStore {
         let n = c.events.len() + 1;
         c.events.push((n, name, h.clone()));
         let withhold = r != SaveResult::Failed && self.drop_response.load(Ordering::SeqCst);
+        let withhold = withhold && {
+            // /drop-response?n=K withholds the first K replies and then restores normal replies by itself
+            let left = self.drop_remaining.load(Ordering::SeqCst);
+            if left >= 0 {
+                if left == 0 {
+                    self.drop_response.store(false, Ordering::SeqCst);
+                    false
+                } else {
+                    if self.drop_remaining.fetch_sub(1, Ordering::SeqCst) == 1 {
+                        self.drop_response.store(false, Ordering::SeqCst);
+                    }
+                    true
+                }
+            } else {
+                true
+            }
+        };
         if withhold {
             c.dropped += 1;
             *c.dropped_by_hash
@@ -137,7 +156,16 @@ async fn control(listener: TcpListener, store: Arc<SwitchStore>) {
             let mut buf = [0u8; 2048];
             let n = s.read(&mut buf).await.unwrap_or(0);
             let req = String::from_utf8_lossy(&buf[..n]).into_owned();
-            let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+            let full = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+            let (path, query) = full
+                .split_once('?')
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .unwrap_or((full.clone(), String::new()));
+            let n: i64 = query
+                .split('&')
+                .find_map(|kv| kv.strip_prefix("n="))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(-1);
             let body = match path.as_str() {
                 "/fail" => {
                     store.fail.store(true, Ordering::SeqCst);
@@ -146,11 +174,13 @@ async fn control(listener: TcpListener, store: Arc<SwitchStore>) {
                 }
                 "/drop-response" => {
                     store.fail.store(false, Ordering::SeqCst);
+                    store.drop_remaining.store(n, Ordering::SeqCst);
                     store.drop_response.store(true, Ordering::SeqCst);
-                    json!({ "mode": "drop_response" })
+                    json!({ "mode": "drop_response", "replies_to_withhold": if n >= 0 { json!(n) } else { json!("until /ok") } })
                 }
                 "/ok" => {
                     store.drop_response.store(false, Ordering::SeqCst);
+                    store.drop_remaining.store(-1, Ordering::SeqCst);
                     store.fail.store(false, Ordering::SeqCst);
                     json!({ "mode": "ok" })
                 }
@@ -198,7 +228,7 @@ async fn control(listener: TcpListener, store: Arc<SwitchStore>) {
                     json!({ "distinct_messages": per.len(), "responses_dropped": c.dropped, "per_message": per })
                 }
                 _ => {
-                    json!({ "paths": ["/fail", "/ok", "/drop-response", "/status", "/events", "/byhash"] })
+                    json!({ "paths": ["/fail", "/ok", "/drop-response[?n=K]", "/status", "/events", "/byhash"] })
                 }
             };
             let body = body.to_string();
@@ -261,6 +291,7 @@ async fn serve_failing_mailbox_endpoint() {
         inner: DiskStore::open(&std::path::Path::new(&dir).join("mailbox.redb")).unwrap(),
         fail: AtomicBool::new(false),
         drop_response: AtomicBool::new(false),
+        drop_remaining: std::sync::atomic::AtomicI64::new(-1),
         seen: Mutex::new(Counters::default()),
     });
     let mut ca = NodeCtx::new(
@@ -540,4 +571,97 @@ async fn drive_drop_response_mode() {
     );
     let by = get("/byhash").await;
     println!("MEASURE counts per message: {by}");
+}
+
+/// `/drop-response?n=1`: the FIRST reply is withheld and normal replies resume by themselves, no /ok needed: the first POST gets no answer (the message is stored), the retry of the
+/// SAME armor straight afterwards is answered duplicate, and the mode has returned to ok.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "drives a running endpoint; needs ENDPOINT_DIR"]
+async fn drive_drop_response_first_reply_only() {
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+    let dir = std::env::var("ENDPOINT_DIR").expect("ENDPOINT_DIR");
+    let info: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::path::Path::new(&dir).join("endpoint.json")).unwrap(),
+    )
+    .unwrap();
+    let g = golden();
+    let user = si_crypto::opgp::PublicCert::from_armor(
+        g["keys"]["user"]["armoredPublic"].as_str().unwrap(),
+    )
+    .unwrap();
+    let armor = si_crypto::opgp::encrypt(
+        ChaCha20Rng::from_seed([10; 32]),
+        b"only the first reply is lost",
+        &user,
+        si_crypto::opgp::EncryptOpts {
+            text: true,
+            zlib: true,
+            sign_with: None,
+        },
+    )
+    .unwrap();
+    let a = info["entryA"]["http"].as_str().unwrap().to_string();
+    let ctl = info["control"].as_str().unwrap().to_string();
+    let call = |addr: String, req: String, wait: u64| async move {
+        let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut out = Vec::new();
+        let done = tokio::time::timeout(Duration::from_secs(wait), s.read_to_end(&mut out))
+            .await
+            .is_ok();
+        (
+            done,
+            String::from_utf8_lossy(&out)
+                .split("\r\n\r\n")
+                .nth(1)
+                .unwrap_or("")
+                .to_string(),
+        )
+    };
+    let get = |p: &str| {
+        let (ctl, p) = (ctl.clone(), p.to_string());
+        async move {
+            serde_json::from_str::<Value>(
+                &call(
+                    ctl,
+                    format!("GET {p} HTTP/1.1\r\nHost: c\r\nConnection: close\r\n\r\n"),
+                    5,
+                )
+                .await
+                .1,
+            )
+            .unwrap()
+        }
+    };
+    let body = json!({ "data": armor }).to_string();
+    let post = format!("POST /post HTTP/1.1\r\nHost: t\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+    println!("MEASURE switch: {}", get("/drop-response?n=1").await);
+    let (answered, _) = call(a.clone(), post.clone(), 3).await;
+    println!("MEASURE first post: answered within 3 s = {answered}");
+    assert!(!answered, "the first reply was withheld");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mid = get("/status").await;
+    println!("MEASURE status right after the dropped reply, with no /ok sent: {mid}");
+    assert_eq!(mid["mode"], "ok", "normal replies resumed by themselves");
+    assert_eq!(mid["responses_dropped"], 1);
+    let (answered, text) = call(a.clone(), post.clone(), 8).await;
+    let r: Value = serde_json::from_str(&text).unwrap();
+    println!("MEASURE the retry of the SAME armor: answered = {answered}, reply = {r}");
+    assert!(answered && r["duplicate"] == true);
+    let (answered, text) = call(a.clone(), post, 8).await;
+    assert!(
+        answered && serde_json::from_str::<Value>(&text).unwrap()["duplicate"] == true,
+        "the next retry is answered too"
+    );
+    let s = get("/status").await;
+    println!("MEASURE final: {s}");
+    assert_eq!(
+        (
+            s["events"]["stored"].as_u64(),
+            s["rows_stored_now"].as_u64(),
+            s["responses_dropped"].as_u64()
+        ),
+        (Some(1), Some(1), Some(1))
+    );
 }
